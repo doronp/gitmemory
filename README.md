@@ -13,20 +13,58 @@ Everything derived — indexes, decision graphs, key ideas — is rebuilt from
 those bytes, so a derivation is never the only copy of anything.
 
 ```
-gitmemory capture ~/.claude/projects/<proj>/<session>.jsonl
-gitmemory verify
+gitmemory watch                 # tail the configured roots, capture, commit
+gitmemory capture <transcript>  # or copy out one file's new bytes, by hand
+gitmemory verify                # prove the bytes tile the range they claim
+gitmemory index                 # rebuild the retrieval index from the store
+gitmemory recall "the question" # search it
 ```
 
 `verify` returns an empty list or a list of problems. There is no third answer.
 
+## Getting started
+
+Watch roots have no default. Name what to tail in
+`$GITMEMORY_HOME/config.toml` (default `~/.gitmemory`):
+
+```toml
+[[watch]]
+agent = "claude-code"
+roots = ["~/.claude/projects"]
+```
+
+then run `gitmemory watch`. That is the whole install — see
+[docs/watching.md](docs/watching.md) for the flags, the roots that get refused,
+and how to tell a misconfigured watcher from an idle one.
+
+The [hook shim](hook/README.md) is optional and makes a capture happen at the
+compaction boundary rather than at the next sweep. **If you never install it
+the system is still correct.** It is a POSIX `sh` script that writes stdin to a
+spool and exits 0; its cost in the agent's critical path is measured, not
+asserted.
+
 ## Status
 
-Under construction, epoch by epoch. E2 (the segment store and its proof) is
-complete: 487 tests, and every check in `verify` has a test that fails when
-that check is deleted. Index, derivation, hooks, and the dashboard follow.
+Under construction, epoch by epoch. 732 tests, plus one gated on the
+LongMemEval download (`-m corpus`).
+
+| | | |
+|---|---|---|
+| E1 | Canonical records + Claude Code adapter | passed |
+| E2 | Segment store, contiguity proof, `verify`, redaction gate | passed |
+| E3 | Index + retrieval + CLI | passed — 470 LongMemEval instances, [gate report](docs/benchmarks/E3-longmemeval.md) |
+| E4 | Hook shim + watcher + git daemon | in review |
+| E5 | Derivation and decision graph | |
+| E6 | Dashboard | |
+| E7 | RC1: security review, private repo | |
+
+The discipline the test count does not show: every fix is pinned by a negative
+control — mutate the module to remove the behaviour, confirm the named test
+fails — because a fix nothing distinguishes is a fix nothing is holding in
+place. Three of this epoch's fixes were refuted that way and rewritten.
 
 See `docs/DESIGN.md` for the locked decisions and `docs/reviews/` for the
-review record.
+review record, including the findings that were disputed and why.
 
 ## Licence
 
