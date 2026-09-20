@@ -1,7 +1,7 @@
 """Streaming JSONL reader with exact byte offsets.
 
-Vendored verbatim from fable (https://github.com/grooverLab/fable), MIT,
-Copyright (c) 2026 Anoop Grover. See THIRD_PARTY.md.
+Vendored from fable (https://github.com/grooverLab/fable), MIT, Copyright (c)
+2026 Anoop Grover, with one local change marked [E3]. See THIRD_PARTY.md.
 
 Kept as-is rather than rewritten: the two things it gets right are things a
 reimplementation gets subtly wrong. `surrogateescape` keeps offsets byte-true
@@ -54,9 +54,19 @@ def iter_records(
             # (errors="replace" would inflate lengths: U+FFFD is 3 bytes).
             text = raw.decode("utf-8", errors="surrogateescape")
             pos = 0
+            # Byte offset of `pos` within this line, carried instead of
+            # recomputed. Upstream re-encoded `text[:pos]` per object, so a line
+            # holding N concatenated objects cost O(N²) — the very case this
+            # loop exists to handle. Measured: 6,400 objects on one line took
+            # 165 ms, and the curve is quadratic, so a 175 MB line is minutes of
+            # CPU on input a transcript chooses. Carrying the cursor is O(N) and
+            # yields byte-identical offsets. [E3]
+            byte_pos = 0
             while pos < len(text):
+                ws = pos
                 while pos < len(text) and text[pos] in " \t\r\n":
                     pos += 1
+                byte_pos += pos - ws  # JSON's four whitespace characters are all 1 byte
                 if pos >= len(text):
                     break
                 try:
@@ -71,10 +81,9 @@ def iter_records(
                     if on_error:
                         on_error(lineno, e)
                     break
-                byte_off = this_start + len(text[:pos].encode("utf-8", "surrogateescape"))
                 byte_len = len(text[pos:end].encode("utf-8", "surrogateescape"))
-                yield Record(lineno, byte_off, byte_len, obj)
-                pos = end
+                yield Record(lineno, this_start + byte_pos, byte_len, obj)
+                pos, byte_pos = end, byte_pos + byte_len
 
 
 def read_span(path: str, offset: int, length: int) -> bytes:

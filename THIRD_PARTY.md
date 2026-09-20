@@ -17,25 +17,35 @@ code, not merely the copyright line.** Verbatim upstream texts:
 ### fable — MIT, Copyright (c) 2026 Anoop Grover
 <https://github.com/grooverLab/fable>
 
-- `src/gitmemory/jsonl.py` — verbatim copy of `fable/jsonl.py`.
+- `src/gitmemory/jsonl.py` — copy of `fable/jsonl.py` with **one local change**,
+  marked `[E3]` in the source and listed below.
   Kept rather than rewritten for two reasons a reimplementation gets wrong:
   `surrogateescape` decoding keeps byte offsets true on invalid UTF-8
   (`errors="replace"` inflates them, U+FFFD being 3 bytes), and the
   `raw_decode` loop recovers multiple JSON objects concatenated onto one
   physical line — which occurs in real Claude Code transcripts.
 
-  Two defects found in it during our E1 review, **not yet patched locally**
-  because the file is vendored verbatim and diverging costs more than either
-  currently does. Both are to be reported upstream at RC1:
+  Two defects were found in it during our E1 review. Both are to be reported
+  upstream at RC1; one is now also patched here.
 
-  1. `byte_off` re-encodes the whole line prefix for every object on that line,
-     so a line holding *N* concatenated objects costs O(N²) — exactly the
-     concatenated-objects case the module exists to handle. Our corpus tops out
-     at a handful per line, so this is latent, not live.
-  2. A `JSONDecodeError` `break`s out of the whole physical line, so a valid
-     object concatenated *after* a malformed one is lost. It is counted (our
-     adapter reports `json_decode_error`), so it is a loss we can see rather
-     than a silent one.
+  1. **Patched locally at E3.** `byte_off` re-encoded the whole line prefix for
+     every object on that line, so a line holding *N* concatenated objects cost
+     O(N²) — exactly the concatenated-objects case the module exists to handle.
+     E1 called it latent because our own corpus tops out at a handful per line.
+     E3 measured it and changed the verdict: 6,400 objects on one line take
+     165 ms and the curve is quadratic, so a single ~175 MB line is minutes of
+     CPU. A transcript is untrusted input on the ingest path, and the store's
+     whole premise is accepting whatever bytes an agent wrote — a superlinear
+     cost the input chooses is not a perf nit. The fix carries a byte cursor
+     instead of recomputing it, is O(N), and yields byte-identical offsets;
+     `test_multibyte_before_a_second_object_on_the_same_line` pins that.
+  2. **Not patched.** A `JSONDecodeError` `break`s out of the whole physical
+     line, so a valid object concatenated *after* a malformed one is lost. It
+     is counted (our adapter reports `json_decode_error`), so it is a loss we
+     can see rather than a silent one — and there is no reliable resync point
+     in a JSON stream: every "skip to the next `{`" heuristic can resume inside
+     a string literal and invent an object. A visible loss beats an invented
+     turn in a store whose value is that its bytes are the agent's bytes.
 
 ### claude-code-log — MIT, Copyright (c) 2025 Daniel Demmel
 <https://github.com/daaain/claude-code-log>

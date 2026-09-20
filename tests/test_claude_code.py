@@ -331,6 +331,24 @@ def test_concatenated_objects_on_one_line(tmp_path):
     assert s.turns[1].byte_offset == len(json.dumps(user("u1", "a")))
 
 
+def test_multibyte_before_a_second_object_on_the_same_line(tmp_path):
+    """The offset of the *second* object has to count bytes, not characters.
+
+    Every other offset test puts multi-byte text on a line of its own, where
+    the line start alone carries the offset. Only a second object on the same
+    line makes the within-line cursor observable — and that cursor is now
+    carried rather than recomputed, so a character count here reads as a
+    plausible offset that addresses the middle of a UTF-8 sequence. [E3]
+    """
+    raw = (
+        json.dumps(user("u1", "ƒƒƒ"), ensure_ascii=False) + json.dumps(user("u2", "b")) + "\n"
+    ).encode()
+    s = check_adapter(cc, write(tmp_path, "s1.jsonl", raw))  # re-reads each span from disk
+
+    assert [t.uuid for t in s.turns] == ["u1", "u2"]
+    assert s.turns[1].byte_offset == raw.index(b'{"type": "user", "uuid": "u2"')
+
+
 def test_invalid_utf8_keeps_byte_true_offsets(tmp_path):
     bad = json.dumps(user("u1", "PLACEHOLDER")).replace("PLACEHOLDER", "caf\\u00e9")
     raw = bad.encode() + b"\n" + json.dumps(user("u2", "next")).encode() + b"\n"

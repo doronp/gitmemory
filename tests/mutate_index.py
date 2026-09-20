@@ -354,12 +354,27 @@ MUTANTS = [
         "    return text",
         "test_a_terminal_escape_in_a_transcript_does_not_reach_the_terminal",
     ),
+    (
+        "the within-line byte cursor counts characters",
+        "jsonl.py",
+        "                pos, byte_pos = end, byte_pos + byte_len",
+        "                pos, byte_pos = end, byte_pos + (end - pos)",
+        "test_multibyte_before_a_second_object_on_the_same_line",
+    ),
 ]
 
 
 def run(args: list[str]) -> bool:
-    """True when pytest is green."""
-    return subprocess.run([sys.executable, "-m", "pytest", "-q", *args], cwd=ROOT).returncode == 0
+    """True when pytest is green.
+
+    `tests` explicitly, not pytest's configured `testpaths`: those also hold
+    the benchmark, which needs a corpus and minutes. This harness asks one
+    question about the unit suite. [E3]
+    """
+    return (
+        subprocess.run([sys.executable, "-m", "pytest", "-q", "tests", *args], cwd=ROOT).returncode
+        == 0
+    )
 
 
 def main() -> int:
