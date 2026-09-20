@@ -174,6 +174,43 @@ def test_a_global_gpgsign_does_not_wedge_the_commit(tmp_path, monkeypatch):
     assert gitrepo.commit(home, "first") is not None
 
 
+def test_a_global_ignore_file_cannot_drop_bytes_out_of_a_commit(tmp_path, monkeypatch):
+    """The reproduction, not the mechanism: a global ignore that matches a segment.
+
+    `git add --all` honours `core.excludesFile`, and a global ignore list is a
+    normal thing to have. With `*.jsonl` in one, the manifest was staged and the
+    segment it references was not — and every signal said fine. `commit`
+    returned a sha, the working tree was untouched, so `verify` was clean, and
+    the only place the loss existed was the history, which is the one copy the
+    product claims is the reliable one.
+
+    Found by instrumenting a git call for an unrelated flake and noticing
+    `fsmonitor--daemon` in a store's `.git`, which is this machine's global
+    `core.fsmonitor = true`. Same door, quieter symptom. [E4]
+    """
+    _global_config(tmp_path, monkeypatch, f"[core]\n\texcludesFile = {tmp_path / 'ignore'}\n")
+    (tmp_path / "ignore").write_text("*.jsonl\n")
+
+    home = gitrepo.init(str(tmp_path / "store"))
+    session = os.path.join(home, "sessions", "claude-code", "2026-09-21")
+    os.makedirs(session)
+    for name in ("000000000000-000000000008.jsonl", "g0.json"):
+        with open(os.path.join(session, name), "w", encoding="utf-8") as fh:
+            fh.write('{"a":1}\n')
+
+    assert gitrepo.commit(home, "capture: one") is not None
+    out = subprocess.run(
+        ["git", "-C", home, "show", "--name-only", "--format=", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    committed = set(out.stdout.split())
+    here = "sessions/claude-code/2026-09-21"
+    assert f"{here}/000000000000-000000000008.jsonl" in committed, out.stdout
+    assert f"{here}/g0.json" in committed, out.stdout
+
+
 def test_an_inherited_git_dir_does_not_redirect_the_commit(tmp_path, monkeypatch):
     """The bug this guards: a watcher started from another repository's hook.
 
@@ -286,6 +323,12 @@ def test_not_one_git_variable_survives_into_the_subprocess(tmp_path, monkeypatch
     A named-variable test is a test that passes until git adds a variable. This
     one fails the moment anything `GIT_*` reaches the child, which is the
     property the module actually promises. [E4, Gemini 01/02/03/14]
+
+    Three names are set by `_env` itself, so those are checked by value and not
+    excused by name: each is planted below with an attacker's value first, and
+    the assertion is that what arrives is gitmemory's. An exemption by name
+    alone would pass `GIT_CONFIG_SYSTEM=/tmp/attacker` through the hole written
+    for `GIT_CONFIG_SYSTEM=/dev/null`. [E4]
     """
     for var in (
         "GIT_DIR",
@@ -298,15 +341,23 @@ def test_not_one_git_variable_survives_into_the_subprocess(tmp_path, monkeypatch
         "GIT_EXEC_PATH",
         "GIT_GRAFT_FILE",
         "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_TERMINAL_PROMPT",
         "GIT_CONFIG_COUNT",
     ):
         monkeypatch.setenv(var, "/tmp/attacker")
 
     env = gitrepo._env()
 
-    leaked = {k for k in env if k.startswith("GIT_")} - {"GIT_TERMINAL_PROMPT"}
+    ours = {
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_SYSTEM": os.devnull,
+    }
+    leaked = {k for k in env if k.startswith("GIT_")} - set(ours)
     assert not leaked, f"reached the git subprocess: {sorted(leaked)}"
-    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    for name, value in ours.items():
+        assert env[name] == value, f"{name} kept the planted value"
     assert "PATH" in env, "the scrub took the whole environment with it"
 
 

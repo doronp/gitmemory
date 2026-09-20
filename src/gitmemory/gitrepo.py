@@ -55,7 +55,7 @@ GITIGNORE = """\
 *.tmp.*
 """
 
-# Repository-local, so nothing here reads or writes the user's global config.
+# Repository-local. The reading half of that is enforced in `_env`, not here.
 _CONFIG = {
     "user.name": "gitmemory",
     "user.email": "gitmemory@localhost",
@@ -114,6 +114,31 @@ def _env() -> dict[str, str]:
     """
     env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     env["GIT_TERMINAL_PROMPT"] = "0"
+    # And the other half of the same hole, which the scrub above does not
+    # touch: git reads `~/.gitconfig` and `/etc/gitconfig` without any
+    # environment variable's help. The comment over `_CONFIG` said "nothing here
+    # reads or writes the user's global config" and only the writing half was
+    # true.
+    #
+    # Found by instrumenting a git call and seeing `fsmonitor--daemon` inside a
+    # store's `.git`, which is this machine's global `core.fsmonitor = true`
+    # arriving uninvited. A background daemon per store is the harmless end of
+    # it. The other end, reproduced: a global `core.excludesFile` naming a file
+    # that matches `*.jsonl` — and a global ignore list is a normal thing to
+    # have — makes `git add --all` skip every segment while still staging the
+    # manifest that references it. `commit` returns a sha, the working tree is
+    # untouched, so `verify` stays clean, and the history quietly stops
+    # containing the bytes it is the record of. `core.autocrlf` and a global
+    # `core.attributesFile` carrying a filter are the same shape against the
+    # bytes themselves.
+    #
+    # Naming those four keys in `_CONFIG` would fix the four we happened to
+    # think of, which is the thing this file already refused to do once. Point
+    # both config files at `/dev/null` instead: gitmemory's settings live in the
+    # repository's own config, and it has never had a use for an inherited one.
+    # git >= 2.32 for these two names; released 2021. [E4]
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_SYSTEM"] = os.devnull
     return env
 
 
