@@ -9,3 +9,7 @@ build/
 .hypothesis/
 .DS_Store
 graphify-out/
+# Review agents are given a git worktree of their own, which lands here. A
+# worktree is a checkout, so git offers to commit it as a gitlink — and did,
+# once. Their scratch is theirs; it is not this repository's history.
+.claude/

@@ -1105,6 +1105,26 @@ def test_a_session_id_refuses_a_second_source(home, src, tmp_path):
         store.capture(other, "claude-code", "sess", home=home)
 
 
+def test_the_session_tag_is_wide_enough_that_the_refusal_stays_unreachable(tmp_path):
+    """A narrow tag turns a refusal into a transcript that stops being captured.
+
+    `test_a_session_id_refuses_a_second_source` above is the floor under a
+    collision, and under the watcher that floor costs a session: there is no
+    `--session-id` to pass, so the loser is simply never captured again. At 32
+    bits the odds reached 50% around 77,000 transcripts sharing a stem, which is
+    not a number a long-lived agent directory is safe from. Width is the only
+    thing standing between a documented refusal and a silent stop, so it is
+    asserted rather than left to a comment. [E4, review: Gemini r3 §5]
+    """
+    a = str(tmp_path / "a" / "session.jsonl")
+    b = str(tmp_path / "b" / "session.jsonl")
+
+    assert store.session_id_for(a) == store.session_id_for(a), "not stable for one path"
+    assert store.session_id_for(a) != store.session_id_for(b), "the path is not in the name"
+    tag = store.session_id_for(a).rsplit("-", 1)[1]
+    assert len(tag) == 16, f"the tag narrowed to {len(tag) * 4} bits"
+
+
 def test_cli_session_ids_do_not_collide_on_basename(tmp_path):
     """The default id is where that collision actually came from."""
     from gitmemory.__main__ import main

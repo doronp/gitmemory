@@ -436,6 +436,24 @@ def discover(watches: list[Watch]) -> list[tuple[Watch, str]]:
     to `verify`. The kernel already knows they are one file; `_file_key` asks
     it. A path that cannot be `stat`ed is dropped, which `isfile` did anyway.
     [E4, review: CLI minor]
+
+    Inode identity buys the deduplication at the cost of a discontinuity, which
+    a reviewer found and which is worth naming rather than fixing. Two *hard
+    links* to one transcript are one inode, so exactly one of the two names is
+    kept — whichever `sorted(glob(...))` reaches first, which is deterministic
+    for a fixed set of names but changes if a name is added or removed. Break
+    the link (`cp` over one of them) and the survivor's session carries on while
+    the other becomes a new session that starts at offset zero and re-captures
+    the whole file.
+
+    Left as is on purpose. The pre-fix behaviour was strictly worse — *both*
+    names captured, always, into two sessions — so this trades a rare
+    discontinuity for a common duplication. The recommended alternative,
+    case-normalising the path instead, does not work: `posixpath.normcase` is
+    the identity function on macOS, and case sensitivity is a per-volume
+    property no string transform can read. A caller who genuinely wants two
+    names captured separately should give them two watch roots and two agents,
+    which is the configuration that already says so. [E4, review: Gemini r3 §1]
     """
     seen: set[tuple[int, int]] = set()
     out = []

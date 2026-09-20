@@ -162,12 +162,17 @@ def session_id_for(source_path: str) -> str:
     Two ceilings, both deliberate, both noted here because the name is the only
     place either is visible:
 
-    ponytail: the tag is 32 bits, so two transcripts with the same squeezed stem
-    can land on one session id. That is the [E2] bug above, and it is not silent
-    any more — `_capture` compares the incoming path against the `source_path`
-    the manifest recorded and refuses rather than duplicating. Loud and one
-    session stuck beats quiet and a store that grows without bound. Widening
-    the digest would make it rarer and would still need the refusal.
+    The tag was 32 bits, which is a 50% chance of a collision at about 77,000
+    transcripts sharing a squeezed stem. That is the [E2] bug above, and it is
+    not silent — `_capture` compares the incoming path against the manifest's
+    `source_path` and refuses rather than duplicating. But the refusal is a
+    stuck session, and under the watcher it is stuck for good: the CLI can be
+    handed a different `--session-id` and the watcher cannot, so one transcript
+    simply stops being captured. Gemini called that a defect wearing a comment
+    and was right. 64 bits costs eight characters in a directory name and moves
+    the same 50% out past a hundred billion, and the digest can be widened now
+    only because nothing has been released to migrate. The refusal stays: it is
+    the floor, and this is just making it unreachable. [E4, review: Gemini r3 §5]
 
     ponytail: identity is the path, so a transcript that moves is a new session
     and is copied again whole. Bounded — one extra copy, fully attested, and
@@ -177,7 +182,7 @@ def session_id_for(source_path: str) -> str:
     """
     stem = os.path.splitext(os.path.basename(source_path))[0]
     stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:96].lstrip("._-")
-    tag = hashlib.sha256(os.path.realpath(source_path).encode()).hexdigest()[:8]
+    tag = hashlib.sha256(os.path.realpath(source_path).encode()).hexdigest()[:16]
     return f"{stem}-{tag}" if stem else f"s-{tag}"
 
 

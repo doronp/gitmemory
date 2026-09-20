@@ -63,6 +63,43 @@ def _key(path) -> tuple[int, int]:
     return (st.st_dev, st.st_ino)
 
 
+def _on_pass(monkeypatch, action, *, poll: float = 0):
+    """Run `action()` once per `run` pass, and only then.
+
+    `run` is not the only caller of `time.sleep` in this process, and patching
+    the module attribute cannot tell them apart: `daemon.time` *is* the `time`
+    module, so `monkeypatch.setattr(daemon.time, "sleep", ...)` and
+    `monkeypatch.setattr(time, "sleep", ...)` are the same patch, not two with
+    different reach. What else arrives here is `subprocess.Popen._wait`, which
+    busy-polls a child with `time.sleep(delay)` whenever a timeout is set, and
+    `gitrepo._git` always sets one — so every `git` slow enough to need a second
+    look was arriving as a pass boundary. That fired one test's deletion in the
+    middle of `gitrepo.init`, between two of its `git config` calls, and the
+    next one died with `fatal: not in a git directory`; it also burned a pass,
+    so `run` hit its stop condition early. Roughly one run in twenty, and two
+    wrong theories — an init lock collision, then the `interval` gate — before
+    the probe printed the caller: `subprocess.py:2079 _wait delay=0.001`.
+
+    So discriminate on the duration. `run` sleeps `poll` and nothing else, in
+    both of its two places (the end of a pass and the retry after `init`
+    fails); `_wait` sleeps a doubling sequence from 0.0005 and never zero.
+    Anything that is not `poll` belongs to somebody else and is passed through
+    to the real sleep, which is what that caller is owed.
+
+    One helper because there were three call sites, two of them written without
+    the discriminator and exposed to exactly the flake it was written for.
+    [E4, review: CLI 9 / Gemini r3 §2]
+    """
+    real_sleep = time.sleep
+
+    def sleep(seconds):
+        if seconds != poll:
+            return real_sleep(seconds)
+        return action()
+
+    monkeypatch.setattr(time, "sleep", sleep)
+
+
 def _spool(home: str, name: str, payload) -> str:
     path = os.path.join(home, daemon.SPOOL, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -1140,12 +1177,12 @@ def test_the_error_rate_limiter_is_the_interval_not_the_poll(tmp_path, monkeypat
     lines: list[str] = []
     passes = {"n": 0}
 
-    def stop_after_five(_seconds):
+    def stop_after_five():
         passes["n"] += 1
         if passes["n"] >= 5:
             raise KeyboardInterrupt
 
-    monkeypatch.setattr(daemon.time, "sleep", stop_after_five)
+    _on_pass(monkeypatch, stop_after_five)
     try:
         with pytest.raises(KeyboardInterrupt):
             daemon.run(home, poll=0, interval=1e9, log=lines.append)
@@ -1170,7 +1207,7 @@ def test_a_git_that_is_briefly_unavailable_is_retried_rather_than_fatal(tmp_path
         return real(h)
 
     monkeypatch.setattr(daemon.gitrepo, "init", flaky)
-    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    _on_pass(monkeypatch, lambda: None)
     lines: list[str] = []
     passes = {"n": 0}
 
@@ -1209,28 +1246,12 @@ def test_a_repository_deleted_under_a_running_watcher_comes_back(tmp_path, monke
     _write(src, TURN)
     _config(home, [root], git=False)
 
-    # `run` is not the only caller of `time.sleep` in this process, and patching
-    # the module attribute cannot tell them apart. `subprocess.Popen._wait`
-    # busy-polls a child with `time.sleep(delay)` whenever a timeout is set, and
-    # `gitrepo._git` always sets one — so every `git` invocation slow enough to
-    # need a second look was arriving here as a pass boundary. That fired the
-    # deletion in the middle of `gitrepo.init`, between two of its `git config`
-    # calls, and the next one died with `fatal: not in a git directory`; it also
-    # burned a pass, so `run` hit the `KeyboardInterrupt` one commit early.
-    # Roughly one run in twenty, and two wrong theories — an init lock
-    # collision, then the `interval` gate — before the probe printed the caller:
-    # `subprocess.py:2079 _wait delay=0.001`. So discriminate on the duration.
-    # `run` sleeps `poll` and nothing else; `_wait` sleeps a doubling sequence
-    # from 0.0005 and never zero. Anything that is not `poll` belongs to
-    # somebody else and is passed through to the real sleep, which is what that
-    # caller is owed. [E4, review: CLI 9]
-    real_sleep = time.sleep
+    # The pass boundary is `_on_pass`, which is where the reasoning about why
+    # `time.sleep` cannot simply be counted now lives. [E4, review: CLI 9]
     passes: list[int] = []
     deleted: list[int] = []
 
-    def sleep(seconds):
-        if seconds != 0:  # not `run`'s `poll=0`
-            return real_sleep(seconds)
+    def on_pass():
         passes.append(1)
         assert len(passes) < 10, "run never reached a pass that could commit"
         if not deleted:
@@ -1244,7 +1265,7 @@ def test_a_repository_deleted_under_a_running_watcher_comes_back(tmp_path, monke
             return None
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(time, "sleep", sleep)
+    _on_pass(monkeypatch, on_pass)
     lines: list[str] = []
     with pytest.raises(KeyboardInterrupt):
         daemon.run(home, poll=0, interval=0, log=lines.append)
