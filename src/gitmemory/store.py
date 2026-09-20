@@ -48,6 +48,7 @@ __all__ = [
     "capture",
     "resolve_home",
     "segment_groups",
+    "session_id_for",
     "sessions",
     "span",
     "verify",
@@ -110,6 +111,31 @@ def resolve_home(home: str | None = None) -> str:
         if up == parent:
             return path
         parent = up
+
+
+def session_id_for(source_path: str) -> str:
+    """The store's name for the session a transcript file holds.
+
+    Basename plus a digest of the real path. The bare basename made
+    `~/projA/session.jsonl` and `~/projB/session.jsonl` one session, and every
+    alternating capture "diverged" past the other and re-copied it whole —
+    unbounded duplication that `verify` calls clean. [E2]
+
+    It lives here rather than in the CLI because the watcher has to arrive at
+    the same name from the same path without asking the store, and two
+    implementations of one naming rule is one implementation and one bug. [E4]
+
+    The stem is squeezed into what `_SAFE_RE` accepts, lossily and on purpose:
+    the digest is what makes the name unique, so the stem is only there to make
+    a directory listing readable. A CLI user picks the path they pass; the
+    watcher is handed whatever is in a directory it was pointed at, and
+    `capture` raising on a transcript whose name has a space in it would be the
+    watcher stopping at the first file it did not choose. [E4]
+    """
+    stem = os.path.splitext(os.path.basename(source_path))[0]
+    stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:96].lstrip("._-")
+    tag = hashlib.sha256(os.path.realpath(source_path).encode()).hexdigest()[:8]
+    return f"{stem}-{tag}" if stem else f"s-{tag}"
 
 
 @dataclass(slots=True, frozen=True)

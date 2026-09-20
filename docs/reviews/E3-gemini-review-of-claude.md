@@ -60,8 +60,7 @@ file object or a file-like stream directly to the adapter's parse function would
 During a full rebuild in `index.build`, blocks are inserted sequentially via `_fill`:
 ```python
 db.execute(
-    f"INSERT INTO blocks ({','.join(row)}) "
-    f"VALUES ({','.join(':' + k for k in row)})",
+    f"INSERT INTO blocks ({','.join(row)}) VALUES ({','.join(':' + k for k in row)})",
     row,
 )
 ```

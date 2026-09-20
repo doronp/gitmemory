@@ -10,13 +10,12 @@ from __future__ import annotations
 
 import argparse
 import builtins
-import hashlib
 import os
 import re
 import sqlite3
 import sys
 
-from . import index, redact, store
+from . import daemon, index, redact, store
 from .adapters import get as get_adapter
 
 # Everything this module prints is bytes an attacker may have chosen: a recall
@@ -50,35 +49,47 @@ def print(*args, sep=" ", end="\n", file=None, flush=False):  # noqa: A001 - see
     builtins.print(*(_safe_str(str(a)) for a in args), sep=sep, end=end, file=file, flush=flush)
 
 
-def _default_session_id(source: str) -> str:
-    """Basename plus a digest of the full path.
-
-    The bare basename made `~/projA/session.jsonl` and `~/projB/session.jsonl`
-    one session, and every alternating capture "diverged" past the other and
-    re-copied it whole — unbounded duplication that `verify` calls clean. [E2]
-    """
-    stem = os.path.splitext(os.path.basename(source))[0]
-    tag = hashlib.sha256(os.path.realpath(source).encode()).hexdigest()[:8]
-    return f"{stem}-{tag}"
-
-
 def _capture(args) -> int:
-    session_id = args.session_id or _default_session_id(args.source)
-    boundaries = None
-    if not args.no_parse:
-        # Parse first only to collect boundaries; a parse failure must not cost
-        # us the bytes, so it degrades to a capture without them. [E2]
-        try:
-            session = get_adapter(args.agent).parse(args.source)
-            boundaries = [e.byte_offset for e in session.events if e.kind == "compaction"]
-        except (OSError, RecursionError, ValueError) as exc:
-            print(f"parse failed ({exc}); capturing bytes without boundaries", file=sys.stderr)
-    cap = store.capture(args.source, args.agent, session_id, home=args.home, boundaries=boundaries)
+    home = store.resolve_home(args.home)
+    if args.session_id:
+        # An explicit id skips `capture_one`'s naming, not its parse handling.
+        boundaries = None
+        if not args.no_parse:
+            try:
+                session = get_adapter(args.agent).parse(args.source)
+                boundaries = [e.byte_offset for e in session.events if e.kind == "compaction"]
+            except (OSError, RecursionError, ValueError) as exc:
+                print(f"parse failed ({exc}); capturing bytes without boundaries", file=sys.stderr)
+        cap = store.capture(
+            args.source, args.agent, args.session_id, home=home, boundaries=boundaries
+        )
+    else:
+        cap = daemon.capture_one(home, args.source, args.agent, parse=not args.no_parse)
     if cap.diverged:
         print(f"diverged: {cap.diverged}", file=sys.stderr)
         print(f"sealed generation {cap.generation - 1}; now writing g{cap.generation:02d}")
     print(f"{cap.manifest_path}  +{cap.appended}B  size={cap.size}  g{cap.generation:02d}")
     return 0
+
+
+def _watch(args) -> int:
+    home = store.resolve_home(args.home)
+    watches = daemon.load_watches(home)
+    if not watches:
+        # Not an error: a store with no `[[watch]]` is a store nobody has told
+        # what to watch, and guessing is the one thing the watcher must not do.
+        print(
+            f"no [[watch]] in {os.path.join(home, 'config.toml')}; watching nothing",
+            file=sys.stderr,
+        )
+    return daemon.run(
+        home,
+        poll=args.poll,
+        interval=args.interval,
+        once=args.once,
+        parse=not args.no_parse,
+        log=lambda m: print(m, file=sys.stderr),
+    )
 
 
 def _verify(args) -> int:
@@ -163,6 +174,13 @@ def main(argv: list[str] | None = None) -> int:
     cap.add_argument("--session-id", default=None)
     cap.add_argument("--no-parse", action="store_true", help="skip adapter; record bytes only")
     cap.set_defaults(fn=_capture)
+
+    wat = sub.add_parser("watch", help="tail the configured roots and capture what grew")
+    wat.add_argument("--poll", type=float, default=daemon.POLL)
+    wat.add_argument("--interval", type=float, default=daemon.INTERVAL)
+    wat.add_argument("--once", action="store_true", help="one pass, then exit")
+    wat.add_argument("--no-parse", action="store_true", help="skip adapter; record bytes only")
+    wat.set_defaults(fn=_watch)
 
     ver = sub.add_parser("verify", help="check every manifest's contiguity proof")
     ver.set_defaults(fn=_verify)
