@@ -9,6 +9,7 @@ is not a gate. The transport itself lands with the git daemon in E4.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import sys
 
@@ -16,12 +17,29 @@ from . import redact, store
 from .adapters import get as get_adapter
 
 
+def _default_session_id(source: str) -> str:
+    """Basename plus a digest of the full path.
+
+    The bare basename made `~/projA/session.jsonl` and `~/projB/session.jsonl`
+    one session, and every alternating capture "diverged" past the other and
+    re-copied it whole — unbounded duplication that `verify` calls clean. [E2]
+    """
+    stem = os.path.splitext(os.path.basename(source))[0]
+    tag = hashlib.sha256(os.path.realpath(source).encode()).hexdigest()[:8]
+    return f"{stem}-{tag}"
+
+
 def _capture(args) -> int:
-    session_id = args.session_id or os.path.splitext(os.path.basename(args.source))[0]
+    session_id = args.session_id or _default_session_id(args.source)
     boundaries = None
     if not args.no_parse:
-        session = get_adapter(args.agent).parse(args.source)
-        boundaries = [e.byte_offset for e in session.events if e.kind == "compaction"]
+        # Parse first only to collect boundaries; a parse failure must not cost
+        # us the bytes, so it degrades to a capture without them. [E2]
+        try:
+            session = get_adapter(args.agent).parse(args.source)
+            boundaries = [e.byte_offset for e in session.events if e.kind == "compaction"]
+        except (OSError, RecursionError, ValueError) as exc:
+            print(f"parse failed ({exc}); capturing bytes without boundaries", file=sys.stderr)
     cap = store.capture(args.source, args.agent, session_id, home=args.home, boundaries=boundaries)
     if cap.diverged:
         print(f"diverged: {cap.diverged}", file=sys.stderr)
@@ -44,8 +62,21 @@ def _push(args) -> int:
     if not allowed:
         print(f"refusing to push: {why}", file=sys.stderr)
         return 1
-    files = [os.path.join(d, f) for d, _, fs in os.walk(home) for f in fs if ".git" not in d]
-    clean, findings = redact.gate(files)
+    # `".git" not in d` was a substring test against the whole path, and the
+    # default home is `~/.gitmemory` — so every file was filtered out, the gate
+    # scanned nothing, and push was allowed. Compare path components, relative
+    # to home, or the store's own name defeats its own gate. [E2]
+    skip = {".git", ".locks"}
+    groups = store.segment_groups(home)
+    grouped = {p for g in groups for p in g}
+    files = [
+        p
+        for d, _, fs in os.walk(home)
+        if not skip & set(os.path.relpath(d, home).split(os.sep))
+        for f in fs
+        if (p := os.path.realpath(os.path.join(d, f))) not in grouped
+    ]
+    clean, findings = redact.gate(files, groups)
     for f in findings:
         print(f, file=sys.stderr)
     if not clean:
@@ -79,7 +110,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     try:
         return args.fn(args)
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RecursionError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

@@ -294,7 +294,7 @@ Not taken: every storage layer, every index, every pipeline. Those are where the
 | Key ideas | `sumy` LexRank/TextRank over prose blocks | yes |
 | Key phrases | `KeyBERT` + Model2Vec backend, fixed seed | yes |
 | Timeline | fold over `Event` + `Turn` | yes |
-| Decision graph | structural → `networkx` → transitive reduction → `D2`/`dot` | yes, **gated** |
+| Decision graph | structural → **graphify** (`build_from_json` → cluster → export) | yes, **gated** |
 | Titles/labels | optional local `qwen3.5:35b` (46 tok/s measured) at an **explicit gate only** | no — marked |
 
 **No LLM anywhere automatic.** 4B-class models hallucinate rationale that was never in the
@@ -315,6 +315,35 @@ linter retries as "rejected alternatives."
 
 Every node carries a `source_ref` to a committed block hash. **No node may exist without one.**
 That rule is what stops a decision diagram from becoming fiction.
+
+#### The graph layer is graphify, not ours **[E2]**
+
+The original plan — `networkx` plus a hand-rolled transitive reduction plus a `D2`/`dot`
+emitter — was going to reimplement a tool that already exists under a compatible licence.
+Verified before deciding, not assumed:
+
+| Question | Answer |
+|---|---|
+| Licence | Apache-2.0 (`LICENSE`, `license = "Apache-2.0"`), inbound-compatible with ours |
+| Distribution | PyPI `graphifyy` 0.9.53 |
+| Runtime deps | `networkx`, `numpy`, `rapidfuzz`, tree-sitter grammars — no service, no key |
+| LLM needed? | No, for the path we use. Structural extraction is tree-sitter AST |
+| Deterministic? | Yes. `cluster.py` pins `seed=42` / `random_seed=42` / `randomness=0.001` and explicitly stabilises for Louvain's order-sensitivity (`cluster.py:117`) |
+| Input seam | `build_from_json(extraction, *, directed, root)` takes a plain nodes/edges dict |
+
+That last row is what makes it fit rather than merely adjacent. graphify's own corpus model
+is *files*; ours is *decisions inside transcripts*. We do not point it at a directory. We
+derive decision nodes ourselves — deterministically, each with its `source_ref`, behind the
+precision gate above — emit them as an extraction dict, and hand that to `build_from_json`.
+graphify supplies the graph, the community detection, the HTML and the GraphRAG JSON;
+gitmemory supplies the truth claims and stays answerable for them.
+
+What it does **not** give us, and what the gate is therefore still about: the extraction
+itself. Deciding that a span of transcript *is* a decision, with a rejected alternative, is
+the part that can be wrong, and no graph library can be right on our behalf.
+
+Not wired in yet — this records the decision and its evidence at E2. The attribution goes in
+THIRD_PARTY.md when the first line of code depends on it, not before.
 
 ### 2.7 Retrieval
 

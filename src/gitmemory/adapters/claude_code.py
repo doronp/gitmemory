@@ -442,8 +442,11 @@ PRICES_AS_OF = "2026-09-20"
 PRICES_SOURCE = "https://www.anthropic.com/pricing"
 PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
     "claude-opus-4": (15.0, 75.0),
+    "claude-opus-4-1": (15.0, 75.0),
+    "claude-opus-4-5": (5.0, 25.0),
     "claude-3-opus": (15.0, 75.0),
     "claude-sonnet-4": (3.0, 15.0),
+    "claude-sonnet-4-5": (3.0, 15.0),
     "claude-3-7-sonnet": (3.0, 15.0),
     "claude-3-5-sonnet": (3.0, 15.0),
     "claude-haiku-4-5": (1.0, 5.0),
@@ -453,6 +456,21 @@ PRICES_USD_PER_MTOK: dict[str, tuple[float, float]] = {
 # Anthropic's published multipliers on the input rate.
 _CACHE_WRITE_MULT = 1.25
 _CACHE_READ_MULT = 0.1
+
+# What may follow a matched key: nothing, or a release date. NOT another version
+# segment — bare `startswith` let `claude-opus-4` swallow `claude-opus-4-5-…`
+# and bill it at the retired $15/$75, ~3x over, while reporting `estimated:
+# True` with a same-day `as_of` that reads as freshly checked. A version we have
+# not priced has to come back unknown, which is what the docstring promises. [E2]
+_MODEL_TAIL = re.compile(r"^(?:-\d{8})?$")
+
+
+def _priced_as(model: str) -> str | None:
+    """Longest key that matches at a model boundary, or None."""
+    for key in sorted(PRICES_USD_PER_MTOK, key=len, reverse=True):
+        if model.startswith(key) and _MODEL_TAIL.match(model[len(key) :]):
+            return key
+    return None
 
 
 def estimate_cost(model: str | None, usage: dict) -> dict | None:
@@ -465,7 +483,7 @@ def estimate_cost(model: str | None, usage: dict) -> dict | None:
     """
     if not model:
         return None
-    match = max((k for k in PRICES_USD_PER_MTOK if model.startswith(k)), key=len, default=None)
+    match = _priced_as(model)
     if match is None:
         return None
     rate_in, rate_out = PRICES_USD_PER_MTOK[match]

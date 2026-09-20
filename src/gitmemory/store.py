@@ -31,16 +31,18 @@ Two invariants this module exists to hold:
 from __future__ import annotations
 
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import re
+import threading
 from dataclasses import dataclass
 from glob import glob
 
 from .records import canonical_json
 
-__all__ = ["Capture", "capture", "resolve_home", "verify"]
+__all__ = ["Capture", "capture", "resolve_home", "segment_groups", "verify"]
 
 SCHEMA = 1
 CHUNK = 1 << 20
@@ -51,12 +53,18 @@ _GEN_RE = re.compile(r"^g(\d+)\.json$")
 # `session_id` become path components, so they are a trust boundary even when
 # today's only caller is our own adapter.
 _SAFE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# A segment file, and nothing else, in a generation directory.
+_SEG_RE = re.compile(r"^(\d{12})-(\d{12})\.jsonl$")
 
 
 def _safe(name: str, what: str) -> str:
     if not isinstance(name, str) or not _SAFE_RE.match(name):
         raise ValueError(f"unsafe {what} for a path component: {name!r}")
-    return name
+    # Case-fold. APFS and NTFS are case-insensitive but case-preserving, so
+    # `CLAUDE-code` and `claude-code` are one directory on disk and two strings
+    # in two manifests — and `verify` compares strings, so it would fail from
+    # then on, permanently, for a difference the filesystem does not have. [E2]
+    return name.lower()
 
 
 def _gen_file(n: int) -> str:
@@ -73,8 +81,13 @@ def resolve_home(home: str | None = None) -> str:
     A store nested in a checkout gets its history rewritten by whoever owns the
     outer repo — a `git clean`, a branch switch, a rebase. Refusing is cheaper
     than explaining the loss afterwards (DESIGN.md §2.4 [R1]).
+
+    `realpath`, not `abspath`: a home that is a symlink into a work tree has
+    parents that are not the real ones, so a lexical walk sails straight past
+    the `.git` it exists to find. `~/.gitmemory -> ~/dotfiles/gitmemory` is an
+    ordinary layout, not a contrived one. [E2]
     """
-    path = os.path.abspath(
+    path = os.path.realpath(
         os.path.expanduser(home or os.environ.get("GITMEMORY_HOME") or "~/.gitmemory")
     )
     parent = os.path.dirname(path)
@@ -128,23 +141,35 @@ def _prefix_hash(fh, n: int):
     return h
 
 
+def _tmp_name(prefix: str) -> str:
+    # pid alone collides between threads of one process, and the loser's bytes
+    # end up inside the winner's segment. [E2]
+    return f"{prefix}.{os.getpid()}.{threading.get_ident():x}"
+
+
 def _write_atomic(path: str, data: bytes) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.tmp{os.getpid()}"
-    with open(tmp, "wb") as fh:
-        fh.write(data)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    tmp = _tmp_name(f"{path}.tmp")
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        _unlink(tmp)
+        raise
     _fsync_dir(os.path.dirname(path))
 
 
 def _fsync_dir(path: str) -> None:
     """Durability of the rename itself, not just the bytes.
 
-    Without this a crash can leave the segment on disk and the manifest naming
-    it absent, or the reverse. Cheap here; the alternative is a store that only
-    looks append-only.
+    This *orders* the two publications; it does not make them one. A crash
+    between the segment rename and the manifest write still leaves a segment
+    no manifest names — `_adopt_orphans` is what makes that state recoverable
+    rather than permanent. The earlier version of this docstring claimed the
+    fsync closed that window. It does not. [E2]
     """
     fd = os.open(path, os.O_RDONLY)
     try:
@@ -153,6 +178,118 @@ def _fsync_dir(path: str) -> None:
         pass
     finally:
         os.close(fd)
+
+
+@contextlib.contextmanager
+def _locked(home: str, agent: str, session_id: str):
+    """One capture at a time per session. Other sessions still run in parallel.
+
+    Without it, two captures that read the same prior manifest each write a
+    segment and the loser's is left named by nothing: `verify` reports an
+    unrecorded file from then on, and no later capture clears it. A hook fire
+    racing a watcher is the ordinary case, not the exotic one. [E2]
+
+    Locks live under `<home>/.locks/`, not beside the manifests — the sessions
+    tree is what gets committed, and a lock file is not part of the proof.
+    """
+    path = os.path.join(home, ".locks", agent, f"{session_id}.lock")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> None:
+    """Finish a capture that was killed after its segment landed.
+
+    Write ordering makes "segment on disk, manifest not written" the only crash
+    state. Nothing used to reclaim it: the next capture resumes from the
+    recorded offset, publishes a differently-named overlapping segment, and
+    `verify` reports an unrecorded file on every run thereafter with no command
+    that fixes it.
+
+    Adopting beats deleting. The orphan can hold bytes that are no longer in the
+    source — the fable-pruner case, where the transcript is rewritten in place
+    while the manifest still points before the rewrite. Deleting would destroy
+    the only surviving copy, which is the loss the generations design exists to
+    prevent. So we write the manifest the killed capture would have written and
+    let the next divergence check decide whether the source still continues it.
+
+    Re-hashing the whole generation is the cost, and it is paid only after a
+    crash. Callers hold the session lock. [E2]
+    """
+    prior = _manifests(session_dir)
+    gen = prior[-1][0] if prior else 0
+    seg_dir = os.path.join(home, "raw", agent, session_id, _gen_dir(gen))
+    if not os.path.isdir(seg_dir):
+        return
+
+    man: dict | None = None
+    if prior:
+        with open(prior[-1][1], "rb") as fh:
+            man = json.loads(fh.read())
+
+    with os.scandir(seg_dir) as it:
+        names = sorted(e.name for e in it if e.is_file())
+    # A temp file is an abandoned copy that never became a segment. Removing it
+    # is what the interrupted process would have done itself; it is also the one
+    # thing `verify`'s stray check cannot see, because it starts with a dot.
+    for name in names:
+        if name.startswith(".incoming."):
+            _unlink(os.path.join(seg_dir, name))
+
+    listed = {os.path.basename(s["path"]) for s in (man or {}).get("segments", [])}
+    pending: dict[int, tuple[int, str]] = {}
+    for name in names:
+        m = _SEG_RE.match(name)
+        if m and name not in listed:
+            pending[int(m.group(1))] = (int(m.group(2)), name)
+
+    segments = list((man or {}).get("segments", []))
+    size = (man or {}).get("size", 0)
+    adopted = False
+    while size in pending:
+        end, name = pending.pop(size)
+        full = os.path.join(seg_dir, name)
+        if os.path.getsize(full) != end - size:
+            break  # a torn temp, not a published segment; leave it for verify
+        with open(full, "rb") as fh:
+            digest = hashlib.sha256(fh.read()).hexdigest()
+        segments.append(
+            {
+                "path": os.path.join("raw", agent, session_id, _gen_dir(gen), name),
+                "start": size,
+                "end": end,
+                "sha256": digest,
+            }
+        )
+        size, adopted = end, True
+
+    if not adopted:
+        return
+
+    whole = hashlib.sha256()
+    for seg in segments:
+        with open(os.path.join(home, seg["path"]), "rb") as fh:
+            while chunk := fh.read(CHUNK):
+                whole.update(chunk)
+    manifest = {
+        "schema": SCHEMA,
+        "agent": agent,
+        "session_id": session_id,
+        "source_path": (man or {}).get("source_path", ""),
+        "generation": gen,
+        "diverged_from": (man or {}).get("diverged_from"),
+        "size": size,
+        "file_sha256": whole.hexdigest(),
+        "prev_manifest_sha256": (man or {}).get("prev_manifest_sha256"),
+        "segments": segments,
+        "compact_boundaries": (man or {}).get("compact_boundaries", []),
+    }
+    _write_atomic(os.path.join(session_dir, _gen_file(gen)), canonical_json(manifest))
 
 
 def capture(
@@ -173,8 +310,19 @@ def capture(
     home = resolve_home(home)
     agent = _safe(agent, "agent")
     session_id = _safe(session_id, "session_id")
+    with _locked(home, agent, session_id):
+        return _capture(home, source_path, agent, session_id, boundaries)
 
+
+def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting hides the ordering
+    home: str,
+    source_path: str,
+    agent: str,
+    session_id: str,
+    boundaries: list[int] | None,
+) -> Capture:
     session_dir = os.path.join(home, "sessions", agent, session_id)
+    _adopt_orphans(home, agent, session_id, session_dir)
     prior = _manifests(session_dir)
 
     gen, base, segments, diverged_from, prev_manifest_sha = 0, 0, [], None, None
@@ -187,6 +335,16 @@ def capture(
             with open(prev_path, "rb") as pf:
                 prev_bytes = pf.read()
             prev = json.loads(prev_bytes)
+            # A different file is not a rewrite of this one. Two transcripts
+            # with the same basename used to land in one session directory and
+            # "diverge" past each other forever, re-copying both in full on
+            # every capture — zero duplication (DESIGN.md §2.4) inverted. [E2]
+            was = prev.get("source_path")
+            if was and was != os.path.realpath(source_path):
+                raise ValueError(
+                    f"session {session_id!r} was captured from {was}, not "
+                    f"{os.path.realpath(source_path)}; pass a distinct --session-id"
+                )
             whole = _prefix_hash(fh, prev["size"])
             if whole is None:
                 diverged = f"source is shorter than the {prev['size']} bytes already captured"
@@ -219,7 +377,7 @@ def capture(
 
         seg_dir = os.path.join(home, "raw", agent, session_id, _gen_dir(gen))
         os.makedirs(seg_dir, exist_ok=True)
-        tmp = os.path.join(seg_dir, f".incoming.{os.getpid()}")
+        tmp = _tmp_name(os.path.join(seg_dir, ".incoming"))
         seg_hash = hashlib.sha256()
         appended = 0
         try:
@@ -252,7 +410,17 @@ def capture(
     seg_rel: str | None = None
     if appended:
         name = f"{base:012d}-{end:012d}.jsonl"
-        os.replace(tmp, os.path.join(seg_dir, name))
+        seg_path = os.path.join(seg_dir, name)
+        # Never clobber. A file already at this name holds bytes no manifest
+        # claims, and an equal-length in-place rewrite of the source produces
+        # exactly this collision — `os.replace` would destroy the only copy of
+        # the pre-rewrite bytes. Adoption above should have taken it; if one is
+        # still here, stop rather than overwrite. [E2]
+        # ponytail: TOCTOU-free only because the session lock is held.
+        if os.path.exists(seg_path):
+            _unlink(tmp)
+            raise RuntimeError(f"refusing to overwrite an existing segment: {name}")
+        os.replace(tmp, seg_path)
         _fsync_dir(seg_dir)
         seg_rel = os.path.join("raw", agent, session_id, _gen_dir(gen), name)
         segments.append(
@@ -269,7 +437,7 @@ def capture(
         "schema": SCHEMA,
         "agent": agent,
         "session_id": session_id,
-        "source_path": os.path.abspath(source_path),
+        "source_path": os.path.realpath(source_path),
         "generation": gen,
         "diverged_from": diverged_from,
         "size": end,
@@ -279,6 +447,11 @@ def capture(
         "compact_boundaries": sorted({*carried, *(boundaries or [])}),
     }
     manifest_path = os.path.join(session_dir, _gen_file(gen))
+    # Invariant 2 (a sealed generation is immutable) was breakable by a slow
+    # capture writing g00 after a neighbour had already forked g01. The session
+    # lock is the fix; a redundant "refuse if g<n+1> exists" guard was written
+    # here and then deleted, because `gen` always comes from the newest manifest
+    # and no reachable state makes it fire. An untestable branch is not insurance. [E2]
     _write_atomic(manifest_path, canonical_json(manifest))
     return Capture(manifest_path, gen, seg_rel, appended, end, diverged)
 
@@ -286,6 +459,28 @@ def capture(
 def _unlink(path: str) -> None:
     with contextlib.suppress(FileNotFoundError):
         os.unlink(path)
+
+
+def segment_groups(home: str) -> list[list[str]]:
+    """One ordered, absolute segment run per generation manifest.
+
+    The egress gate needs these because a credential can straddle a cut: what
+    leaves the machine is the concatenation, not any one file. Unreadable or
+    escaping manifests are skipped — `verify` is what reports those. [E2]
+    """
+    groups = []
+    for path in sorted(glob(os.path.join(home, "sessions", "*", "*", "g*.json"))):
+        if not _GEN_RE.match(os.path.basename(path)):
+            continue
+        try:
+            with open(path, "rb") as fh:
+                man = json.loads(fh.read())
+            run = [_inside(home, s["path"]) for s in man["segments"]]
+        except Exception:  # noqa: BLE001 - a manifest is untrusted data
+            continue
+        if run and all(run):
+            groups.append([p for p in run if p])
+    return groups
 
 
 def verify(home: str | None = None) -> list[str]:
@@ -298,8 +493,15 @@ def verify(home: str | None = None) -> list[str]:
     home = resolve_home(home)
     problems: list[str] = []
     for path in sorted(glob(os.path.join(home, "sessions", "*", "*", "g*.json"))):
-        if _GEN_RE.match(os.path.basename(path)):
+        if not _GEN_RE.match(os.path.basename(path)):
+            continue
+        try:
             problems += _verify_manifest(home, path)
+        except Exception as exc:  # noqa: BLE001 - a manifest is untrusted data
+            # One malformed manifest used to abort the sweep, so real tampering
+            # in every later session went unreported and the exit code blamed
+            # the crash instead. A bad manifest is one problem, not a stop. [E2]
+            problems.append(f"{os.path.relpath(path, home)}: unverifiable manifest ({exc!r})")
     return problems
 
 
@@ -313,12 +515,28 @@ def _verify_manifest(home: str, path: str) -> list[str]:  # noqa: PLR0912 - one 
     except (OSError, ValueError) as exc:
         return [f"{rel}: unreadable manifest ({exc})"]
 
+    if not isinstance(man, dict):
+        return [f"{rel}: manifest is {type(man).__name__}, not an object"]
+
     gen = man.get("generation")
     filed_as = os.path.basename(path)
     if not isinstance(gen, int) or _gen_file(gen) != filed_as:
-        out.append(f"{rel}: declares generation {gen!r} but is filed as {filed_as}")
+        # Stop here: every check below feeds `gen` to a path or a format spec.
+        return [f"{rel}: declares generation {gen!r} but is filed as {filed_as}"]
 
-    segments = sorted(man.get("segments", []), key=lambda s: s["start"])
+    raw_segments = man.get("segments")
+    if not isinstance(raw_segments, list):
+        return [f"{rel}: segments is {type(raw_segments).__name__}, not a list"]
+    for s in raw_segments:
+        if not (
+            isinstance(s, dict)
+            and isinstance(s.get("start"), int)
+            and isinstance(s.get("end"), int)
+            and isinstance(s.get("path"), str)
+            and isinstance(s.get("sha256"), str)
+        ):
+            return [f"{rel}: malformed segment entry {s!r}"]
+    segments = sorted(raw_segments, key=lambda s: s["start"])
     whole = hashlib.sha256()
     cursor = 0
     listed: set[str] = set()
@@ -356,10 +574,15 @@ def _verify_manifest(home: str, path: str) -> list[str]:  # noqa: PLR0912 - one 
     seg_dir = os.path.join(
         home, "raw", man.get("agent", ""), man.get("session_id", ""), _gen_dir(gen)
     )
-    for stray in sorted(glob(os.path.join(seg_dir, "*"))):
-        if os.path.realpath(stray) not in listed:
-            name = os.path.basename(stray)
-            out.append(f"{rel}: unrecorded file in the generation directory: {name}")
+    # `glob("*")` skips dotfiles, so the one artefact a killed capture leaves —
+    # `.incoming.<pid>.<tid>`, real unattested transcript bytes — was the one
+    # file this check could not see, and `.evil.jsonl` passed the proof. [E2]
+    with contextlib.suppress(OSError), os.scandir(seg_dir) as it:
+        for entry in sorted(it, key=lambda e: e.name):
+            if os.path.realpath(entry.path) not in listed:
+                out.append(
+                    f"{rel}: unrecorded file in the generation directory: {entry.name}"
+                )
 
     out += _verify_chain(path, rel, man, gen)
     return out

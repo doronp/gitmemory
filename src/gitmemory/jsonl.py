@@ -61,7 +61,13 @@ def iter_records(
                     break
                 try:
                     obj, end = _decoder.raw_decode(text, pos)
-                except json.JSONDecodeError as e:
+                # JSONDecodeError is a ValueError, so the ordinary path is
+                # unchanged. `json` also raises bare RecursionError on deep
+                # nesting and bare ValueError past the 4300-digit int limit —
+                # both used to escape the whole capture, so one malformed line
+                # made a session uncapturable. Malformed content is exactly what
+                # an append-only store has to survive. [E2]
+                except (ValueError, RecursionError) as e:
                     if on_error:
                         on_error(lineno, e)
                     break

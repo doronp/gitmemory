@@ -735,12 +735,30 @@ def test_cost_is_estimated_from_a_dated_snapshot_or_not_at_all():
              "cache_read_input_tokens": 1_000_000}
     est = cc.estimate_cost("claude-sonnet-4-5-20260929", usage)
     assert est is not None
-    assert est["priced_as"] == "claude-sonnet-4", "longest-prefix match failed"
+    assert est["priced_as"] == "claude-sonnet-4-5", "longest-prefix match failed"
     assert est["usd"] == pytest.approx(3.0 + 15.0 + 0.3)
     assert est["estimated"] is True and est["as_of"] == cc.PRICES_AS_OF
     # An unpriced model must read as unknown, never as free.
     assert cc.estimate_cost("some-model-we-have-never-priced", usage) is None
     assert cc.estimate_cost(None, usage) is None
+
+
+def test_a_prefix_match_never_crosses_a_version_boundary():
+    """[E2] `claude-opus-4` used to swallow `claude-opus-4-5` and bill 3x over.
+
+    Silent 3x is worse than unknown: the result still says `estimated: True`
+    with today's `as_of`, so it reads as a checked number.
+    """
+    usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000}
+    opus45 = cc.estimate_cost("claude-opus-4-5-20260101", usage)
+    assert opus45 is not None
+    assert opus45["priced_as"] == "claude-opus-4-5"
+    assert opus45["usd"] == pytest.approx(5.0 + 25.0), "billed at the retired Opus 4 rate"
+
+    assert cc.estimate_cost("claude-opus-4-20250514", usage)["priced_as"] == "claude-opus-4"
+    # A version we have not priced reads as unknown, not as its predecessor.
+    assert cc.estimate_cost("claude-opus-4-9-20270101", usage) is None
+    assert cc.estimate_cost("claude-opus-4-suffixed", usage) is None
 
 
 # --- Determinism, actually tested across processes -------------------------

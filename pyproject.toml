@@ -8,7 +8,7 @@ license = "Apache-2.0"
 dependencies = []
 
 [project.scripts]
-gitmemory = "gitmemory.cli:main"
+gitmemory = "gitmemory.__main__:main"
 
 [project.optional-dependencies]
 # Kept out of the core so `gitmemory capture` and `gitmemory verify` stay dependency-free.
