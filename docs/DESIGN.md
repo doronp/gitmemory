@@ -213,6 +213,19 @@ g00 is never rewritten or deleted — the pre-rewrite bytes stay committed, whic
 every other tool in this space loses. Contiguity is asserted *within* a generation; across them the
 manifest chain records the break honestly instead of hiding it.
 
+**Two layout changes made while building this [E2]:**
+- **One manifest per generation**, `sessions/<agent>/<session_id>/g00.json`, not one per session.
+  A single per-session manifest describes only the *current* generation, so a stranger with a
+  checkout could verify g01 and not g00 — the sealed bytes would be provable only by digging
+  through git history, which defeats "third-party checkable with `cat` and `shasum`". Flat files
+  also mean a sealed generation's manifest is never rewritten, matching the bytes it describes.
+- **Dropped the `<date>` path tier.** It keys a committed path on a value we may not have — a
+  transcript whose first line carries no timestamp has no date — and a path that moves churns the
+  tree. The manifest carries the timestamps; the dashboard groups by them.
+- `compact_boundaries` holds **byte offsets**, not turn `seq`. The store holds no record model and
+  must not import an adapter to get one, and the E4 coalescer cuts on byte positions. The CLI
+  passes offsets the adapter found; `--no-parse` records bytes with none.
+
 This is not hypothetical. Verified at `/tmp/gm-e0/fable/docs/ARCHITECTURE.md:18` — *"The live
 transcript is REWRITTEN by the pruner (52 generations, 3GB of backups exist)"*. The rewriter there
 is **fable's own `prune.py`** (`prune_file(..., replace=True)`, auto-fired from its hook), not
@@ -356,7 +369,7 @@ Public + synthetic only. **Never this machine's history.**
 |---|---|---|
 | E0 | ~~Honesty gate~~ **PASSED 2026-09-20** — four tools read at code level, 3-lens panel | 2 BUILD / 1 PR_TO_fable. Dissent recorded in §6. |
 | E1 | **(riskiest)** Canonical records + CC adapter + conformance suite | Every §2.2 trap is a passing test; determinism test green |
-| E2 | Segment store + contiguity proof + `verify` + redaction gate | Fuzzer cannot produce an undetected hole; push disabled by default |
+| E2 | ~~Segment store + contiguity proof + `verify` + redaction gate~~ **PASSED 2026-09-20** | 11 mutation classes + 150 seeded fuzz rounds, zero undetected; `push` refuses with no config |
 | E3 | Index + retrieval + CLI | Benchmark arms scored on mutated LongMemEval-S |
 | E4 | Hook shim + watcher + git daemon | p50/p99 published; `kill -9` mid-write loses nothing; concurrent spool proven |
 | E5 | Derivation (+ decision graph behind its gate) | Every node has a `source_ref`; build twice = identical bytes |
