@@ -1,0 +1,10 @@
+gitmemory
+Copyright 2026 the gitmemory authors
+
+This product includes software developed as part of:
+  - fable (https://github.com/grooverLab/fable), MIT,
+    Copyright (c) 2026 Anoop Grover
+  - claude-code-log (https://github.com/daaain/claude-code-log), MIT,
+    Copyright (c) 2025 Daniel Demmel
+
+See THIRD_PARTY.md for what was taken and why.
