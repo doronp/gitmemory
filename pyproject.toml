@@ -12,7 +12,10 @@ gitmemory = "gitmemory.__main__:main"
 
 [project.optional-dependencies]
 # Kept out of the core so `gitmemory capture` and `gitmemory verify` stay dependency-free.
-index = ["model2vec>=0.8", "numpy>=2.0", "flashrank>=0.2"]
+# The index itself needs nothing: SQLite FTS5 ships with CPython. These are the
+# dense and rerank arms `bench/` scores BM25 against — a dependency each has to
+# earn, not one the index takes on faith.
+hybrid = ["model2vec>=0.8", "numpy>=2.0", "flashrank>=0.2"]
 derive = ["sumy>=0.11", "keybert>=0.9", "networkx>=3.4"]
 serve = ["datasette>=0.65,<1", "datasette-dashboards>=0.7", "datasette-render-markdown>=2.1"]
 dev = ["pytest>=8", "hypothesis>=6", "ruff>=0.9"]

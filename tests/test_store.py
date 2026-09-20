@@ -629,6 +629,28 @@ def test_a_credential_split_across_two_segments_is_caught(home, src):
     assert [f.detector for f in seam] == ["aws_access_key_id"]
 
 
+def test_a_hostile_manifest_field_cannot_opt_a_segment_run_out_of_the_seam_scan(home, src):
+    """[E3] `sessions()` reads metadata a pushed manifest supplies, and a reader
+    that dropped a row for a bad *metadata* field would let that manifest
+    exclude itself from `segment_groups` — and with it, the seam window. Every
+    segment is still scanned individually by the file walk, so the loss is
+    exactly the straddling secret, which is the one the group scan exists for.
+    """
+    transcript(src, 4)
+    with open(src, "ab") as fh:
+        fh.write(b'{"k":"' + AKIA[:10])
+    store.capture(src, "claude-code", "sess", home=home)
+    with open(src, "ab") as fh:
+        fh.write(AKIA[10:] + b'"}\n')
+    store.capture(src, "claude-code", "sess", home=home)
+    _seal(home, manifest(home) | {"agent": "../evil", "generation": "one", "size": None})
+
+    groups = store.segment_groups(home)
+    assert len(groups) == 1 and len(groups[0]) == 2
+    ok, _ = redact.gate([], groups, allow_empty=True)
+    assert ok is False
+
+
 def test_a_seam_finding_is_not_reported_twice(home, src):
     """Only matches that genuinely span a cut belong to the seam."""
     transcript(src, 4)

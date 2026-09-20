@@ -11,9 +11,10 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
+import sqlite3
 import sys
 
-from . import redact, store
+from . import index, redact, store
 from .adapters import get as get_adapter
 
 
@@ -86,6 +87,37 @@ def _push(args) -> int:
     return 1
 
 
+def _index(args) -> int:
+    stats = index.build(args.home, path=args.db)
+    for line in stats.skipped:
+        print(f"skipped {line}", file=sys.stderr)
+    print(
+        f"{stats.generations} generation(s)  {stats.turns} turn(s)  "
+        f"{stats.blocks} block(s)  content={stats.content_sha256[:12]}"
+    )
+    # Skipped generations are reported but not fatal: the index is derived, and
+    # `verify` is the surface that decides whether the store itself is sound.
+    return 0
+
+
+def _recall(args) -> int:
+    path = args.db or index.db_path(args.home)
+    if not os.path.exists(path):
+        print(f"no index at {path}; run `gitmemory index` first", file=sys.stderr)
+        return 2
+    db = index.open_db(path)
+    try:
+        hits = index.search(db, args.query, k=args.k)
+    finally:
+        db.close()
+    for h in hits:
+        head = " ".join(h.text.split())[:160]
+        print(f"{h.score:8.3f}  {h.session_key}@{h.byte_offset}  {h.role}/{h.kind}  {head}")
+    if not hits:
+        print("no matches", file=sys.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="gitmemory")
     ap.add_argument(
@@ -107,10 +139,20 @@ def main(argv: list[str] | None = None) -> int:
     push.add_argument("remote", nargs="?", default="origin")
     push.set_defaults(fn=_push)
 
+    idx = sub.add_parser("index", help="rebuild the retrieval index from the store")
+    idx.add_argument("--db", default=None, help="database path (default $GITMEMORY_HOME/index/)")
+    idx.set_defaults(fn=_index)
+
+    rec = sub.add_parser("recall", help="search the index; one line per turn, best first")
+    rec.add_argument("query")
+    rec.add_argument("-k", type=int, default=10)
+    rec.add_argument("--db", default=None)
+    rec.set_defaults(fn=_recall)
+
     args = ap.parse_args(argv)
     try:
         return args.fn(args)
-    except (OSError, RecursionError, RuntimeError, ValueError) as exc:
+    except (OSError, RecursionError, RuntimeError, ValueError, sqlite3.Error) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

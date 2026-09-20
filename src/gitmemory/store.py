@@ -42,7 +42,15 @@ from glob import glob
 
 from .records import canonical_json
 
-__all__ = ["Capture", "capture", "resolve_home", "segment_groups", "verify"]
+__all__ = [
+    "Capture",
+    "Stored",
+    "capture",
+    "resolve_home",
+    "segment_groups",
+    "sessions",
+    "verify",
+]
 
 SCHEMA = 1
 CHUNK = 1 << 20
@@ -101,6 +109,24 @@ def resolve_home(home: str | None = None) -> str:
         if up == parent:
             return path
         parent = up
+
+
+@dataclass(slots=True, frozen=True)
+class Stored:
+    """One generation as a reader sees it: identity, plus its bytes in order."""
+
+    agent: str
+    session_id: str
+    generation: int
+    manifest: str  # absolute path
+    segments: tuple[str, ...]  # absolute paths, ascending by start offset
+    size: int
+    boundaries: tuple[int, ...]  # compaction byte offsets carried by the manifest
+
+    @property
+    def key(self) -> str:
+        """Stable identity for a generation. Not a path — `agent` is untrusted."""
+        return f"{self.agent}/{self.session_id}/g{self.generation:02d}"
 
 
 @dataclass(slots=True)
@@ -461,14 +487,18 @@ def _unlink(path: str) -> None:
         os.unlink(path)
 
 
-def segment_groups(home: str) -> list[list[str]]:
-    """One ordered, absolute segment run per generation manifest.
+def sessions(home: str) -> list[Stored]:
+    """Every readable generation in the store, in a stable order.
 
-    The egress gate needs these because a credential can straddle a cut: what
-    leaves the machine is the concatenation, not any one file. Unreadable or
-    escaping manifests are skipped — `verify` is what reports those. [E2]
+    A generation, not a session, is the unit: a fork seals one byte history and
+    starts another, and both are real. Callers that want only the live history
+    take the highest `generation` per `(agent, session_id)`.
+
+    Unreadable or escaping manifests are skipped — `verify` is what reports
+    those, and a reader that raised on them would make one bad manifest
+    un-indexable for the whole store, which is the E2 sweep bug again.
     """
-    groups = []
+    out = []
     for path in sorted(glob(os.path.join(home, "sessions", "*", "*", "g*.json"))):
         if not _GEN_RE.match(os.path.basename(path)):
             continue
@@ -478,9 +508,45 @@ def segment_groups(home: str) -> list[list[str]]:
             run = [_inside(home, s["path"]) for s in man["segments"]]
         except Exception:  # noqa: BLE001 - a manifest is untrusted data
             continue
-        if run and all(run):
-            groups.append([p for p in run if p])
-    return groups
+        if not run or not all(run):
+            continue
+        # Everything below is best-effort. A row is never dropped for a bad
+        # *metadata* field, only for an unreadable or escaping segment list:
+        # `segment_groups` feeds the egress gate, and a manifest that opts out
+        # of the scan by naming itself oddly would be a bypass, not a skip.
+        out.append(
+            Stored(
+                agent=_text(man.get("agent")),
+                session_id=_text(man.get("session_id")),
+                generation=_int(man.get("generation")),
+                manifest=path,
+                segments=tuple(p for p in run if p),
+                size=_int(man.get("size")),
+                boundaries=tuple(sorted(_int(b) for b in _seq(man.get("compact_boundaries")))),
+            )
+        )
+    return out
+
+
+def _text(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _int(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else -1
+
+
+def _seq(value: object) -> tuple:
+    return tuple(value) if isinstance(value, list) else ()
+
+
+def segment_groups(home: str) -> list[list[str]]:
+    """One ordered, absolute segment run per generation manifest.
+
+    The egress gate needs these because a credential can straddle a cut: what
+    leaves the machine is the concatenation, not any one file. [E2]
+    """
+    return [list(s.segments) for s in sessions(home)]
 
 
 def verify(home: str | None = None) -> list[str]:
