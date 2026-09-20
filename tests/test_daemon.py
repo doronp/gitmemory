@@ -35,6 +35,17 @@ def _config(home: str, roots, agent: str = "claude-code", pattern: str | None = 
     gitrepo.init(home)
 
 
+def _key(path) -> tuple[int, int]:
+    """What `drain_spool` keys its result on: device and inode, not the string.
+
+    The hook writes whatever spelling the agent handed it and `discover` writes
+    whatever spelling the glob produced. `realpath` resolves symlinks but does
+    not correct case, so on APFS those are two keys for one file. [E4]
+    """
+    st = os.stat(path)
+    return (st.st_dev, st.st_ino)
+
+
 def _spool(home: str, name: str, payload) -> str:
     path = os.path.join(home, daemon.SPOOL, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -77,13 +88,14 @@ def test_a_root_that_names_a_file_is_dropped_rather_than_silently_watching_nothi
     Dropping the root at load time does not make it work — nothing can — but it
     makes `gitmemory watch` report the watch as gone, which is a signal.
     """
+    home = str(tmp_path / "home")
     transcript = _write(str(tmp_path / "proj" / "s.jsonl"), TURN)
     _write(
-        os.path.join(str(tmp_path), "config.toml"),
+        os.path.join(home, "config.toml"),
         f'[[watch]]\nagent = "a"\nroots = [{json.dumps(transcript)}]\n'
         f'\n[[watch]]\nagent = "b"\nroots = [{json.dumps(str(tmp_path / "proj"))}]\n',
     )
-    assert [w.agent for w in daemon.load_watches(str(tmp_path))] == ["b"]
+    assert [w.agent for w in daemon.load_watches(home)] == ["b"]
 
 
 def test_a_root_that_does_not_exist_yet_is_kept(tmp_path):
@@ -95,19 +107,46 @@ def test_a_root_that_does_not_exist_yet_is_kept(tmp_path):
     "not started yet" as "misconfigured", and would break the far more common
     case to fix the rarer one.
     """
+    home = str(tmp_path / "home")
     absent = str(tmp_path / "not-yet")
     _write(
-        os.path.join(str(tmp_path), "config.toml"),
+        os.path.join(home, "config.toml"),
         f'[[watch]]\nagent = "a"\nroots = [{json.dumps(absent)}]\n',
     )
-    assert daemon.load_watches(str(tmp_path))[0].roots == (os.path.realpath(absent),)
+    assert daemon.load_watches(home)[0].roots == (os.path.realpath(absent),)
 
 
 def test_roots_are_expanded_and_resolved(tmp_path, monkeypatch):
+    home = str(tmp_path / "home")
     monkeypatch.setenv("HOME", str(tmp_path))
-    _write(os.path.join(str(tmp_path), "config.toml"), '[[watch]]\nagent="a"\nroots=["~/logs"]\n')
+    _write(os.path.join(home, "config.toml"), '[[watch]]\nagent="a"\nroots=["~/logs"]\n')
     (tmp_path / "logs").mkdir()
-    assert daemon.load_watches(str(tmp_path))[0].roots == (os.path.realpath(tmp_path / "logs"),)
+    assert daemon.load_watches(home)[0].roots == (os.path.realpath(tmp_path / "logs"),)
+
+
+def test_a_root_that_would_make_the_store_watch_itself_is_dropped(tmp_path):
+    """Both overlap directions, because both feed the store its own output.
+
+    `discover()` globs `<root>/**/*.jsonl` and the store's own segments are
+    `*.jsonl`, so a store under a watch root is read back as new sessions — and
+    new sessions bypass the interval gate, so it runs at full poll rate. Review
+    measured six phantom sessions and six commits in thirty seconds, roughly
+    17,000 a day, with `verify` clean throughout. [E4, review: CLI 3]
+
+    The reverse — a root *inside* the store — was not what review measured and
+    is checked here because it was reproduced while fixing the first: a watch on
+    `<home>/raw` globs the segment files directly. One symmetric test, because
+    one symmetric rule covers both. The default `~/.gitmemory` escapes only by
+    the accident that `glob` skips dotted components.
+    """
+    home = str(tmp_path / "home")
+    os.makedirs(os.path.join(home, "raw"))
+    for root in (str(tmp_path), home, os.path.join(home, "raw")):
+        _write(
+            os.path.join(home, "config.toml"),
+            f'[[watch]]\nagent = "claude-code"\nroots = [{json.dumps(root)}]\n',
+        )
+        assert daemon.load_watches(home) == [], root
 
 
 # --- containment ------------------------------------------------------------
@@ -183,7 +222,7 @@ def test_a_forcing_event_is_distinguished_from_a_liveness_one(tmp_path):
     _spool(home, "1-2-PreCompact.json", {"transcript_path": src})
     _spool(home, "1-3-Stop.json", {"transcript_path": other})
     wanted, _ = daemon.drain_spool(home, daemon.load_watches(home))
-    assert wanted == {os.path.realpath(src): True, os.path.realpath(other): False}
+    assert wanted == {_key(src): True, _key(other): False}
 
 
 def test_forcing_wins_when_a_session_has_both_kinds_of_record(tmp_path):
@@ -193,7 +232,7 @@ def test_forcing_wins_when_a_session_has_both_kinds_of_record(tmp_path):
     _spool(home, "1-9-Stop.json", {"transcript_path": src})
     _spool(home, "1-2-PreCompact.json", {"transcript_path": src})
     wanted, _ = daemon.drain_spool(home, daemon.load_watches(home))
-    assert wanted == {os.path.realpath(src): True}
+    assert wanted == {_key(src): True}
 
 
 def test_stop_rings_the_doorbell_without_forcing_a_cut(tmp_path):
@@ -210,7 +249,7 @@ def test_stop_rings_the_doorbell_without_forcing_a_cut(tmp_path):
     _config(home, [tmp_path / "proj"])
     _spool(home, "1-9-Stop.json", {"transcript_path": src})
     wanted, _ = daemon.drain_spool(home, daemon.load_watches(home))
-    assert wanted == {os.path.realpath(src): False}
+    assert wanted == {_key(src): False}
 
 
 def test_a_partial_hook_write_is_ignored_until_it_is_old(tmp_path):
@@ -502,7 +541,7 @@ def test_the_event_is_read_from_the_filename_the_shim_writes(tmp_path, name):
     _config(home, [tmp_path / "proj"])
     _spool(home, name, {"transcript_path": src})
     wanted, _ = daemon.drain_spool(home, daemon.load_watches(home))
-    assert wanted == {os.path.realpath(src): True}
+    assert wanted == {_key(src): True}
 
 
 # --- findings from Gemini's E4 cross-review, each verified before being fixed ---
@@ -586,7 +625,7 @@ def test_a_negative_epoch_record_does_not_masquerade_as_forcing(tmp_path):
 
     # Still a doorbell — the record is consumed and the session noticed — but it
     # must not claim to be a compaction boundary it cannot be trusted to name.
-    assert wanted == {os.path.realpath(src): False}
+    assert wanted == {_key(src): False}
 
 
 def _case_insensitive(where) -> bool:
@@ -625,3 +664,374 @@ def test_a_watch_root_written_in_the_wrong_case_still_covers_its_files(tmp_path)
     ]
 
     assert daemon._covers(watches, src) is not None
+
+
+# --- E4 standalone review round ---------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("body", "expect"),
+    [
+        ("[[watch]\nnot toml", "not valid TOML"),
+        ('[[watch]]\nagent = "claude-code"\nroots = "/tmp/x"\n', "list `roots`"),
+        ('[[watch]]\nroots = ["/tmp/x"]\n', "string `agent`"),
+        ('[[watch]]\nagent = "claude-code"\nroots = [42]\n', "is not a path"),
+        ('[[watch]]\nagent = "nope"\nroots = ["/tmp/x"]\n', "no adapter"),
+    ],
+)
+def test_each_way_of_breaking_the_config_says_which_one_it_was(tmp_path, body, expect):
+    """Ten distinct faults, one sentence — and it named only one of them.
+
+    Five produced no output at all, the worst being the path typo: a misspelled
+    root and a correctly-configured watcher that has not seen its first session
+    were byte-identical experiences. This module's docstring promises a
+    misconfigured watcher does nothing *loudly*. [E4, review: CLI 2]
+    """
+    home = str(tmp_path / "home")
+    _write(os.path.join(home, "config.toml"), body)
+    said: list[str] = []
+    daemon.load_watches(home, log=said.append)
+    assert [m for m in said if expect in m], said
+
+
+def test_a_missing_config_is_itself_worth_saying(tmp_path):
+    said: list[str] = []
+    assert daemon.load_watches(str(tmp_path / "home"), log=said.append) == []
+    assert [m for m in said if "watching nothing" in m], said
+
+
+def test_an_agent_with_no_adapter_still_captures_its_bytes(tmp_path):
+    """Loud and degraded beats silent and degraded; it does not beat capturing nothing.
+
+    An adapter supplies *boundaries*. Discovery globs `pattern` and the store
+    copies bytes, and neither needs one — so refusing the watch would trade a
+    store with no boundaries for no store at all, against this module's rule
+    that bytes outrank boundaries. It would also refuse `agent = "hermes"`
+    written the day before the hermes adapter lands. [E4, review: CLI 5]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root], agent="hermes")
+    watches = daemon.load_watches(home)
+    assert [w.agent for w in watches] == ["hermes"]
+    assert daemon.tick(home, watches, interval=0).appended == len(TURN)
+    assert store.verify(home) == []
+
+
+def test_a_doorbell_for_the_same_file_under_another_spelling_is_still_heard(tmp_path):
+    """The case fix reached `_covers` and stopped there. [E4, review: concurrency 9]
+
+    `_covers` asks the kernel, via `os.path.samefile`, so the record survived
+    the containment check — and was then discarded by `tick`'s string lookup
+    against the spelling `discover` produced. The doorbell rang, the pass could
+    not hear it, and the compaction waited for the interval. Device and inode
+    is the identity both halves now ask for.
+    """
+    if not _case_insensitive(tmp_path):
+        pytest.skip("this filesystem is case-sensitive; the two names are two files")
+    home = str(tmp_path / "home")
+    root = tmp_path / "Proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    watches = daemon.load_watches(home)
+    daemon.tick(home, watches, interval=1e9)
+
+    _write(src, TURN, append=True)
+    shouted = str(tmp_path / "PROJ" / "a.jsonl")
+    _spool(home, "1-2-PreCompact.json", {"transcript_path": shouted})
+    assert daemon.tick(home, watches, interval=1e9).appended == len(TURN)
+
+
+def test_a_spool_record_that_cannot_be_parsed_at_all_is_dropped_not_replayed(tmp_path):
+    """`json.loads` on deep nesting raises `RecursionError`, a `RuntimeError`.
+
+    It escaped `drain_spool`'s `except (OSError, ValueError)`, escaped `tick`,
+    escaped `run`'s `while True` — and because the record was unlinked only
+    *after* the parse, it did it again on every restart, for ever, with no
+    session anywhere being captured. [E4, review: concurrency 1]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    _spool(home, "1-2-Stop.json", "[" * 200_000)
+
+    wanted, tick_result = daemon.drain_spool(home, daemon.load_watches(home))
+    assert wanted == {} and tick_result.spool_dropped == 1
+    assert os.listdir(os.path.join(home, daemon.SPOOL)) == [], "a replayed record is for ever"
+    # Consumed as well as dropped, and the negative control is why it is
+    # asserted: the outer floor catches a `RecursionError` too and produces the
+    # same drop, the same unlink and the same empty spool, so without this line
+    # the named guard around the parse could be deleted and nothing would
+    # notice. The counters are where the two differ, and the difference is a
+    # diagnosis. An unparseable record that is *consumed* reports a hook writing
+    # garbage. The same record reaching only the floor reports `consumed=0`,
+    # which reads as a broken watcher and sends whoever is on the other end of
+    # it to the wrong component.
+    assert tick_result.spool_consumed == 1, "the watcher read this record and decided about it"
+
+
+def test_a_spool_record_whose_path_cannot_even_be_resolved_is_dropped(tmp_path):
+    """A NUL in the path makes `os.path.realpath` raise `ValueError` from outside
+    the guard the parse was wrapped in. Same permanent-replay outcome."""
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    _spool(home, "1-2-Stop.json", {"transcript_path": "/tmp/a\x00b.jsonl"})
+
+    wanted, tick_result = daemon.drain_spool(home, daemon.load_watches(home))
+    assert wanted == {} and tick_result.spool_dropped == 1
+    assert os.listdir(os.path.join(home, daemon.SPOOL)) == []
+
+
+def test_a_spool_record_that_fails_somewhere_nobody_guarded_is_still_dropped(tmp_path, monkeypatch):
+    """The outer floor, which the two tests above do not reach.
+
+    Both of them are caught by the narrow guard around the parse itself, so
+    they pin that guard and leave `drain_spool`'s `except Exception` untested —
+    which its own negative control is what noticed. The floor is there for the
+    step *after* the parse: any of `_payload_path`, `_covers`, or `_file_key`
+    raising something nobody predicted has the same permanent-replay outcome as
+    an unparseable payload, because the record is unlinked before them but the
+    exception still escapes `tick` and `run`. [E4, review: concurrency 1]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    _spool(home, "1-2-Stop.json", {"transcript_path": src})
+
+    def boom(_payload):
+        raise RecursionError("nobody predicted this")
+
+    monkeypatch.setattr(daemon, "_payload_path", boom)
+    wanted, tick_result = daemon.drain_spool(home, daemon.load_watches(home))
+
+    assert wanted == {} and tick_result.spool_dropped == 1
+    assert os.listdir(os.path.join(home, daemon.SPOOL)) == [], "a replayed record is for ever"
+
+
+def test_a_temp_whose_mtime_is_in_the_future_is_not_swept_as_a_corpse(tmp_path):
+    """Which a store copied off a fast-clock machine is full of.
+
+    Named for the forward clock jump at first, and that was wrong twice over:
+    the guard it was written to pin (`and age > 0`) is dead code, and a forward
+    jump makes `age` large and *positive*, so no mtime test can catch it. Both
+    found by this test's own negative control, which the original mutant
+    survived. What survives here is the subtraction: a negative age fails
+    `> STALE_TMP` unaided, and the mutant below is the plausible wrong repair.
+    [E4, review: concurrency 6]
+    """
+    home = str(tmp_path / "home")
+    _config(home, [tmp_path / "proj"])
+    live = _spool(home, ".tmp-4242", "half a payload")
+    ahead = time.time() + daemon.STALE_TMP * 2
+    os.utime(live, (ahead, ahead))
+
+    daemon.drain_spool(home, daemon.load_watches(home))
+    assert os.path.exists(live), "a temp from the future is a moved clock, not a corpse"
+
+
+def test_a_manifest_mtime_in_the_future_does_not_suspend_capture(tmp_path):
+    """`now - mtime` goes negative, so the interval gate can never fire.
+
+    Measured at 0 B captured over eight simulated hours, with `verify` clean and
+    the hook left doing 100% of the capture — which inverts the property this
+    whole module exists for: hook off, nothing; hook on, everything. It takes no
+    clock manipulation to reach. A store restored from a machine whose clock ran
+    fast carries the future mtimes with it, and `tar -p` and `rsync -a` both
+    preserve them faithfully. [E4, review: concurrency 2]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    watches = daemon.load_watches(home)
+    daemon.tick(home, watches, interval=1e9)
+
+    sid = store.session_id_for(src)
+    man = os.path.join(home, "sessions", "claude-code", sid, "g00.json")
+    os.utime(man, (time.time() + 86_400,) * 2)
+    _write(src, TURN, append=True)
+
+    # One pass notices the corrupt timestamp and corrects it. It does not
+    # capture on that pass — the session now reads as captured just now — and
+    # that is the point: the wait is bounded by `interval` instead of by the
+    # skew, which here would have been a day.
+    seen = time.time() + 7200
+    assert daemon.tick(home, watches, interval=3600, now=seen).appended == 0
+    assert os.path.getmtime(man) <= seen, "a timestamp read every pass has to be repaired once"
+    assert daemon.tick(home, watches, interval=3600, now=seen + 3601).appended == len(TURN)
+
+
+def test_a_pass_that_only_finished_a_crashed_capture_still_commits(tmp_path):
+    """Adoption writes a manifest without copying a byte, so `appended` is 0.
+
+    The pass's commit test read `appended` alone: the repair landed on disk and
+    never reached git, and if the session had ended it never would.
+    [E4, review: store-contract 4, concurrency 4]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    watches = daemon.load_watches(home)
+    daemon.tick(home, watches, interval=0)
+
+    base = os.path.getsize(src)
+    _write(src, TURN, append=True)
+    end = os.path.getsize(src)
+    with open(src, "rb") as fh:
+        fh.seek(base)
+        tail = fh.read()
+    sid = store.session_id_for(src)
+    seg = os.path.join(home, "raw", "claude-code", sid, "g00", f"{base:012d}-{end:012d}.jsonl")
+    with open(seg, "wb") as fh:
+        fh.write(tail)
+    os.utime(src, (0, 0))  # nothing to append; adoption is the only work left
+
+    result = daemon.tick(home, watches, interval=0)
+    assert result.appended == 0
+    assert result.commit is not None, "the repair has to reach git"
+    assert store.verify(home) == []
+
+
+def test_the_hundredth_generation_does_not_resurrect_the_ninety_ninth(tmp_path):
+    """ "Last in sorted order" is lexicographic: `"g100.json" < "g99.json"`.
+
+    A store that had forked a hundred times would start treating g99 as the live
+    generation for ever, so the watcher would compare every new byte against a
+    stale size and re-capture the whole session on every pass. Reachable only by
+    a hundred divergences in one session, which is why it is small — but "the
+    live generation" has an exact definition and taking the maximum is no more
+    code than assuming the sort matches it. [E4, review: store-contract 7]
+    """
+    home = str(tmp_path / "home")
+    sessions = os.path.join(home, "sessions", "claude-code", "s")
+    os.makedirs(sessions)
+    for gen, size in ((99, 10), (100, 20)):
+        name = f"{0:012d}-{size:012d}.jsonl"
+        rel = os.path.join("raw", "claude-code", "s", f"g{gen}", name)
+        _write(os.path.join(home, rel), "x" * size)
+        with open(os.path.join(sessions, f"g{gen}.json"), "w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "schema": store.SCHEMA,
+                    "agent": "claude-code",
+                    "session_id": "s",
+                    "source_path": "",
+                    "generation": gen,
+                    "diverged_from": None,
+                    "size": size,
+                    "file_sha256": store.EMPTY_SHA256,
+                    "prev_manifest_sha256": None,
+                    "segments": [{"path": rel, "start": 0, "end": size, "sha256": ""}],
+                    "compact_boundaries": [],
+                },
+                fh,
+            )
+    assert daemon._recorded(home, time.time())[("claude-code", "s")][0] == 20
+
+
+def test_the_watcher_survives_an_adapter_that_raises_anything_at_all(tmp_path):
+    """The parse is for boundaries, and boundaries are what we are allowed to lose.
+
+    The list was `(OSError, RecursionError, ValueError, KeyError)` and it was
+    already wrong: the Claude Code adapter raises `AttributeError` on a content
+    block whose `text` is not a string, and those blocks come from
+    `toolUseResult` and `attachment` payloads that third-party MCP servers fill
+    in and the adapter copies verbatim. [E4, review: store-contract 1]
+    """
+    home = str(tmp_path / "home")
+    src = _write(str(tmp_path / "proj" / "a.jsonl"), TURN)
+
+    class Boom:
+        def parse(self, _path):
+            raise AttributeError("'dict' object has no attribute 'strip'")
+
+    said: list[str] = []
+    orig = daemon.get_adapter
+    daemon.get_adapter = lambda _name: Boom()
+    try:
+        cap = daemon.capture_one(home, src, "claude-code", log=said.append)
+    finally:
+        daemon.get_adapter = orig
+    assert cap.appended == len(TURN), "bytes outrank boundaries"
+    assert [m for m in said if "parse failed" in m], said
+
+
+def test_a_pass_that_fails_in_a_way_nobody_predicted_does_not_kill_the_watcher(
+    tmp_path, monkeypatch
+):
+    """The floor. A guarantee needs one, not a list of the ways people have
+    fallen through so far. [E4, review]"""
+    home = str(tmp_path / "home")
+    _config(home, [tmp_path / "proj"])
+    monkeypatch.setattr(daemon, "tick", lambda *a, **kw: 1 / 0)
+    lines: list[str] = []
+    assert daemon.run(home, once=True, log=lines.append) == 1
+    assert [line for line in lines if "pass failed" in line], lines
+
+
+def test_the_error_rate_limiter_is_the_interval_not_the_poll(tmp_path, monkeypatch):
+    """One error per stuck session per pass, forever.
+
+    Measured at 100 unwritable sessions and the default five-second poll:
+    2.06 M lines and 239 MB of stderr a day, all of it the same hundred
+    sentences — 720x the rate the source comment beside it claimed. Said once
+    when it appears, again when it changes, and never in between.
+    [E4, review: CLI 4]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    bad = _write(str(root / "bad.jsonl"), TURN)
+    os.chmod(bad, 0o000)
+    _config(home, [root])
+    lines: list[str] = []
+    passes = {"n": 0}
+
+    def stop_after_five(_seconds):
+        passes["n"] += 1
+        if passes["n"] >= 5:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(daemon.time, "sleep", stop_after_five)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            daemon.run(home, poll=0, interval=1e9, log=lines.append)
+    finally:
+        os.chmod(bad, 0o600)
+    assert len([line for line in lines if "error:" in line]) == 1, lines
+
+
+def test_a_git_that_is_briefly_unavailable_is_retried_rather_than_fatal(tmp_path, monkeypatch):
+    """Two watchers starting within a few milliseconds collided and one died
+    outright, six times out of six measured: `init` is four `git config` calls
+    and each takes `.git/config`'s lock. [E4, review: concurrency 7]"""
+    home = str(tmp_path / "home")
+    _config(home, [tmp_path / "proj"])
+    calls = {"n": 0}
+    real = gitrepo.init
+
+    def flaky(h=None):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise gitrepo.GitError("could not lock config file .git/config")
+        return real(h)
+
+    monkeypatch.setattr(daemon.gitrepo, "init", flaky)
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: None)
+    lines: list[str] = []
+    passes = {"n": 0}
+
+    def counting_tick(*a, **kw):
+        passes["n"] += 1
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(daemon, "tick", counting_tick)
+    with pytest.raises(KeyboardInterrupt):
+        daemon.run(home, poll=0, log=lines.append)
+    assert calls["n"] == 2 and passes["n"] == 1
+    assert [line for line in lines if "git init" in line], lines

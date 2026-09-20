@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from glob import glob
 
 from . import gitrepo, store
+from .adapters import ADAPTERS
 from .adapters import get as get_adapter
 
 SPOOL = "spool"
@@ -90,7 +91,7 @@ class Tick:
     spool_dropped: int = 0  # records naming a path no watch covers
 
 
-def load_watches(home: str) -> list[Watch]:
+def load_watches(home: str, log=None) -> list[Watch]:
     """`[[watch]]` tables from `config.toml`. No config means watch nothing.
 
         [[watch]]
@@ -100,21 +101,68 @@ def load_watches(home: str) -> list[Watch]:
     Absent, unreadable, and malformed all mean the empty list. The watcher then
     does nothing at all, loudly, which is the correct behaviour for a tool whose
     failure mode is reading files nobody asked it to read.
+
+    "Loudly" is what `log` is for, and it was missing. Review walked ten
+    distinct ways to get this file wrong — a TOML syntax error, `chmod 000`, a
+    `roots` string where a list belongs, a watch with no `agent`, a root that
+    names one transcript instead of the directory holding it — and found that
+    every one of them produced the same single sentence, `no [[watch]] in
+    <path>`, which is the right message for exactly one of them. Five more
+    produced no output at all, the worst being the path typo: a misspelled root
+    and a correctly-configured watcher that has not seen its first session were
+    byte-identical experiences. This module's own docstring promises a
+    misconfigured watcher does nothing *loudly*; measured, it mostly did it
+    quietly. [E4, review: CLI 2]
     """
+    say = log or (lambda _m: None)
     path = os.path.join(home, "config.toml")
     try:
         with open(path, "rb") as fh:
             cfg = tomllib.load(fh)
-    except (OSError, tomllib.TOMLDecodeError):
+    except FileNotFoundError:
+        say(f"no {path}; watching nothing")
+        return []
+    except OSError as exc:
+        say(f"{path} unreadable ({exc}); watching nothing")
+        return []
+    except tomllib.TOMLDecodeError as exc:
+        # The one that matters most: this is the only fault reachable by editing
+        # a *working* config, so it is the only one that can take a running
+        # watcher silent. It used to read as "you never configured anything".
+        say(f"{path} is not valid TOML ({exc}); watching nothing")
         return []
     out = []
-    for entry in cfg.get("watch") or []:
+    for n, entry in enumerate(cfg.get("watch") or []):
+        where = f"{path} [[watch]] #{n + 1}"
         if not isinstance(entry, dict):
+            say(f"{where}: not a table; skipped")
             continue
         agent = entry.get("agent")
         roots = entry.get("roots")
         if not isinstance(agent, str) or not isinstance(roots, list):
+            say(f"{where}: needs a string `agent` and a list `roots`; skipped")
             continue
+        if agent not in ADAPTERS:
+            # Said, and then the watch is kept anyway.
+            #
+            # Review found this accepted in silence: a typo'd agent name
+            # produced a full, committed, `verify`-clean store in which every
+            # manifest carried `compact_boundaries: []` — indistinguishable from
+            # a transcript that genuinely never compacted, because `capture_one`
+            # catches the `ValueError` from `get_adapter` and degrades to no
+            # boundaries. The silence is the bug and it is fixed here.
+            #
+            # Skipping the watch is not the fix, and the first version of this
+            # did skip it. An adapter supplies *boundaries*; discovery globs
+            # `pattern` and the store copies bytes, neither of which needs one.
+            # So refusing the watch trades a store with no boundaries for no
+            # store at all, against this module's own rule that bytes outrank
+            # boundaries — and it would refuse `agent = "hermes"` written the
+            # day before the hermes adapter lands, which is a configuration we
+            # have told people to expect to work. Loud and degraded beats silent
+            # and degraded; it does not beat capturing nothing.
+            # [E4, review: CLI 5]
+            say(f"{where}: no adapter for {agent!r}; have {sorted(ADAPTERS)}; bytes only")
         # A root that exists and is not a directory is dropped. Review found
         # that such a root does nothing at all and says nothing about it:
         # `discover()` globs `<root>/**/*.jsonl` and finds nothing under a file,
@@ -128,23 +176,49 @@ def load_watches(home: str) -> list[Watch]:
         # an agent has run for the first time, and `run()` re-reads the config
         # every pass, so it starts being watched the moment it appears. Dropping
         # those too would turn "not started yet" into "misconfigured".
-        real = tuple(
-            resolved
-            for r in roots
-            if isinstance(r, str) and r
-            for resolved in (os.path.realpath(os.path.expanduser(r)),)
-            if not (os.path.exists(resolved) and not os.path.isdir(resolved))
-        )
-        if real:
+        kept = []
+        for r in roots:
+            if not (isinstance(r, str) and r):
+                say(f"{where}: root {r!r} is not a path; skipped")
+                continue
+            resolved = os.path.realpath(os.path.expanduser(r))
+            if os.path.exists(resolved) and not os.path.isdir(resolved):
+                say(f"{where}: root {r} is a file, not a directory; skipped")
+                continue
+            if _inside(resolved, home) or _inside(home, resolved):
+                # The store's raw segments are `*.jsonl` and `discover` globs
+                # `<root>/**/*.jsonl`, so a store under a watch root reads its
+                # own output back as new sessions. New sessions bypass the
+                # interval gate, so it runs at full poll rate: measured at six
+                # phantom sessions and six commits in thirty seconds — roughly
+                # 17,000 a day, growing in disk for as long as the watcher runs,
+                # with `verify` reporting clean throughout. The default
+                # `~/.gitmemory` is safe only by the accident that `glob` skips
+                # dotted components. [E4, review: CLI 3]
+                say(f"{where}: root {r} contains the store itself; skipped")
+                continue
+            if resolved == os.sep:
+                # `/` is never a considered choice, and `discover` would walk
+                # the whole filesystem every `poll` seconds to find out.
+                say(f"{where}: root / is the whole filesystem; skipped")
+                continue
+            kept.append(resolved)
+        if kept:
             pattern = entry.get("pattern")
             out.append(
                 Watch(
                     agent=agent,
-                    roots=real,
+                    roots=tuple(kept),
                     pattern=pattern if isinstance(pattern, str) else PATTERN,
                 )
             )
     return out
+
+
+def _inside(outer: str, inner: str) -> bool:
+    """Is `inner` at or below `outer`? By components, never by prefix."""
+    rel = os.path.relpath(os.path.realpath(inner), os.path.realpath(outer))
+    return not rel.startswith(os.pardir + os.sep) and rel != os.pardir
 
 
 def _covers(watches: list[Watch], path: str) -> Watch | None:
@@ -193,18 +267,32 @@ def _same_dir(a: str, b: str) -> bool:
         return False
 
 
-def drain_spool(home: str, watches: list[Watch], now: float | None = None) -> tuple[dict, Tick]:
-    """Consume the spool. Returns `{realpath: forcing}` and a partial `Tick`.
+def drain_spool(
+    home: str, watches: list[Watch], now: float | None = None
+) -> tuple[dict[tuple[int, int], bool], Tick]:
+    """Consume the spool. Returns `{(dev, ino): forcing}` and a partial `Tick`.
 
     Consumed records are unlinked whether or not they were usable: a record the
     watcher cannot act on is a record that would otherwise be re-read on every
     tick forever. What survives a delete is the transcript itself, which is the
     only thing the watcher trusts anyway.
+
+    **Keyed on device and inode, not on the path string.** The hook writes
+    whatever spelling the agent handed it and `discover` writes whatever
+    spelling the glob produced, and `realpath` does not reconcile them: it
+    resolves symlinks but it does not correct case, so on APFS a record naming
+    `~/projects/myapp/s.jsonl` survived `_covers` — which does ask the kernel,
+    via `_same_dir` — and was then silently discarded by `tick`'s string
+    lookup. The doorbell rang, the pass could not hear it, and the compaction
+    waited for the interval. The fix that was shipped for `_covers` never
+    reached the second half of the same journey. Device and inode is the
+    identity the kernel itself uses, so both halves now ask the same question.
+    [E4, review: concurrency 9]
     """
     now = time.time() if now is None else now
     spool = os.path.join(home, SPOOL)
     tick = Tick()
-    wanted: dict[str, bool] = {}
+    wanted: dict[tuple[int, int], bool] = {}
     try:
         names = sorted(os.listdir(spool))
     except OSError:
@@ -215,29 +303,77 @@ def drain_spool(home: str, watches: list[Watch], now: float | None = None) -> tu
             # A killed hook's temp file. Swept only once it is old enough that it
             # cannot be a live hook still writing.
             with contextlib.suppress(OSError):
-                if name.startswith(".tmp-") and now - os.path.getmtime(path) > STALE_TMP:
+                age = now - os.path.getmtime(path)
+                # A temp whose mtime is in the *future* survives, because a
+                # negative age fails `> STALE_TMP` on its own. That is the case
+                # a store copied off a fast-clock machine lands in, and it is
+                # handled by the arithmetic — an explicit `and age > 0` was
+                # written here first and is dead code, since `STALE_TMP` is
+                # positive and `age > STALE_TMP` already implies it. Deleted
+                # rather than left as reassuring noise.
+                #
+                # The hazard the guard was written for is the opposite sign and
+                # is *not* fixed: a forward realtime step of more than an hour
+                # makes every in-flight hook's temp look like a corpse, and
+                # nothing in an mtime can distinguish that from a hook that
+                # really did die an hour ago. Left unfixed deliberately. The
+                # cost is bounded to what this module is already built to
+                # absorb: the hook's `mv` fails, it `rm -f`s and exits 0, that
+                # compaction loses its doorbell, and the interval captures it
+                # anyway — latency, not loss. Cheap detection would mean a pid
+                # in the temp name and a liveness check, which buys a bounded
+                # delay back and is not worth the second failure mode.
+                # [E4, review: concurrency 6; corrected by its own negative control]
+                if name.startswith(".tmp-") and age > STALE_TMP:
                     os.unlink(path)
             continue
-        event = _event_of(name)
+        # Everything from here to the end of the loop body runs on bytes a hook
+        # wrote, which is to say on untrusted input, and it used to run without
+        # a floor under it. `json.loads` on a deeply nested payload raises
+        # `RecursionError`, which is a `RuntimeError` and so slipped past an
+        # `except (OSError, ValueError)`; a path containing a NUL makes
+        # `os.path.realpath` raise `ValueError` from *outside* that guard. Both
+        # escaped `drain_spool`, `tick`, and `run`'s `while True` — and because
+        # the record is unlinked only after the parse, both did it again on
+        # every restart, for ever, with no session anywhere being captured.
+        #
+        # The asymmetry was the tell: `capture_one` below names `RecursionError`
+        # explicitly and `store.sessions` uses a bare `except Exception`. Every
+        # other reader of untrusted data in this codebase is total. The one
+        # reading hook-written bytes was not. [E4, review: concurrency 1, store-contract 6]
         try:
-            with open(path, "rb") as fh:
-                payload = json.loads(fh.read())
-        except (OSError, ValueError):
-            payload = None
-        _unlink(path)
-        tick.spool_consumed += 1
-        source = _payload_path(payload)
-        if source is None:
+            event = _event_of(name)
+            try:
+                with open(path, "rb") as fh:
+                    payload = json.loads(fh.read())
+            except (OSError, ValueError, RecursionError):
+                payload = None
+            _unlink(path)
+            tick.spool_consumed += 1
+            source = _payload_path(payload)
+            if source is None or _covers(watches, source) is None:
+                # Not a watched path. Dropping it is the whole reason the
+                # watcher re-derives from config instead of obeying the record.
+                tick.spool_dropped += 1
+                continue
+            key = _file_key(source)
+            if key is None:
+                tick.spool_dropped += 1
+                continue
+            wanted[key] = wanted.get(key, False) or event in FORCING
+        except Exception:  # noqa: BLE001 - a spool record is untrusted data
+            _unlink(path)
             tick.spool_dropped += 1
-            continue
-        if _covers(watches, source) is None:
-            # Not a watched path. Dropping it is the whole reason the watcher
-            # re-derives from config instead of obeying the record.
-            tick.spool_dropped += 1
-            continue
-        real = os.path.realpath(source)
-        wanted[real] = wanted.get(real, False) or event in FORCING
     return wanted, tick
+
+
+def _file_key(path: str) -> tuple[int, int] | None:
+    """`(st_dev, st_ino)` — the identity two spellings of one file agree on."""
+    try:
+        st = os.stat(path)
+    except (OSError, ValueError):
+        return None
+    return (st.st_dev, st.st_ino)
 
 
 def _event_of(name: str) -> str:
@@ -305,36 +441,77 @@ def discover(watches: list[Watch]) -> list[tuple[Watch, str]]:
     return out
 
 
-def _recorded(home: str) -> dict[tuple[str, str], tuple[int, float]]:
+def _recorded(home: str, now: float) -> dict[tuple[str, str], tuple[int, float]]:
     """`(agent, session_id) -> (captured size, manifest mtime)` for the live generation.
 
-    `sessions()` returns generations sorted by path and `g01.json` sorts after
-    `g00.json`, so the last one seen per key is the live one — which is the only
-    one that can still grow.
+    Keyed on the highest generation number, not on "last in sorted order". Sort
+    order is lexicographic, so it agrees with generation order only up to g99 —
+    `"g100.json" < "g99.json"`, and a store that had forked a hundred times
+    would start treating g99 as live for ever. Reachable only by a hundred
+    divergences in one session, which is why it is small; but "the live
+    generation" has an exact definition and taking the maximum is no more code
+    than assuming the sort matches it. [E4, review: store-contract 7]
+
+    A manifest mtime in the future is corrected on the way past — see the note
+    at the gate in `tick`. [E4, review: concurrency 2]
     """
     out: dict[tuple[str, str], tuple[int, float]] = {}
+    live: dict[tuple[str, str], int] = {}
     for s in store.sessions(home):
+        key = (s.agent, s.session_id)
+        if key in live and s.generation < live[key]:
+            continue
         try:
             mtime = os.path.getmtime(s.manifest)
+            if mtime > now:
+                os.utime(s.manifest, (now, now))
+                mtime = now
         except OSError:
             mtime = 0.0
-        out[(s.agent, s.session_id)] = (s.size, mtime)
+        live[key] = s.generation
+        out[key] = (s.size, mtime)
     return out
 
 
-def capture_one(home: str, source: str, agent: str, *, parse: bool = True) -> store.Capture:
+def capture_one(
+    home: str, source: str, agent: str, *, parse: bool = True, log=None
+) -> store.Capture:
     """Capture one transcript, collecting compaction boundaries if we can.
 
     The parse is only ever for boundaries, so a parse failure must not cost us
     the bytes — it degrades to a capture without them. Shared with the CLI's
     `capture` subcommand so that the command and the daemon cannot drift. [E4]
+
+    `except Exception`, not a list of types. The list was
+    `(OSError, RecursionError, ValueError, KeyError)` and it was already wrong:
+    the Claude Code adapter raises `AttributeError` when a content block's
+    `text` or `thinking` is not a string, and those blocks come from
+    `toolUseResult` and `attachment` payloads that third-party MCP servers fill
+    in and the adapter copies verbatim. One transcript line of
+    `{"type":"text","text":{}}` and the exception escaped here, escaped `tick`,
+    escaped `run`, and killed the watcher — which is *the capture guarantee* —
+    permanently, because the transcript is still there on the next restart.
+    Reproduced before fixing. [E4, review: store-contract 1]
+
+    Naming types here makes the watcher's liveness depend on getting every
+    future adapter's failure taxonomy exactly right, which is a bet this
+    function's own docstring says we are not making: the parse is for
+    boundaries, and boundaries are the thing we are allowed to lose.
     """
     boundaries = None
     if parse:
         try:
             session = get_adapter(agent).parse(source)
             boundaries = [e.byte_offset for e in session.events if e.kind == "compaction"]
-        except (OSError, RecursionError, ValueError, KeyError):
+        except Exception as exc:  # noqa: BLE001 - untrusted data; bytes outrank boundaries
+            # `log` exists because the CLI's two capture paths disagreed about
+            # this. `gitmemory capture <path> --session-id x` printed "parse
+            # failed (…)"; `gitmemory capture <path>` — the form the README
+            # documents — came through here and said nothing at all. E4 created
+            # the split by routing the second form through this function.
+            # [E4, review: CLI 5]
+            if log:
+                log(f"parse failed ({exc}); capturing bytes without boundaries")
             boundaries = None
     return store.capture(
         source,
@@ -362,7 +539,7 @@ def tick(
     now = time.time() if now is None else now
     forced, result = drain_spool(home, watches, now=now)
     try:
-        recorded = _recorded(home)
+        recorded = _recorded(home, now)
     except (OSError, RuntimeError) as exc:
         # `store.sessions()` raises `EscapingSegment` when a manifest names a
         # path outside the store — a deliberate tripwire for a store that has
@@ -379,21 +556,49 @@ def tick(
         result.errors.append(f"store unreadable, nothing captured this pass: {exc}")
         return result
 
+    committable = False
     for watch, source in discover(watches):
-        key = (watch.agent, store.session_id_for(source))
+        try:
+            # The key the store will actually file this under, asked of the
+            # store rather than assembled here. See `store.identity`: keying on
+            # the raw names made every session look new on every pass the
+            # moment a capital letter appeared anywhere.
+            key = store.identity(watch.agent, store.session_id_for(source))
+        except ValueError as exc:
+            result.errors.append(f"{source}: {exc}")
+            continue
         try:
             stat = os.stat(source)
         except OSError as exc:
             result.errors.append(f"{source}: {exc}")
             continue
         size, mtime = recorded.get(key, (-1, 0.0))
+        # A manifest mtime in the future makes `now - mtime` negative, so the
+        # interval gate can never fire and the session is skipped for the whole
+        # duration of the skew — silently, with `verify` clean, and with the
+        # hook left doing 100% of the capture. That inverts the property this
+        # module exists for. It takes no clock manipulation to reach: a store
+        # restored from a machine whose clock ran fast carries the future mtimes
+        # with it, and `tar -p` and `rsync -a` both preserve them faithfully.
+        # [E4, review: concurrency 2]
+        #
+        # Repaired rather than worked around. `min(mtime, now)` was the first
+        # attempt and it fixes nothing: clamping a future mtime to `now` makes
+        # the elapsed time exactly zero, which fails the same gate the negative
+        # value did, for the same whole duration. The only way to stop reading a
+        # corrupt timestamp is to stop having one — so correct it, once, and let
+        # every pass after this one take the ordinary path. A manifest's mtime
+        # is bookkeeping: git does not record it, `verify` does not read it, and
+        # the bytes it describes are untouched. `_recorded` does the repair,
+        # because the function that reads the timestamp is the one that can fix
+        # it — it is the only place holding the manifest's path.
         # Size *differs*, not grows: a pruner that rewrites the transcript in
         # place can leave it shorter, and that is a divergence the store has to
         # see. mtime covers the rewrite that happens to land on the same length.
         changed = stat.st_size != size or stat.st_mtime > mtime
         if not changed:
             continue
-        if not (forced.get(source) or size < 0 or now - mtime >= interval):
+        if not (forced.get((stat.st_dev, stat.st_ino)) or size < 0 or now - mtime >= interval):
             continue
         try:
             cap = capture_one(home, source, watch.agent, parse=parse)
@@ -401,11 +606,18 @@ def tick(
             result.errors.append(f"{source}: {exc}")
             continue
         if cap.appended or cap.diverged:
-            result.captured.append(f"{watch.agent}/{key[1]}/g{cap.generation:02d}")
+            result.captured.append(f"{key[0]}/{key[1]}/g{cap.generation:02d}")
             result.appended += cap.appended
+        # Adoption changes the store without appending a byte, so it has to be
+        # asked about separately or the repair never reaches git. Kept out of
+        # `result.captured` because nothing was captured; it only says the pass
+        # has something to commit. [E4, review: store-contract 4, concurrency 4]
+        committable = committable or bool(cap.appended or cap.diverged or cap.adopted)
 
-    if result.captured:
-        head = ", ".join(result.captured[:3])
+    if committable:
+        # "recovered" when the only work was adoption: the pass wrote a manifest
+        # for a killed capture's orphaned segment and copied nothing out.
+        head = ", ".join(result.captured[:3]) or "recovered an interrupted capture"
         more = f" (+{len(result.captured) - 3} more)" if len(result.captured) > 3 else ""
         # A git failure is reported, never raised. By this point the bytes are
         # already in the store and `verify` will vouch for them; the commit is
@@ -441,13 +653,75 @@ def run(
     the newer version starts. That is the same event. Doing it per pass would
     buy nothing but four `git config` subprocesses every `poll` seconds, for
     ever.
+
+    This loop is the floor under the whole product. "If the hook is never
+    installed the system is still correct" is a claim about *this function
+    continuing to run*, and until review it had no `try` in it anywhere: a
+    `RecursionError` out of the spool, an `AttributeError` out of an adapter, a
+    `ValueError` out of `realpath` on a NUL byte — each one killed the watcher
+    and, because the input that caused it is still on disk, killed it again on
+    every restart. Individually those are fixed where they happen. Collectively
+    the lesson is that a guarantee needs a floor and not a list of the ways
+    people have fallen through so far. [E4, review]
     """
-    home = gitrepo.init(home)
+    home = store.resolve_home(home)
+    started = False
+    last_errors: list[str] = []
+    last_notes: list[str] | None = None
+    last_said = 0.0
     while True:
-        watches = load_watches(home)
-        result = tick(home, watches, interval=interval, parse=parse)
-        for err in result.errors:
-            log(f"error: {err}")
+        # Inside the loop, because `init` is four `git config` calls and each
+        # takes `.git/config`'s lock: two watchers starting within a few
+        # milliseconds of each other collided and one died outright, six times
+        # out of six measured. A transient lock loss is now a logged warning and
+        # a retry on the next poll instead of process death. Still once per
+        # *successful* start, so the steady state is the zero-subprocess idle
+        # pass it was before. [E4, review: concurrency 7]
+        if not started:
+            try:
+                gitrepo.init(home)
+                started = True
+            except (gitrepo.GitError, OSError, subprocess.SubprocessError) as exc:
+                log(f"error: git init: {exc}")
+                if once:
+                    return 1
+                time.sleep(poll)
+                continue
+        try:
+            # Collected rather than logged directly, because `run` re-reads the
+            # config every pass and a config fault that is still there is not
+            # news. Said once when it appears, again when it changes, and never
+            # in between — the same discipline as the error log below, for the
+            # same reason. A config that *breaks* while the watcher runs is the
+            # case this exists for: `_watch` checked for an empty watch list
+            # once, before the loop, so a config edited into a syntax error took
+            # the watcher silent for ever while still looking healthy.
+            # [E4, review: CLI 2]
+            notes: list[str] = []
+            watches = load_watches(home, log=notes.append)
+            if not watches:
+                notes.append("watching nothing")
+            if notes != last_notes:
+                for note in notes:
+                    log(f"config: {note}")
+                last_notes = notes
+            result = tick(home, watches, interval=interval, parse=parse)
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the watcher is the guarantee; it does not die
+            result = Tick(errors=[f"pass failed: {exc!r}"])
+        # Errors repeat for as long as their cause does, and there is one per
+        # stuck session per pass. Measured at 100 unwritable sessions and the
+        # default five-second poll: 2.06 M lines and 239 MB of stderr a day, all
+        # of it the same hundred sentences. So: say it when it changes, then say
+        # nothing until it changes again or `interval` has passed — which is the
+        # rate the code comment above already claimed and the code did not keep,
+        # by a factor of 720. [E4, review: CLI 4]
+        now = time.time()
+        if result.errors != last_errors or (result.errors and now - last_said >= interval):
+            for err in result.errors:
+                log(f"error: {err}")
+            last_errors, last_said = list(result.errors), now
         if result.captured:
             log(f"captured {len(result.captured)} +{result.appended}B commit={result.commit}")
         if once:

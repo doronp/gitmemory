@@ -810,14 +810,22 @@ def test_the_per_segment_hash_check_is_not_deletable(home, src):
 
 
 def test_a_misfiled_manifest_is_caught(home, src):
-    """[E2] `generation` drives every path below it; a mismatch must stop there."""
+    """[E2] `generation` drives every path below it; a mismatch must stop there.
+
+    Two problems, not one, since E4 added the reverse sweep: renaming the
+    manifest out of the way is also what leaves `raw/.../g00` with nothing
+    attesting it, and that is a true and separate fact about the store. What
+    the count is still guarding is the original point — that a bad generation
+    is not then *used*, producing a cascade of invented paths under `g01`.
+    """
     _build(home, src, chunks=2)
     d = Path(home, "sessions", "claude-code", "sess")
     (d / "g00.json").rename(d / "g01.json")
 
     problems = store.verify(home)
     assert [p for p in problems if "filed as g01.json" in p], problems
-    assert len(problems) == 1, f"a bad generation must not be fed to a path: {problems}"
+    assert [p for p in problems if "g00: 2 file(s) with no manifest" in p], problems
+    assert len(problems) == 2, f"a bad generation must not be fed to a path: {problems}"
 
 
 def test_a_dotfile_in_a_generation_directory_is_a_stray(home, src):
@@ -1321,3 +1329,131 @@ def test_the_store_is_owner_only_on_disk(home, src):
             assert os.stat(root).st_mode & 0o777 == 0o700, root
         for name in files:
             assert os.stat(os.path.join(root, name)).st_mode & 0o777 == 0o600, name
+
+
+# --- E4 review round ---------------------------------------------------------
+
+
+def test_adoption_reports_itself_so_the_repair_can_reach_git(home, src):
+    """Adoption changes the store without copying a byte, and `appended` is 0.
+
+    The watcher's "should I commit?" test read `appended` alone, so crash
+    recovery repaired the store on disk and the repair was never committed — and
+    if the session had ended, never would be. Two reviewers found this
+    independently, which is why the field is separate rather than folded into
+    `appended`. [E4, review: store-contract 4, concurrency 4]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    base = manifest(home)["size"]
+    end = transcript(src, 5, start=5)
+    with open(src, "rb") as fh:
+        fh.seek(base)
+        tail = fh.read()
+    Path(home, "raw", "claude-code", "sess", "g00", f"{base:012d}-{end:012d}.jsonl").write_bytes(
+        tail
+    )
+
+    cap = store.capture(src, "claude-code", "sess", home=home)
+    assert cap.adopted, "the pass that finished the crash has to say so"
+    assert cap.appended == 0, "adoption copies nothing; that is the whole problem"
+
+
+def test_a_capture_that_adopts_nothing_says_so(home, src):
+    """The negative half. `adopted` gates a commit, so a stuck True commits every pass."""
+    transcript(src, 5)
+    assert not store.capture(src, "claude-code", "sess", home=home).adopted
+    transcript(src, 5, start=5)
+    assert not store.capture(src, "claude-code", "sess", home=home).adopted
+    assert not store.capture(src, "claude-code", "sess", home=home).adopted
+
+
+def test_identity_is_the_name_the_store_actually_files_under(home, src):
+    """One capital letter made every session look new on every pass.
+
+    `capture` case-folds both components before touching the disk, and
+    `_recorded` reads the folded names back out of the manifests — so a watcher
+    keying its "have I captured this already?" bookkeeping on the raw names
+    never found its own entry, and re-captured the whole transcript every tick.
+    Measured at 454 ms per tick on a 20 MB transcript. [E4, review: store-contract 3]
+    """
+    assert store.identity("Claude-Code", "SESS") == ("claude-code", "sess")
+    transcript(src, 5)
+    cap = store.capture(src, "Claude-Code", "SESS", home=home)
+    agent, session = store.identity("Claude-Code", "SESS")
+    assert Path(cap.manifest_path) == Path(home, "sessions", agent, session, "g00.json")
+    with pytest.raises(ValueError):
+        store.identity("../escape", "sess")
+
+
+def test_a_session_with_no_manifest_at_all_is_not_invisible_to_the_proof(home, src):
+    """The manifest-driven sweep cannot see a session that has zero manifests.
+
+    Reachable and permanent: crash on a session's *first* capture, before g00 is
+    written, then let the transcript go away. `discover()` never yields it
+    again, so `_adopt_orphans` never runs, so the manifest is never written —
+    while `git add --all` stages the orphaned segment on the next pass that
+    commits for some other session. Real transcript bytes, in git for ever, that
+    `verify` called clean. [E4, review: concurrency 5]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "kept", home=home)
+    orphan = Path(home, "raw", "claude-code", "gone", "g00")
+    orphan.mkdir(parents=True)
+    (orphan / "000000000000-000000000100.jsonl").write_bytes(b"real transcript bytes\n")
+
+    problems = store.verify(home)
+    assert [p for p in problems if "gone/g00" in p and "no manifest" in p], problems
+
+
+def test_an_empty_generation_directory_is_not_a_finding(home, src):
+    """An empty directory attests to nothing and is not evidence of loss."""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    Path(home, "raw", "claude-code", "later", "g00").mkdir(parents=True)
+    assert store.verify(home) == []
+
+
+def test_the_reverse_sweep_cannot_abort_the_report(home, src, monkeypatch):
+    """`verify` is the proof command, so every part of it survives a broken store.
+
+    The first version of the sweep above was unguarded, which put back the exact
+    abort an E2 regression test exists for: one unreadable directory and the
+    whole report — including the manifest findings already collected — was
+    replaced by a traceback. [E4]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    Path(home, "raw", "claude-code", "sess", "g00", "stray.jsonl").write_bytes(b"x\n")
+
+    real = store.glob
+
+    def exploding(pattern, *a, **kw):
+        if os.path.join("raw", "*", "*") in pattern:
+            raise TypeError("simulated crash")
+        return real(pattern, *a, **kw)
+
+    monkeypatch.setattr(store, "glob", exploding)
+    problems = store.verify(home)
+    assert [p for p in problems if "stray" in p], "the manifest findings survive"
+    assert [p for p in problems if "unverifiable" in p], problems
+
+
+def test_a_manifest_is_checked_against_where_it_lives_not_what_it_claims(home, src):
+    """`seg_dir` used to be built from the manifest's own `agent`/`session_id`.
+
+    Those are attacker-controlled strings in a file the proof is meant to check,
+    so a manifest could name another session's directory and be verified against
+    *those* bytes — the proof reading the wrong evidence and passing. The
+    location on disk is the one part of a manifest nobody can forge by editing
+    it. [E4, review: store-contract]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    path = Path(home, "sessions", "claude-code", "sess", "g00.json")
+    man = json.loads(path.read_text())
+    man["session_id"] = "elsewhere"
+    path.write_text(json.dumps(man))
+
+    problems = store.verify(home)
+    assert [p for p in problems if "declares claude-code/elsewhere" in p], problems

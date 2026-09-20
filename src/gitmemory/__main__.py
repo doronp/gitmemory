@@ -64,7 +64,13 @@ def _capture(args) -> int:
             args.source, args.agent, args.session_id, home=home, boundaries=boundaries
         )
     else:
-        cap = daemon.capture_one(home, args.source, args.agent, parse=not args.no_parse)
+        cap = daemon.capture_one(
+            home,
+            args.source,
+            args.agent,
+            parse=not args.no_parse,
+            log=lambda m: print(m, file=sys.stderr),
+        )
     if cap.diverged:
         print(f"diverged: {cap.diverged}", file=sys.stderr)
         print(f"sealed generation {cap.generation - 1}; now writing g{cap.generation:02d}")
@@ -72,16 +78,46 @@ def _capture(args) -> int:
     return 0
 
 
+def _seconds(text: str) -> float:
+    """A finite, non-negative number of seconds.
+
+    `type=float` accepted anything `float()` did. `--poll 0` spun a core at 99%
+    with nothing in the log; `--poll inf` reached `time.sleep` and raised
+    `OverflowError`, which is an `ArithmeticError` and so is not in `main`'s
+    except clause — a traceback, from a typo. `--poll -1` was caught, but only
+    by `time.sleep` at the *end* of the first pass, so the diagnosis arrived
+    underneath a line saying the capture had succeeded. Validating in the parser
+    puts all three before `gitrepo.init` instead of after a commit.
+    [E4, review: CLI 6]
+    """
+    value = float(text)  # argparse turns a ValueError here into its own usage error
+    if value != value or value in (float("inf"), float("-inf")):
+        raise argparse.ArgumentTypeError(f"{text} is not a finite number of seconds")
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"cannot be negative: {text}")
+    return value
+
+
+def _poll_seconds(text: str) -> float:
+    """`_seconds` with a floor. Only `--poll` has one — `--interval 0` is
+    meaningful (capture every pass) whereas `--poll 0` is a busy loop."""
+    value = _seconds(text)
+    if value < _MIN_POLL:
+        raise argparse.ArgumentTypeError(f"must be at least {_MIN_POLL}s, not {text}")
+    return value
+
+
+# Low enough to be a deliberate choice for a test, high enough that the busy
+# loop at 0 is unreachable.
+_MIN_POLL = 0.01
+
+
 def _watch(args) -> int:
     home = store.resolve_home(args.home)
-    watches = daemon.load_watches(home)
-    if not watches:
-        # Not an error: a store with no `[[watch]]` is a store nobody has told
-        # what to watch, and guessing is the one thing the watcher must not do.
-        print(
-            f"no [[watch]] in {os.path.join(home, 'config.toml')}; watching nothing",
-            file=sys.stderr,
-        )
+    # The emptiness check used to live here, once, before the loop — so it
+    # described the config as it was at start-up and never again. `run` re-reads
+    # every pass and now reports what it finds, which is the only version of
+    # this message that stays true. [E4, review: CLI 2]
     return daemon.run(
         home,
         poll=args.poll,
@@ -176,8 +212,18 @@ def main(argv: list[str] | None = None) -> int:
     cap.set_defaults(fn=_capture)
 
     wat = sub.add_parser("watch", help="tail the configured roots and capture what grew")
-    wat.add_argument("--poll", type=float, default=daemon.POLL)
-    wat.add_argument("--interval", type=float, default=daemon.INTERVAL)
+    wat.add_argument(
+        "--poll",
+        type=_poll_seconds,
+        default=daemon.POLL,
+        help="seconds between passes (default: %(default)s)",
+    )
+    wat.add_argument(
+        "--interval",
+        type=_seconds,
+        default=daemon.INTERVAL,
+        help="seconds between idle captures of one session (default: %(default)s)",
+    )
     wat.add_argument("--once", action="store_true", help="one pass, then exit")
     wat.add_argument("--no-parse", action="store_true", help="skip adapter; record bytes only")
     wat.set_defaults(fn=_watch)
@@ -202,6 +248,13 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     try:
         return args.fn(args)
+    except KeyboardInterrupt:
+        # `watch` in the foreground is the documented way to run the watcher and
+        # Ctrl-C is the documented way to stop it, so it ended in a fifteen-line
+        # traceback every time. `KeyboardInterrupt` is a `BaseException`, so no
+        # amount of widening the clause below would have caught it.
+        # 130 is the shell's convention for SIGINT. [E4, review: CLI 7]
+        return 130
     except (OSError, RecursionError, RuntimeError, ValueError, sqlite3.Error) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

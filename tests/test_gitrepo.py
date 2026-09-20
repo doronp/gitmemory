@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 
 import pytest
 
@@ -370,3 +371,95 @@ def test_gc_actually_invokes_git(tmp_path, monkeypatch):
     gitrepo.gc(home)
 
     assert any(a[:2] == ["git", "-C"] and "gc" in a for a in calls), calls
+
+
+# --- E4 review round ---------------------------------------------------------
+
+
+def test_a_half_written_capture_is_not_committed(tmp_path):
+    """`capture` publishes by rename, so a dotfile is a *partial* segment. [E4, review]
+
+    `git add --all` stages dotfiles. A commit racing a live capture was therefore
+    committing either a partial segment — unattested bytes — or a partial
+    manifest, which `verify` reads as truncated JSON. The next capture sweeps
+    both, which makes the working tree self-healing and the history not.
+    """
+    home = str(tmp_path / "store")
+    gitrepo.init(home)
+    os.makedirs(os.path.join(home, "raw", "claude-code", "s", "g00"))
+    for name in (".incoming.000000000000-000000000008.jsonl", "g00.json.tmp.4242"):
+        with open(os.path.join(home, "raw", "claude-code", "s", "g00", name), "w") as fh:
+            fh.write("half a file")
+    with open(os.path.join(home, "raw", "claude-code", "s", "g00", "real.jsonl"), "w") as fh:
+        fh.write("whole\n")
+
+    gitrepo.commit(home, "capture: one")
+    tracked = _ask(home, "ls-files").split()
+    assert any(t.endswith("real.jsonl") for t in tracked), tracked
+    assert not [t for t in tracked if ".incoming." in t or ".tmp." in t], tracked
+
+
+def test_a_dead_index_lock_is_reclaimed_rather_than_wedging_the_store_for_ever(tmp_path):
+    """A SIGKILL mid-`add` leaves `.git/index.lock` and nothing in git reclaims it.
+
+    Measured before the fix: the watcher went on capturing correctly and
+    committed nothing across three passes and 640 MB, reporting the same error
+    each time, until a human ran `rm`. The bytes were safe throughout; the
+    versioning layer, which is the product, was dead. [E4, review: concurrency 3]
+    """
+    home = str(tmp_path / "store")
+    gitrepo.init(home)
+    with open(os.path.join(home, "a.txt"), "w") as fh:
+        fh.write("x\n")
+    lock = os.path.join(home, ".git", "index.lock")
+    with open(lock, "w") as fh:
+        fh.write("")
+    old = time.time() - gitrepo.STALE_LOCK - 1
+    os.utime(lock, (old, old))
+
+    assert gitrepo.commit(home, "capture: one") is not None
+    assert not os.path.exists(lock)
+    assert _log(home) == ["capture: one"]
+
+
+def test_a_live_index_lock_is_left_alone(tmp_path):
+    """The other half of the rule, and the one that makes it safe to have.
+
+    Two writers in one index is much worse than a wedged store, so a lock young
+    enough to belong to a git that `_git` could still be waiting on is reported,
+    never removed. `TIMEOUT` bounds the longest call this module will wait for,
+    which is what makes "older than that" mean "nobody is holding it".
+    """
+    home = str(tmp_path / "store")
+    gitrepo.init(home)
+    with open(os.path.join(home, "a.txt"), "w") as fh:
+        fh.write("x\n")
+    lock = os.path.join(home, ".git", "index.lock")
+    with open(lock, "w") as fh:
+        fh.write("")
+
+    with pytest.raises(gitrepo.GitError, match="index.lock"):
+        gitrepo.commit(home, "capture: one")
+    assert os.path.exists(lock), "a lock that might be live must survive"
+
+
+def test_an_add_that_fails_for_any_other_reason_is_not_retried(tmp_path):
+    """Retrying a full disk just fails again, more slowly. One narrow retry only."""
+    home = str(tmp_path / "store")
+    gitrepo.init(home)
+    calls = []
+    real = gitrepo._git
+
+    def counting(h, *args, **kw):
+        calls.append(args[0])
+        if args[0] == "add":
+            raise gitrepo.GitError("git add --all failed (128): No space left on device")
+        return real(h, *args, **kw)
+
+    gitrepo._git = counting
+    try:
+        with pytest.raises(gitrepo.GitError, match="No space left"):
+            gitrepo.commit(home, "capture: one")
+    finally:
+        gitrepo._git = real
+    assert calls == ["add"], f"a non-lock failure must not be retried: {calls}"

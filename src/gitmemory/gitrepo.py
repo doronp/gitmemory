@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 
 from .store import resolve_home
@@ -43,6 +44,15 @@ GITIGNORE = """\
 /spool/
 # Capture locks, one per session.
 /.locks/
+# The store's own half-written files. `capture` publishes by rename, so both of
+# these only exist between a write and its `os.replace` — or for ever, if the
+# process was killed in between. `git add --all` stages dotfiles, so a commit
+# racing a live capture was committing a *partial* segment or a *partial*
+# manifest: unattested bytes for the first, and for the second a manifest that
+# `verify` reads as truncated JSON. Both get swept by the next capture, which
+# makes the working tree self-healing and the history not. [E4, review]
+.incoming.*
+*.tmp.*
 """
 
 # Repository-local, so nothing here reads or writes the user's global config.
@@ -154,13 +164,52 @@ def init(home: str | None = None) -> str:
     return home
 
 
+STALE_LOCK = TIMEOUT  # an `index.lock` older than the longest call we allow is a corpse
+
+
+def _clear_stale_index_lock(home: str) -> bool:
+    """Remove `.git/index.lock` if it is too old to belong to a live git.
+
+    git takes this lock for the duration of an `add` or a `commit` and removes
+    it on the way out. A SIGKILL, an OOM kill, or power loss in between leaves
+    it behind, and git then refuses every subsequent write to the index — for
+    ever, because nothing in git reclaims it either. Measured: the watcher went
+    on capturing correctly and committed nothing across three passes and 640 MB,
+    reporting the same error each time, until a human ran `rm`. The bytes were
+    safe the whole while; the versioning layer, which is the product, was dead.
+    [E4, review: concurrency 3]
+
+    Age-gated, and that is the whole safety argument. `TIMEOUT` already bounds
+    the longest git call this module will wait for, so a lock older than that
+    cannot belong to a git that `_git` is still waiting on. Unlinking a *live*
+    lock would be much worse than the problem — two writers in one index — so
+    the rule is deliberately conservative: when in doubt, leave it and report.
+    """
+    lock = os.path.join(home, ".git", "index.lock")
+    try:
+        if time.time() - os.path.getmtime(lock) <= STALE_LOCK:
+            return False
+        os.unlink(lock)
+    except OSError:
+        return False
+    return True
+
+
 def commit(home: str, message: str) -> Commit | None:
     """Stage everything and commit. `None` when there was nothing to commit.
 
     Nothing-to-commit is the common case — the watcher wakes, finds no growth,
     and has nothing to say — so it is a return value, not an exception.
     """
-    _git(home, "add", "--all")
+    try:
+        _git(home, "add", "--all")
+    except GitError as exc:
+        # One retry, and only against a lock old enough to be a corpse. Any
+        # other `add` failure — full disk, unreadable file — is raised as
+        # before, because retrying it would just fail again more slowly.
+        if "index.lock" not in str(exc) or not _clear_stale_index_lock(home):
+            raise
+        _git(home, "add", "--all")
     if not _git(home, "diff", "--cached", "--quiet", check=False).returncode:
         return None
     # `--no-verify` as well as `core.hooksPath`: the config is ours to set and
