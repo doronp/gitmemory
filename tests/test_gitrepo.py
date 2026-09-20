@@ -211,6 +211,38 @@ def test_a_global_ignore_file_cannot_drop_bytes_out_of_a_commit(tmp_path, monkey
     assert f"{here}/g0.json" in committed, out.stdout
 
 
+def test_a_setting_that_gets_past_the_scrub_stops_the_store_at_init(tmp_path, monkeypatch):
+    """The floor under the mechanism, for the git the mechanism does not reach.
+
+    `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_SYSTEM` need git 2.32, and bullseye is
+    still running 2.30, where both names are ignored without a word. Rather
+    than a version check — which would only cover the sources we know the names
+    of — `init` asks git what it is actually going to apply and refuses if any
+    of it came from outside the repository. That question also catches an
+    `include.path` reaching out of the local config, an `XDG_CONFIG_HOME`
+    spelling, and whatever source a later git adds.
+
+    So the leak is simulated at the level the floor is written for: an `_env`
+    with none of the isolation in it, which is what `_env` effectively *is* on
+    an old git. [E4, review: Gemini r3 §3]
+    """
+    home = gitrepo.init(str(tmp_path / "store"))  # isolated, and must stay fine
+
+    old = tmp_path / "oldgit-home"
+    old.mkdir()
+    (old / ".gitconfig").write_text("[core]\n\texcludesFile = /tmp/nothing\n")
+    leaky = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    leaky["HOME"] = str(old)
+    leaky.pop("XDG_CONFIG_HOME", None)
+    monkeypatch.setattr(gitrepo, "_env", lambda: leaky)
+
+    with pytest.raises(gitrepo.GitError) as exc:
+        gitrepo.init(home)
+
+    assert str(old / ".gitconfig") in str(exc.value), exc.value
+    assert "drop bytes out of a commit" in str(exc.value), "the message does not say why"
+
+
 def test_an_inherited_git_dir_does_not_redirect_the_commit(tmp_path, monkeypatch):
     """The bug this guards: a watcher started from another repository's hook.
 
@@ -344,8 +376,13 @@ def test_not_one_git_variable_survives_into_the_subprocess(tmp_path, monkeypatch
         "GIT_CONFIG_SYSTEM",
         "GIT_TERMINAL_PROMPT",
         "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_NOSYSTEM",
     ):
         monkeypatch.setenv(var, "/tmp/attacker")
+    # Not `GIT_*` names, and so not covered by the scrub: the two other
+    # spellings of "where the global config lives".
+    monkeypatch.setenv("HOME", "/tmp/attacker")
+    monkeypatch.setenv("XDG_CONFIG_HOME", "/tmp/attacker")
 
     env = gitrepo._env()
 
@@ -353,11 +390,14 @@ def test_not_one_git_variable_survives_into_the_subprocess(tmp_path, monkeypatch
         "GIT_TERMINAL_PROMPT": "0",
         "GIT_CONFIG_GLOBAL": os.devnull,
         "GIT_CONFIG_SYSTEM": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "HOME": os.devnull,
     }
     leaked = {k for k in env if k.startswith("GIT_")} - set(ours)
     assert not leaked, f"reached the git subprocess: {sorted(leaked)}"
     for name, value in ours.items():
         assert env[name] == value, f"{name} kept the planted value"
+    assert "XDG_CONFIG_HOME" not in env, "the third spelling of the global config got through"
     assert "PATH" in env, "the scrub took the whole environment with it"
 
 

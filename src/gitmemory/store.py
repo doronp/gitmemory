@@ -215,6 +215,9 @@ class Capture:
     # had ended, never would be. Reported by two reviewers independently.
     # [E4, review: store-contract 4 / concurrency 4]
     adopted: bool = False
+    # Boundaries the caller offered that do not address a byte of this
+    # generation, and so were not recorded. See the filter in `_capture`.
+    dropped_boundaries: int = 0
 
 
 def _manifests(session_dir: str) -> list[tuple[int, str]]:
@@ -635,6 +638,21 @@ def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting
             # appended with nothing else set is what made the repair invisible.
             return Capture(prior[-1][1], gen, None, 0, end, None, adopted=adopted)
 
+    # A boundary is an offset into this generation, so one outside `[0, end]`
+    # addresses bytes the store does not have. The daemon tries not to produce
+    # those — it re-stats the source around the parse — but that is a mitigation
+    # with a window in it, and a guarantee needs a floor. Without this the store
+    # wrote whatever it was handed, `verify` called it clean, and the next
+    # capture carried it into the following manifest for ever; a *negative* one
+    # got through too, which sends `span` reading from the wrong place. The
+    # union is filtered rather than only the argument, so a store that already
+    # holds a bad offset heals on its next capture. [E4, review: Gemini r3 §4]
+    #
+    # Dropped rather than raised: bytes outrank boundaries, and refusing the
+    # capture would lose a transcript over an annotation of it. Counted, so the
+    # drop is not silent.
+    offered = {*carried, *(boundaries or [])}
+    kept_boundaries = sorted(b for b in offered if 0 <= b <= end)
     manifest = {
         "schema": SCHEMA,
         "agent": agent,
@@ -646,7 +664,7 @@ def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting
         "file_sha256": whole.hexdigest(),
         "prev_manifest_sha256": prev_manifest_sha,
         "segments": segments,
-        "compact_boundaries": sorted({*carried, *(boundaries or [])}),
+        "compact_boundaries": kept_boundaries,
     }
     manifest_path = os.path.join(session_dir, _gen_file(gen))
     # Invariant 2 (a sealed generation is immutable) was breakable by a slow
@@ -655,7 +673,16 @@ def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting
     # here and then deleted, because `gen` always comes from the newest manifest
     # and no reachable state makes it fire. An untestable branch is not insurance. [E2]
     _write_atomic(manifest_path, canonical_json(manifest))
-    return Capture(manifest_path, gen, seg_rel, appended, end, diverged, adopted=adopted)
+    return Capture(
+        manifest_path,
+        gen,
+        seg_rel,
+        appended,
+        end,
+        diverged,
+        adopted=adopted,
+        dropped_boundaries=len(offered) - len(kept_boundaries),
+    )
 
 
 def _unlink(path: str) -> None:

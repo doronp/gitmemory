@@ -89,6 +89,10 @@ class Tick:
     errors: list[str] = field(default_factory=list)
     spool_consumed: int = 0
     spool_dropped: int = 0  # records naming a path no watch covers
+    # Compaction offsets the store refused because they fall outside the bytes
+    # it holds. Zero in a healthy pass, which is why it is worth printing when
+    # it is not: an adapter or a race handed us an offset into nothing.
+    boundaries_dropped: int = 0
 
 
 def load_watches(home: str, log=None) -> list[Watch]:
@@ -516,9 +520,11 @@ def capture_one(
             # content's bytes. `store.capture` sees the rewrite and forks a
             # generation, correctly dropping the *carried* boundaries — and
             # then writes these ones into the fresh manifest, where every later
-            # capture carries them forward for the life of the session. Nothing
-            # checks an offset against the size it indexes into, so a boundary
-            # past the end of the file is a fact the store now holds.
+            # capture carries them forward for the life of the session. The
+            # store now refuses an offset outside the bytes it holds, which is
+            # the floor; this is the mitigation that keeps a *plausible* wrong
+            # offset — one that still lands inside the new content — from being
+            # recorded at all, because no floor can see that one.
             #
             # Same degrade as a parse failure, for the same reason: boundaries
             # are what we are allowed to lose. [E4, review]
@@ -641,6 +647,7 @@ def tick(
         if cap.appended or cap.diverged:
             result.captured.append(f"{key[0]}/{key[1]}/g{cap.generation:02d}")
             result.appended += cap.appended
+        result.boundaries_dropped += cap.dropped_boundaries
         # Adoption changes the store without appending a byte, so it has to be
         # asked about separately or the repair never reaches git. Kept out of
         # `result.captured` because nothing was captured; it only says the pass
@@ -765,7 +772,15 @@ def run(
                 log(f"error: {err}")
             last_errors, last_said = list(result.errors), now
         if result.captured:
-            log(f"captured {len(result.captured)} +{result.appended}B commit={result.commit}")
+            dropped = (
+                f" ({result.boundaries_dropped} boundaries outside the bytes, dropped)"
+                if result.boundaries_dropped
+                else ""
+            )
+            log(
+                f"captured {len(result.captured)} +{result.appended}B "
+                f"commit={result.commit}{dropped}"
+            )
         if once:
             return 1 if result.errors else 0
         time.sleep(poll)

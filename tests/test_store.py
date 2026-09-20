@@ -152,6 +152,43 @@ def test_compact_boundaries_accumulate_within_a_generation(home, src):
     assert manifest(home)["compact_boundaries"] == [128, 512]
 
 
+def test_a_boundary_outside_the_bytes_is_refused_rather_than_recorded(home, src):
+    """An offset the store cannot resolve is not a fact about this generation.
+
+    The daemon re-stats the source around the parse to avoid producing one, but
+    that is a mitigation with a window in it, and the store used to write down
+    whatever it was handed: a boundary past EOF, or a negative one, became a
+    permanent entry that `verify` called clean and the next capture carried
+    forward for the life of the session. [E4, review: Gemini r3 §4]
+    """
+    transcript(src, 5)
+    size = os.path.getsize(src)
+
+    cap = store.capture(
+        src, "claude-code", "sess", home=home, boundaries=[-1, 0, 8, size, size + 1]
+    )
+
+    assert manifest(home)["compact_boundaries"] == [0, 8, size], "an unresolvable offset survived"
+    assert cap.dropped_boundaries == 2, "the drop was silent"
+
+
+def test_a_bad_boundary_already_in_a_manifest_heals_on_the_next_capture(home, src):
+    """The filter is on the union, not on the argument, so a store written by a
+    version that had no floor stops carrying its bad offsets forward."""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    path = Path(home, "sessions", "claude-code", "sess", "g00.json")
+    man = json.loads(path.read_text())
+    man["compact_boundaries"] = [8, 10**9]
+    path.write_text(json.dumps(man))
+
+    transcript(src, 5, start=5)
+    cap = store.capture(src, "claude-code", "sess", home=home)
+
+    assert manifest(home)["compact_boundaries"] == [8]
+    assert cap.dropped_boundaries == 1
+
+
 # --------------------------------------------------------------------------- #
 # generations: what happens after divergence (DESIGN.md §2.5a)
 # --------------------------------------------------------------------------- #

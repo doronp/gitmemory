@@ -139,6 +139,32 @@ def _env() -> dict[str, str]:
     # git >= 2.32 for these two names; released 2021. [E4]
     env["GIT_CONFIG_GLOBAL"] = os.devnull
     env["GIT_CONFIG_SYSTEM"] = os.devnull
+    # Which was not enough, on two counts, and neither was visible until `init`
+    # started asking git what it had actually loaded.
+    #
+    # First: `GIT_CONFIG_SYSTEM` does not reach every system config. Measured on
+    # git 2.50.1 (Apple Git-155), `config --list --show-origin` with that name
+    # set to `/dev/null` still returns `credential.helper` and
+    # `init.defaultBranch` from
+    # `/Library/Developer/CommandLineTools/usr/share/git-core/gitconfig`; with
+    # `GIT_CONFIG_NOSYSTEM=1` it returns neither. Four-way check, and only the
+    # variable that predates the other two by a decade closes it. So the fix
+    # written one commit ago was still leaking on the machine it was written on.
+    #
+    # Second, both 2.32 names are ignored in silence on an older git, and 2.32
+    # is recent enough that Debian bullseye (2.30) is a live machine. A `HOME`
+    # that cannot be a directory is how the global file is refused where no
+    # variable for it exists: `/dev/null/.gitconfig` is ENOTDIR, which git reads
+    # as absent. Nothing gitmemory runs needs a home directory — `init`, `add`
+    # and `commit` were all measured working under it. `XDG_CONFIG_HOME` goes
+    # too, being the third spelling of the global file and the only one that is
+    # not a `GIT_*` name.
+    #
+    # None of this is trusted. `init` proves the isolation rather than assuming
+    # it; see `_assert_no_foreign_config`. [E4, review: Gemini r3 §3]
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["HOME"] = os.devnull
+    env.pop("XDG_CONFIG_HOME", None)
     return env
 
 
@@ -160,6 +186,44 @@ def is_repo(home: str) -> bool:
     return os.path.isdir(os.path.join(home, ".git"))
 
 
+def _assert_no_foreign_config(home: str) -> None:
+    """Prove the isolation in `_env` instead of trusting the mechanism.
+
+    Every setting git will apply to this repository, with the file it came
+    from. The only origin allowed is the repository's own config, so this
+    catches a git too old for `GIT_CONFIG_GLOBAL`, an `XDG_CONFIG_HOME` spelling
+    we did not think of, an `include.path` reaching out of the local file, and
+    whatever config source a future git adds — none of which a list of variable
+    names would have caught. A denylist grows one entry per incident; this
+    asks the question the incidents are all instances of. [E4]
+
+    Refusing beats warning. The failure it exists for is a global
+    `core.excludesFile` that drops every segment out of `git add --all` while
+    the commit still succeeds: nothing downstream looks wrong, `verify` reports
+    clean, and the history stops holding the bytes it is the record of. A
+    watcher that will not start is a problem you can see.
+    """
+    listing = _git(home, "config", "--list", "--show-origin").stdout
+    foreign = []
+    for line in listing.splitlines():
+        origin = line.split("\t", 1)[0]
+        path = origin[5:] if origin.startswith("file:") else None
+        # Not a file at all — `command line:`, `blob:`, `standard input:` — is
+        # foreign too, and reported as it was printed.
+        if path is None or os.path.realpath(os.path.join(home, path)) != os.path.realpath(
+            os.path.join(home, ".git", "config")
+        ):
+            foreign.append(origin)
+    if foreign:
+        names = ", ".join(sorted(set(foreign)))
+        raise GitError(
+            f"git config for {home} is not isolated: settings arriving from {names}. "
+            "A global or system setting can drop bytes out of a commit that still "
+            "succeeds, so the store refuses to run under one. git >= 2.32 isolates "
+            "itself; on an older git, move the file aside."
+        )
+
+
 def init(home: str | None = None) -> str:
     """Make `home` a git repository, or bring an existing one up to spec.
 
@@ -175,6 +239,7 @@ def init(home: str | None = None) -> str:
         _git(home, "init", "--quiet", "--template=", "--initial-branch=main")
     for key, value in _CONFIG.items():
         _git(home, "config", key, value)
+    _assert_no_foreign_config(home)
     # Rewritten rather than merged: it is ours, it is three entries, and a merge
     # that half-applies is worse than a file that is simply current.
     path = os.path.join(home, ".gitignore")
