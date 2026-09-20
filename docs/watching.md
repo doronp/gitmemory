@@ -100,6 +100,8 @@ anywhere useful. The two failures worth watching for are different shapes:
 | `no .../config.toml; watching nothing` | The file is not where the watcher is looking. Check `$GITMEMORY_HOME`. |
 | Watcher quiet, store empty, no complaint | A root that **does not exist** is kept, not refused — before an agent has run for the first time that is the normal state, and `run` re-reads the config every pass, so it starts working the moment the directory appears. The cost is that a typo'd root and a not-yet-used one look identical. Check the path by hand. |
 | `compact_boundaries: []` everywhere | Adapter missing or `--no-parse`. The bytes are intact; only the boundaries are absent. |
+| `source changed while parsing` | The transcript was rewritten between the parse and the copy — a compaction landing mid-pass. The bytes are captured; that one generation has no boundaries. Nothing to do. |
+| `was captured from <path>, not <path>; pass a distinct --session-id` | Two transcripts collided on one session name, and the store refuses to mix them rather than duplicating both for ever. The advice in the message is for the CLI and there is no `--session-id` to pass here: rename or move either file — the name is derived from the path — and the next pass captures both. Until then the second one is **not being captured**, so this is not a warning to leave running. |
 
 There is no discovery counter: a pass prints only when it captured something,
 so "found 12 transcripts, all unchanged" and "found nothing" are the same

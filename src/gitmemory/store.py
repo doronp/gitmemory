@@ -158,6 +158,22 @@ def session_id_for(source_path: str) -> str:
     watcher is handed whatever is in a directory it was pointed at, and
     `capture` raising on a transcript whose name has a space in it would be the
     watcher stopping at the first file it did not choose. [E4]
+
+    Two ceilings, both deliberate, both noted here because the name is the only
+    place either is visible:
+
+    ponytail: the tag is 32 bits, so two transcripts with the same squeezed stem
+    can land on one session id. That is the [E2] bug above, and it is not silent
+    any more — `_capture` compares the incoming path against the `source_path`
+    the manifest recorded and refuses rather than duplicating. Loud and one
+    session stuck beats quiet and a store that grows without bound. Widening
+    the digest would make it rarer and would still need the refusal.
+
+    ponytail: identity is the path, so a transcript that moves is a new session
+    and is copied again whole. Bounded — one extra copy, fully attested, and
+    the old session stays valid. The upgrade is `st_dev`/`st_ino` in the
+    manifest plus a prefix-hash match before adopting the new path; unbuilt
+    because inodes are reused, so it needs the hash anyway, for a rename. [E4]
     """
     stem = os.path.splitext(os.path.basename(source_path))[0]
     stem = re.sub(r"[^A-Za-z0-9._-]", "_", stem)[:96].lstrip("._-")

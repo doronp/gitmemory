@@ -1070,6 +1070,46 @@ def test_the_watcher_survives_an_adapter_that_raises_anything_at_all(tmp_path):
     assert [m for m in said if "parse failed" in m], said
 
 
+def test_a_transcript_rewritten_while_it_is_parsed_loses_its_boundaries_not_its_bytes(tmp_path):
+    """The parse and the copy are two reads, and the offsets belong to the first.
+
+    `store.capture` notices the rewrite and forks a generation, which drops the
+    boundaries *carried* from the old manifest — and then writes the ones this
+    function just parsed into the fresh manifest, where the next capture carries
+    them forward for the life of the session. Nothing in the store checks an
+    offset against the size it indexes into, so `byte_offset=138` survives into
+    a 69-byte generation as a recorded fact. [E4, review]
+    """
+    home = str(tmp_path / "home")
+    src = _write(str(tmp_path / "proj" / "a.jsonl"), TURN * 3)
+
+    class Rewriter:
+        """Parses, and replaces the file on the way out — a compaction, roughly."""
+
+        def parse(self, path):
+            _write(path, TURN)
+            return Rewriter.Parsed()
+
+        class Parsed:
+            events = (type("E", (), {"kind": "compaction", "byte_offset": 2 * len(TURN)})(),)
+
+    said: list[str] = []
+    orig = daemon.get_adapter
+    daemon.get_adapter = lambda _name: Rewriter()
+    try:
+        cap = daemon.capture_one(home, src, "claude-code", log=said.append)
+    finally:
+        daemon.get_adapter = orig
+
+    assert cap.appended == len(TURN), "bytes outrank boundaries"
+    manifests = [s.manifest for s in store.sessions(home)]
+    assert len(manifests) == 1, manifests
+    with open(manifests[0], encoding="utf-8") as fh:
+        assert json.load(fh)["compact_boundaries"] == []
+    assert store.verify(home) == []
+    assert [m for m in said if "changed while parsing" in m], said
+
+
 def test_a_pass_that_fails_in_a_way_nobody_predicted_does_not_kill_the_watcher(
     tmp_path, monkeypatch
 ):

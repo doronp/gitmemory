@@ -511,8 +511,31 @@ def capture_one(
     boundaries = None
     if parse:
         try:
+            # The parse and the copy are two reads of one file, and a rewrite
+            # between them attaches the old content's offsets to the new
+            # content's bytes. `store.capture` sees the rewrite and forks a
+            # generation, correctly dropping the *carried* boundaries — and
+            # then writes these ones into the fresh manifest, where every later
+            # capture carries them forward for the life of the session. Nothing
+            # checks an offset against the size it indexes into, so a boundary
+            # past the end of the file is a fact the store now holds.
+            #
+            # Same degrade as a parse failure, for the same reason: boundaries
+            # are what we are allowed to lose. [E4, review]
+            #
+            # ponytail: a rewrite that lands on the same size and the same
+            # nanosecond is invisible here. The next capture writes the right
+            # boundaries for whatever it reads, so the ceiling is one wrong
+            # generation, not a wrong session.
+            before = os.stat(source)
+            before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)
             session = get_adapter(agent).parse(source)
             boundaries = [e.byte_offset for e in session.events if e.kind == "compaction"]
+            after = os.stat(source)
+            if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != before:
+                if log:
+                    log("source changed while parsing; capturing bytes without boundaries")
+                boundaries = None
         except Exception as exc:  # noqa: BLE001 - untrusted data; bytes outrank boundaries
             # `log` exists because the CLI's two capture paths disagreed about
             # this. `gitmemory capture <path> --session-id x` printed "parse
