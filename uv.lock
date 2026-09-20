@@ -529,7 +529,7 @@ dev = [
     { name = "pytest" },
     { name = "ruff" },
 ]
-index = [
+hybrid = [
     { name = "flashrank" },
     { name = "model2vec" },
     { name = "numpy" },
@@ -545,17 +545,17 @@ requires-dist = [
     { name = "datasette", marker = "extra == 'serve'", specifier = ">=0.65,<1" },
     { name = "datasette-dashboards", marker = "extra == 'serve'", specifier = ">=0.7" },
     { name = "datasette-render-markdown", marker = "extra == 'serve'", specifier = ">=2.1" },
-    { name = "flashrank", marker = "extra == 'index'", specifier = ">=0.2" },
+    { name = "flashrank", marker = "extra == 'hybrid'", specifier = ">=0.2" },
     { name = "hypothesis", marker = "extra == 'dev'", specifier = ">=6" },
     { name = "keybert", marker = "extra == 'derive'", specifier = ">=0.9" },
-    { name = "model2vec", marker = "extra == 'index'", specifier = ">=0.8" },
+    { name = "model2vec", marker = "extra == 'hybrid'", specifier = ">=0.8" },
     { name = "networkx", marker = "extra == 'derive'", specifier = ">=3.4" },
-    { name = "numpy", marker = "extra == 'index'", specifier = ">=2.0" },
+    { name = "numpy", marker = "extra == 'hybrid'", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.9" },
     { name = "sumy", marker = "extra == 'derive'", specifier = ">=0.11" },
 ]
-provides-extras = ["index", "derive", "serve", "dev"]
+provides-extras = ["hybrid", "derive", "serve", "dev"]
 
 [[package]]
 name = "h11"

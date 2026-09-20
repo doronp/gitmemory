@@ -368,18 +368,160 @@ MUTANTS = [
         "                fh.seek(offset)",
         "test_a_hit_in_a_multi_segment_generation_resolves_across_the_cut",
     ),
+    # ---- bench/ ----------------------------------------------------------
+    # The measuring instrument gets the same treatment as the thing measured.
+    # Seven semantic mutations of `bench/` used to leave its whole suite green,
+    # including deleting the statistics and making the control arm *be* the
+    # candidate arm — so the harness that was supposed to gate E3 could not
+    # notice being broken. [E3]
+    (
+        "a zero-variance difference gets a fabricated p of 0",
+        "bench/score.py",
+        "    if sumsq == 0.0:\n        return mean_diff, 1.0",
+        "    if True:\n        return mean_diff, (0.0 if mean_diff else 1.0)",
+        "test_one_observation_can_never_be_significant",
+    ),
+    (
+        "the large-n branch is a different test from the exact one",
+        "bench/score.py",
+        "    return mean_diff, 1.0 - normal_cdf(total / math.sqrt(sumsq))",
+        "    return mean_diff, normal_cdf(total / math.sqrt(sumsq))",
+        "test_the_exact_and_normal_branches_agree",
+    ),
+    (
+        "the derangement maps each instance to itself",
+        "bench/score.py",
+        "            mapping[inst.question_id] = order[(idx + 1) % len(order)].question",
+        "            mapping[inst.question_id] = inst.question",
+        "test_the_shuffled_arm_is_asked_another_instances_question",
+    ),
+    (
+        "the shuffled arm is asked the candidate's own question",
+        "bench/score.py",
+        '                    "shuffled": candidate(shuffled_query[inst.question_id], k),',
+        '                    "shuffled": candidate(inst.question, k),',
+        "test_the_shuffled_arm_is_asked_another_instances_question",
+    ),
+    (
+        "alpha is not corrected for the number of modes",
+        "bench/score.py",
+        "    alpha = ALPHA / max(1, len(modes))",
+        "    alpha = ALPHA",
+        "test_the_alpha_is_bonferroni_corrected_across_the_modes_tested",
+    ),
+    (
+        "the oracle arm retrieves nothing",
+        "bench/score.py",
+        '                    "reference": sorted(evidence)[:k],',
+        '                    "reference": [],',
+        "test_the_gate_passes_on_the_real_index",
+    ),
+    (
+        "abstention instances are scored like the rest",
+        "bench/score.py",
+        '    active = [inst for inst in instances if not inst.question_id.endswith("_abs")]',
+        "    active = list(instances)",
+        "test_abstention_instances_are_excluded",
+    ),
+    (
+        "an offset only matches a turn it starts exactly",
+        "bench/score.py",
+        "        if turn is None or offset >= turn.byte_offset + turn.byte_len:",
+        "        if turn is None or offset != turn.byte_offset:",
+        "test_an_offset_inside_a_turn_matches_that_turn",
+    ),
+    (
+        "recall is a hit rate again",
+        "bench/score.py",
+        "        turn_recall=len(found_turns) / len(evidence) if evidence else 0.0,",
+        "        turn_recall=1.0 if found_turns else 0.0,",
+        "test_recall_counts_every_evidence_turn_not_just_the_first",
+    ),
+    (
+        "an offset matching no turn is not counted",
+        "bench/score.py",
+        "            unmatched += 1\n            continue",
+        "            continue",
+        "test_an_unmatched_offset_consumes_its_rank_and_is_counted",
+    ),
+    (
+        "the live-context window keeps what fell before the boundary",
+        "bench/score.py",
+        "        return [o for o in retrieve(query, k * 4) if o >= cutoff][:k]",
+        "        return [o for o in retrieve(query, k * 4) if o >= 0][:k]",
+        "test_the_live_context_arm_loses_what_fell_before_the_boundary",
+    ),
+    (
+        "the sample-size floor does not refuse",
+        "bench/score.py",
+        "    if n < MIN_INSTANCES:",
+        "    if False:",
+        "test_the_gate_refuses_a_verdict_below_the_minimum_sample",
+    ),
+    (
+        "the apparatus check accepts an inexact oracle",
+        "bench/score.py",
+        "            ref == 1.0,",
+        "            ref >= 0.0,",
+        "test_the_gate_fails_when_the_oracle_arm_is_not_exact",
+    ),
+    (
+        "the signal check always passes (the gate that did not gate)",
+        "bench/score.py",
+        "            p < alpha and diff > MIN_EFFECT,",
+        "            True,",
+        "test_the_gate_fails_on_a_retriever_that_returns_nothing",
+    ),
+    (
+        "the leakage bound always passes",
+        "bench/score.py",
+        "            leak <= LEAK_MARGIN,",
+        "            True,",
+        "test_the_gate_fails_on_a_retriever_that_ignores_the_query",
+    ),
+    (
+        "the product-claim check always passes",
+        "bench/score.py",
+        "                claim_p < alpha and claim_diff > MIN_EFFECT,",
+        "                True,",
+        "test_the_gate_fails_when_the_candidate_finds_only_what_the_live_window_had",
+    ),
+    (
+        "the arms' temporary stores are never closed",
+        "bench/score.py",
+        "                    if close is not None:",
+        "                    if False:",
+        "test_a_sweep_leaves_no_temporary_store_behind",
+    ),
+    (
+        "the after-evidence boundary lands after the first evidence turn",
+        "bench/synth.py",
+        '            if compaction == "after_evidence" and last_evidence == (s_idx, t_idx):',
+        '            if compaction == "after_evidence" and first_evidence == (s_idx, t_idx):',
+        "test_the_after_evidence_boundary_follows_the_last_evidence_turn",
+    ),
+    (
+        "a repeated question_id is accepted",
+        "bench/longmemeval.py",
+        '        if item["question_id"] in seen:',
+        "        if False:",
+        "test_a_repeated_question_id_is_rejected_by_the_loader",
+    ),
 ]
 
 
 def run(args: list[str]) -> bool:
     """True when pytest is green.
 
-    `tests` explicitly, not pytest's configured `testpaths`: those also hold
-    the benchmark, which needs a corpus and minutes. This harness asks one
-    question about the unit suite. [E3]
+    `tests bench` explicitly, not pytest's configured `testpaths`: naming them
+    here keeps the harness honest about what it ran even if `testpaths` changes
+    under it. The corpus test is deselected by `addopts`, so this is the offline
+    suite and it takes about a second. [E3]
     """
     return (
-        subprocess.run([sys.executable, "-m", "pytest", "-q", "tests", *args], cwd=ROOT).returncode
+        subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "tests", "bench", *args], cwd=ROOT
+        ).returncode
         == 0
     )
 
@@ -387,7 +529,9 @@ def run(args: list[str]) -> bool:
 def main() -> int:
     bad = []
     for name, filename, find, replace, test in MUTANTS:
-        path = SRC / filename
+        # A bare name is a file in the package; a path is relative to the repo,
+        # which is how the `bench/` mutants below address the harness itself.
+        path = ROOT / filename if "/" in filename else SRC / filename
         original = path.read_text()
         if original.count(find) != 1:
             print(f"SKIP  {name}: anchor appears {original.count(find)}x in {filename}")

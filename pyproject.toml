@@ -35,5 +35,11 @@ target-version = "py313"
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src", "tests"]
+testpaths = ["tests", "bench"]
+pythonpath = ["src", "tests", "."]
+# The corpus tests read a 277 MB third-party download, so they are opt-in:
+# `pytest -m corpus` after `bench/fetch_longmemeval.sh`. Gating on the env var
+# alone was not enough — following the fetch script's own instructions exports
+# it, and the default suite then silently grew a multi-second JSON parse.
+markers = ["corpus: needs the LongMemEval download (run with -m corpus)"]
+addopts = "-m 'not corpus'"
