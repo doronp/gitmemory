@@ -15,6 +15,7 @@ import itertools
 import math
 import random
 import statistics
+import sys
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -80,6 +81,13 @@ def sign_flip_test(a: list[float], b: list[float]) -> tuple[float, float]:
     form above `EXACT_MAX_N`; the two agree to three decimals by the time they
     swap over. `sum(d**2) == 0` means the arms did not differ anywhere, which is
     `p = 1.0` and not a division.
+
+    The normal branch is floored at the smallest positive double rather than
+    allowed to underflow. `1 - normal_cdf(z)` reaches exactly 0.0 around z = 38,
+    which the 470-instance sweep hits — and a report printing `p = 0.000e+00` is
+    indistinguishable from the fabricated zero this test was written to remove.
+    The floor is a display honesty fix, not a statistical one: nothing in the
+    gate compares a p-value to zero. [E3]
     """
     diffs = [x - y for x, y in zip(a, b, strict=True)]
     n = len(diffs)
@@ -99,7 +107,7 @@ def sign_flip_test(a: list[float], b: list[float]) -> tuple[float, float]:
             if math.fsum(s * d for s, d in zip(signs, diffs, strict=True)) >= total - 1e-12
         )
         return mean_diff, atleast / (2.0**n)
-    return mean_diff, 1.0 - normal_cdf(total / math.sqrt(sumsq))
+    return mean_diff, max(1.0 - normal_cdf(total / math.sqrt(sumsq)), sys.float_info.min)
 
 
 def _deranged(instances: list[Instance], rng: random.Random) -> dict[str, str]:
@@ -113,8 +121,13 @@ def _deranged(instances: list[Instance], rng: random.Random) -> dict[str, str]:
     and nothing to bound. [E3]
 
     Grouped by `question_type` so the control arm is asked questions of the same
-    difficulty as the candidate arm. A group of one cannot be deranged within
-    itself and falls back to the global rotation.
+    difficulty as the candidate arm. Types holding a single instance are pooled
+    into one group, and a *lone* singleton — one type with one instance and no
+    other type in the same position — joins the largest group instead. It used
+    to fall through to a `setdefault` that handed it back its own question: a
+    silent fixed point, which is exactly a control arm that is the candidate
+    arm. Caught by Gemini in pair review; the corpus it does not happen on is
+    not a reason for it to be possible. [E3]
     """
     by_type: dict[str, list[Instance]] = {}
     for inst in instances:
@@ -123,6 +136,10 @@ def _deranged(instances: list[Instance], rng: random.Random) -> dict[str, str]:
     singletons = [g[0] for g in by_type.values() if len(g) == 1]
     if len(singletons) > 1:
         groups.append(singletons)
+    elif singletons:
+        if not groups:
+            raise ValueError("a derangement needs at least two instances")
+        max(groups, key=len).extend(singletons)
 
     mapping: dict[str, str] = {}
     for group in groups:
@@ -130,9 +147,11 @@ def _deranged(instances: list[Instance], rng: random.Random) -> dict[str, str]:
         rng.shuffle(order)
         for idx, inst in enumerate(order):
             mapping[inst.question_id] = order[(idx + 1) % len(order)].question
-    # One instance in total, or one lone question_type: no derangement exists.
-    for inst in instances:
-        mapping.setdefault(inst.question_id, inst.question)
+    # Every instance is in exactly one group of length >= 2, so this cannot
+    # trip; it is here because the thing it guards against was silent.
+    assert all(mapping[i.question_id] != i.question for i in instances), (
+        "derangement has a fixed point"
+    )
     return mapping
 
 

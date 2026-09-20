@@ -59,7 +59,7 @@ below.
 | 8 | With n=1 the control arm *is* the candidate arm | FIXED |
 | 9 | Bonferroni family mis-specified; test two-tailed | FIXED |
 | 10 | Prints candidate scores, then fails | FIXED |
-| 11 | `hybrid` extra puts a HuggingFace download in the default suite | FIXED |
+| 11 | `hybrid` extra puts a HuggingFace download in the default suite | REOPENED, then FIXED |
 | 12 | Corpus test runs in the default suite once you follow the fetch script | FIXED |
 | 13 | Interrupted download poisons the cache permanently | FIXED |
 | 14 | `turn_recall` is a hit-rate, not recall | FIXED |
@@ -100,8 +100,8 @@ sign assignments whose sum reaches the observed sum. Exact by enumeration for
 `p = 0.5`; all-zero differences give `p = 1.0`. There is no branch that can
 return a p-value of zero.
 
-**3 — the vacuity.** `bench/test_bench.py` was rewritten to 34 tests, and 19
-`bench/` mutants were appended to `tests/mutate_index.py` (49 → 68). Each mutant
+**3 — the vacuity.** `bench/test_bench.py` was rewritten to 38 tests, and 22
+`bench/` mutants were appended to `tests/mutate_index.py` (49 → 71). Each mutant
 names the test that must catch it, so a test that passes against its own
 mutation is reported as `MISSED`, not as a pass. The seven mutations the
 reviewer applied are all in that list.
@@ -112,7 +112,7 @@ unconditionally true survived, because
 `test_the_live_context_arm_loses_what_fell_before_the_boundary` asserts the two
 arms differ on the real index and says nothing about what the gate does when
 they do not. `test_the_gate_fails_when_the_candidate_finds_only_what_the_live_window_had`
-closes it. Final: **68/68 caught by their intended test.**
+closes it. Final: **71/71 caught by their intended test.**
 
 **4 — the planted question.** `synth.py` no longer writes the question into the
 transcript. It was arm-asymmetric: `reference` bypasses retrieval and never paid
@@ -185,10 +185,59 @@ live_context` under `CLAIM_MODE = "after_evidence"` is that claim as a number,
 and it is a gate condition, so the claim cannot be made in a report that did not
 measure it.
 
+## Three things only running it found
+
+The disposition table above was written before the harness had ever been pointed
+at the real corpus. Running it reopened one row and added two defects nothing in
+the suite could have caught.
+
+**#11 was not closed.** The fix recorded as FIXED probed `from bench.arms import
+dense_factory` to decide whether the dense arm was runnable. That import always
+succeeds — `arms.py` imports numpy and model2vec *inside* the factory bodies, on
+purpose, so that the module stays importable without the extra. So the arm was
+registered, and raised `ImportError` on its first instance, 470 instances into
+the sweep. The real fix probes the third-party module with
+`importlib.util.find_spec` and is pinned by
+`test_an_arm_whose_dependency_is_absent_is_skipped_with_a_reason`, which builds
+each registered arm to prove "registered" means "runnable". A probe that cannot
+fail is not a probe.
+
+**The report printed `p = 0.000e+00`.** An honest underflow, not the fabricated
+zero of finding #2: `1 - normal_cdf(z)` reaches exactly 0.0 at around z = 38, and
+470 paired instances reach it. But a reader cannot tell the two apart from the
+page, and the whole point of #2 was that a printed zero is a claim of certainty.
+The normal branch is floored at `sys.float_info.min`. Display honesty, not
+statistics — nothing in the gate compares a p-value to zero.
+
+**`_deranged` had a fixed point after all** — found by Gemini in pair review, not
+by the sweep. A `question_type` holding exactly one instance, with no second
+singleton type to pool with, fell past both branches to a `setdefault` that
+handed it back its own question. That is the control arm *being* the candidate
+arm, which is finding #8 in a corner the corpus happens not to reach. It now
+folds into the largest group, raises `ValueError` if there is no group to fold
+into, and asserts no fixed points survive. The corpus not reaching a corner is
+not a reason for the corner to exist.
+
+## The reciprocal pair review
+
+Gemini reviewed this adjudication and the rewritten `bench/`, with an attestation
+of files opened and commands run. It confirmed all four C1–C4 adjudications,
+accepted both BLOCKING items from the trust-root review, and rated
+`sign_flip_test`, `_measure`, `_live_context`, the gate, and both deviations
+above as correct — reproducing the exact/normal agreement at the crossover
+(0.0204 vs 0.0219) rather than asserting it. BLOCKING: none. MINOR: none. One
+MAJOR, the derangement fixed point, reproduced here before being fixed.
+
+It also recorded a structural property worth keeping in view: the factory is
+handed the whole `Instance`, so a retriever could pass all five gate checks by
+comparing `query` to `inst.question` and returning the ground-truth offsets. The
+harness trusts the arm not to read its own answer key. That is acceptable for
+arms we write and a hole for any arm we do not; if a third-party arm is ever
+scored here, the factory signature has to narrow to the transcript bytes.
+
 ## Follow-ups not closed here
 
-- The sweep on the real 470-instance LongMemEval corpus with every arm scored is
-  the E3 ship gate and has not been run. Until it has, no number in this
-  directory describes retrieval quality on real data.
 - `index.py`'s comment that `index/` "is gitignored" is not true today. The
   store's own `.gitignore` for `index/` and `spool/` lands in E4.
+- The factory sees the whole `Instance` (above). Narrow it before scoring an arm
+  we did not write.

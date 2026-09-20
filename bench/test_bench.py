@@ -212,6 +212,32 @@ def test_the_derangement_pairs_within_question_type():
         assert by_q[mapping[inst.question_id]] == inst.question_type
 
 
+def test_a_lone_question_type_is_still_deranged():
+    """A type holding one instance used to be handed back its own question.
+
+    Singletons are pooled, but a *lone* singleton had no pool to join and fell
+    through to a `setdefault` that mapped it to itself — a control arm that is
+    the candidate arm, for that instance, silently. LongMemEval's six types are
+    all well populated so it never fired there, which is not a reason for it to
+    be reachable. Found by Gemini in pair review. [E3]
+    """
+    import random
+
+    instances = [make_instance(i, question_type="a" if i < 7 else "b") for i in range(8)]
+    assert [i.question_type for i in instances].count("b") == 1, "one lone singleton type"
+    mapping = score._deranged(instances, random.Random(3))
+    for inst in instances:
+        assert mapping[inst.question_id] != inst.question
+
+
+def test_a_single_instance_has_no_control_arm_and_says_so():
+    """Not a silent self-mapping: there is no derangement of one thing."""
+    import random
+
+    with pytest.raises(ValueError, match="at least two instances"):
+        score._deranged([make_instance(0)], random.Random(1))
+
+
 # --------------------------------------------------------------------------
 # synth
 # --------------------------------------------------------------------------
@@ -432,6 +458,20 @@ def test_the_exact_and_normal_branches_agree(monkeypatch):
     assert math.isclose(exact, approx, abs_tol=0.02)
 
 
+def test_an_overwhelming_difference_still_reports_a_nonzero_p():
+    """`1 - normal_cdf(z)` underflows around z = 38, and the 470-instance sweep gets there.
+
+    Printing `p = 0.000e+00` is exactly what the fabricated-zero branch this
+    test family replaced used to print, so a reader cannot tell the honest
+    underflow from the bug. Floored at the smallest positive double instead. [E3]
+    """
+    a = [1.0] * 2000
+    b = [0.0] * 2000
+    _, p = score.sign_flip_test(a, b)
+    assert p > 0.0
+    assert p < 1e-300
+
+
 # --------------------------------------------------------------------------
 # the gate
 # --------------------------------------------------------------------------
@@ -644,6 +684,33 @@ def test_real_corpus_loads_and_the_oracle_is_exact():
     report = score.score(instances, gitmemory_factory, k=10, compaction_modes=[None])
     assert report["overall_metrics"][None]["reference"]["turn_recall"] == 1.0
     assert all(c["passed"] for c in checks_named(report, "apparatus"))
+
+
+def test_an_arm_whose_dependency_is_absent_is_skipped_with_a_reason():
+    """Probing the factory symbol is not probing the dependency.
+
+    `bench.arms` imports cleanly whether or not numpy is installed — the
+    factories import it lazily inside themselves — so the old probe registered
+    the arm and the sweep died on the first instance with
+    `ImportError: Dense arm dependencies not installed`. Found by running the
+    real corpus, which is the only place it could show up. [E3]
+    """
+    from bench.__main__ import _optional_arms
+
+    arms, skipped = _optional_arms()
+    for name in ("dense", "rerank"):
+        registered = name in arms
+        reported = any(line.startswith(f"{name}:") for line in skipped)
+        assert registered != reported, f"{name} is neither runnable nor explained"
+        if registered:
+            # Registered means the dependency resolves, so building the arm
+            # must not raise the "not installed" error the old probe missed.
+            inst = make_instance(0)
+            raw = synth.to_transcript(inst, seed=1, compaction=None).bytes_data
+            built = arms[name](inst, raw)
+            close = getattr(built, "close", None)
+            if close:
+                close()
 
 
 def test_the_store_the_arm_builds_is_cleaned_up():

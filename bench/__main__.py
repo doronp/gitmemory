@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import functools
+import importlib.util
 import os
 import sys
 
+from bench import arms as arms_mod
 from bench import longmemeval as lm
 from bench import score
 from bench.arms import gitmemory_factory
@@ -30,21 +32,22 @@ def _optional_arms() -> tuple[dict[str, score.Factory], list[str]]:
     Reported rather than skipped in silence: which arms ran is part of what a
     report means, and "BM25 was the best arm" reads very differently once you
     know the dense arm was never installed. [E3]
+
+    The probe is the third-party module, not the factory symbol. Importing
+    `bench.arms` always succeeds — the factories import numpy and flashrank
+    lazily inside themselves — so probing the symbol registered an arm that then
+    raised `ImportError` on the first instance and took the whole sweep down
+    with it, 470 instances in. Found by running it. [E3]
     """
+    needs = {"dense": ("numpy", "model2vec"), "rerank": ("flashrank",)}
     arms: dict[str, score.Factory] = {}
     skipped: list[str] = []
-    try:
-        from bench.arms import dense_factory
-
-        arms["dense"] = dense_factory
-    except ImportError as exc:
-        skipped.append(f"dense: {exc} (pip install 'gitmemory[hybrid]')")
-    try:
-        from bench.arms import rerank_factory
-
-        arms["rerank"] = rerank_factory
-    except ImportError as exc:
-        skipped.append(f"rerank: {exc} (pip install 'gitmemory[hybrid]')")
+    for name, modules in needs.items():
+        missing = [m for m in modules if importlib.util.find_spec(m) is None]
+        if missing:
+            skipped.append(f"{name}: no {', '.join(missing)} (pip install 'gitmemory[hybrid]')")
+            continue
+        arms[name] = getattr(arms_mod, f"{name}_factory")
     return arms, skipped
 
 

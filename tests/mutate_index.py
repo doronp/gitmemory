@@ -384,9 +384,33 @@ MUTANTS = [
     (
         "the large-n branch is a different test from the exact one",
         "bench/score.py",
-        "    return mean_diff, 1.0 - normal_cdf(total / math.sqrt(sumsq))",
-        "    return mean_diff, normal_cdf(total / math.sqrt(sumsq))",
+        "    return mean_diff, max(1.0 - normal_cdf(total / math.sqrt(sumsq)), sys.float_info.min)",
+        "    return mean_diff, max(normal_cdf(total / math.sqrt(sumsq)), sys.float_info.min)",
         "test_the_exact_and_normal_branches_agree",
+    ),
+    (
+        "the normal branch is allowed to underflow to a p of exactly 0",
+        "bench/score.py",
+        "    return mean_diff, max(1.0 - normal_cdf(total / math.sqrt(sumsq)), sys.float_info.min)",
+        "    return mean_diff, 1.0 - normal_cdf(total / math.sqrt(sumsq))",
+        "test_an_overwhelming_difference_still_reports_a_nonzero_p",
+    ),
+    (
+        "a lone singleton question_type is left to map to itself",
+        "bench/score.py",
+        "    elif singletons:\n"
+        "        if not groups:\n"
+        '            raise ValueError("a derangement needs at least two instances")\n'
+        "        max(groups, key=len).extend(singletons)",
+        "    elif singletons:\n        groups.append(singletons)",
+        "test_a_lone_question_type_is_still_deranged",
+    ),
+    (
+        "an arm is registered without checking its dependency is importable",
+        "bench/__main__.py",
+        "        missing = [m for m in modules if importlib.util.find_spec(m) is None]",
+        "        missing = []",
+        "test_an_arm_whose_dependency_is_absent_is_skipped_with_a_reason",
     ),
     (
         "the derangement maps each instance to itself",
