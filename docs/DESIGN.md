@@ -347,10 +347,23 @@ THIRD_PARTY.md when the first line of code depends on it, not before.
 
 ### 2.7 Retrieval
 
-SQLite FTS5 with **separate columns** — `prose`, `tool_result`, `paths` — and per-column
-`bm25()` weights. Flat indexing is a known failure: tool results are ~79% of text volume, so flat
-BM25 returns pasted logs. Hybrid BM25 ⊕ Model2Vec fused by RRF (k=60, ~6 lines). FlashRank on
-top-50. Skip ANN: at ~144 k vectors numpy brute force is 5.8 ms and *exact*.
+SQLite FTS5 with **separate columns** and per-column `bm25()` weights. Flat indexing is a known
+failure: tool results are ~79% of text volume, so flat BM25 returns pasted logs. Hybrid BM25 ⊕
+Model2Vec fused by RRF (k=60, ~6 lines). FlashRank on top-50. Skip ANN: at ~144 k vectors numpy
+brute force is 5.8 ms and *exact*.
+
+**Built with four columns, not three [E3].** This section originally named `prose`,
+`tool_result`, `paths`. The implementation adds **`tool_use`** as its own column, weighted
+above `tool_result`: `prose` 4.0 · `paths` 3.0 · `tool_use` 2.0 · `tool_result` 1.0. A tool
+*call* is short and high-signal — `Read(file_path=…)`, `Bash(command=…)` — and sharing a column
+with bulk tool *output* buries it under exactly the volume the column split was invented to
+separate. Two tests fail if the split is collapsed: `test_a_tool_argument_outranks_tool_output`
+and `test_weights_are_what_decides_the_order`.
+
+The index carries **no dependency**: FTS5 ships with CPython. The `hybrid` extra
+(`model2vec`, `numpy`, `flashrank`) exists so `bench/` can score the dense and rerank arms
+*against* BM25 — a dependency each of them has to earn on the benchmark, not one the index
+takes on faith.
 
 ### 2.8 Recall surface
 
@@ -398,12 +411,25 @@ misled is an unbounded unmeasured cost). Any single frugality number assumes bot
 
 Public + synthetic only. **Never this machine's history.**
 
-- **LongMemEval-S** — primary. Mutation: replay through a synthetic Claude-Code-shaped transcript
+- **LongMemEval-S** — primary, via **`xiaowu0162/longmemeval-cleaned`** (MIT), file
+  `longmemeval_s_cleaned.json`, pinned at revision `98d7416c24c778c2fee6e6f3006e7a073259d48f`,
+  sha256 `d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442`, 277,383,467 bytes.
+  The original release is deprecated in favour of the cleaned one; `bench/fetch_longmemeval.sh`
+  pins the revision and verifies the hash before the file is usable, so a wrong constant fails
+  closed rather than silently scoring against the wrong corpus.
+  Mutation: replay through a synthetic Claude-Code-shaped transcript
   generator so the *input* is our real format, then inject synthetic compaction boundaries at
   controlled positions to measure **recall across the compaction wall** — which nobody else measures.
 - **Not LoCoMo** — CC-BY-NC-4.0, 99 documented ground-truth errors, unmaintained since 2024-08.
 - **`thedotmack/membench` (MIT) ablation design**, borrowed: 4 arms (candidate / none / shuffled /
-  reference), item-paired, Bonferroni-corrected, calibration gate.
+  reference), item-paired, Bonferroni-corrected, calibration gate. The `none` arm is a floor **by
+  construction** (it returns nothing), so the comparison against it is one-sample, not paired.
+  The `reference` oracle must score exactly 1.00 recall and 1.00 MRR in every compaction mode —
+  that is the check that the generator's ground-truth offsets and the adapter's turn boundaries
+  agree, and a harness that fails it is measuring its own bugs [E3, verified].
+- **Arm seam:** `retrieve_factory(instance, transcript_bytes) -> retrieve(query, k) -> [byte offset]`.
+  A factory rather than a bare `retrieve`, because each of the 500 instances has its own synthetic
+  transcript and a pre-built retriever cannot know which one a query refers to [E3].
 - **Retriever arms:** BM25 · Model2Vec · RRF hybrid · RRF+FlashRank. Public evidence is genuinely
   contradictory (BM25 *beats* bge-base on LongMemEval knowledge_update 88.0 vs 81.3, loses on
   MembBench 39.45 vs 60.29), so we measure rather than cite.
