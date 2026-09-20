@@ -32,20 +32,47 @@ def _fixture(tmp_path) -> str:
     """
     lines: list[dict] = []
     for i in range(30):
-        lines.append({"type": "user", "uuid": f"u{i}", "sessionId": "s1",
-                      "message": {"role": "user", "content": f"question {i}"}})
-        lines.append({"type": "assistant", "uuid": f"a{i}", "sessionId": "s1",
-                      "requestId": f"r{i}", "parentUuid": f"u{i}",
-                      "message": {"role": "assistant", "model": "claude-sonnet-4-5",
-                                  "content": [
-                                      {"type": "thinking", "thinking": f"reasoning {i}"},
-                                      {"type": "text", "text": f"answer {i}"},
-                                      {"type": "tool_use", "id": f"t{i}", "name": "Bash",
-                                       "input": {"command": "ls"}},
-                                  ]}})
-    lines.append({"type": "system", "subtype": "compact_boundary", "uuid": "cb1",
-                  "sessionId": "s1", "parentUuid": "a29",
-                  "compactMetadata": {"trigger": "auto"}})
+        lines.append(
+            {
+                "type": "user",
+                "uuid": f"u{i}",
+                "sessionId": "s1",
+                "message": {"role": "user", "content": f"question {i}"},
+            }
+        )
+        lines.append(
+            {
+                "type": "assistant",
+                "uuid": f"a{i}",
+                "sessionId": "s1",
+                "requestId": f"r{i}",
+                "parentUuid": f"u{i}",
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-sonnet-4-5",
+                    "content": [
+                        {"type": "thinking", "thinking": f"reasoning {i}"},
+                        {"type": "text", "text": f"answer {i}"},
+                        {
+                            "type": "tool_use",
+                            "id": f"t{i}",
+                            "name": "Bash",
+                            "input": {"command": "ls"},
+                        },
+                    ],
+                },
+            }
+        )
+    lines.append(
+        {
+            "type": "system",
+            "subtype": "compact_boundary",
+            "uuid": "cb1",
+            "sessionId": "s1",
+            "parentUuid": "a29",
+            "compactMetadata": {"trigger": "auto"},
+        }
+    )
     lines.append({"type": "custom-title", "customTitle": "x"})  # a counted skip
     path = tmp_path / "s1.jsonl"
     path.write_text("".join(json.dumps(x) + "\n" for x in lines))

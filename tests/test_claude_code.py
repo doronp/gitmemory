@@ -59,8 +59,13 @@ def test_logical_parent_survives_compaction(tmp_path):
         "s1.jsonl",
         [
             user("u1", "hello"),
-            {"type": "system", "subtype": "compact_boundary", "sessionId": "s1",
-             "parentUuid": None, "compactMetadata": {"trigger": "manual"}},
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "sessionId": "s1",
+                "parentUuid": None,
+                "compactMetadata": {"trigger": "manual"},
+            },
             user("u2", "after", parentUuid=None, logicalParentUuid="u1", isCompactSummary=True),
         ],
     )
@@ -143,8 +148,11 @@ def test_unknown_line_type_is_counted_not_dropped(tmp_path):
     path = write(
         tmp_path,
         "s1.jsonl",
-        [user("u1", "a"), {"type": "some-future-thing", "sessionId": "s1"},
-         {"type": "custom-title", "customTitle": "x"}],
+        [
+            user("u1", "a"),
+            {"type": "some-future-thing", "sessionId": "s1"},
+            {"type": "custom-title", "customTitle": "x"},
+        ],
     )
     s = check_adapter(cc, path)
     assert s.skipped["no_identity:some-future-thing"] == 1
@@ -153,8 +161,13 @@ def test_unknown_line_type_is_counted_not_dropped(tmp_path):
 
 def test_future_line_type_with_a_uuid_is_kept_not_dropped(tmp_path):
     """The allowlist failure mode: a new DAG-participating type must survive."""
-    exotic = {"type": "some-future-thing", "uuid": "f1", "sessionId": "s1",
-              "parentUuid": "u1", "payload": {"deep": [1, 2]}}
+    exotic = {
+        "type": "some-future-thing",
+        "uuid": "f1",
+        "sessionId": "s1",
+        "parentUuid": "u1",
+        "payload": {"deep": [1, 2]},
+    }
     path = write(tmp_path, "s1.jsonl", [user("u1", "a"), exotic])
     s = check_adapter(cc, path)
     assert len(s.turns) == 2, "dropped a line carrying a uuid"
@@ -167,10 +180,21 @@ def test_attachment_and_progress_lines_are_kept(tmp_path):
     """Both carry uuid+parentUuid in the real corpus; both are DAG nodes."""
     lines = [
         user("u1", "a"),
-        {"type": "attachment", "uuid": "at1", "sessionId": "s1", "parentUuid": "u1",
-         "attachment": {"kind": "file"}},
-        {"type": "progress", "uuid": "pr1", "sessionId": "s1", "parentUuid": None,
-         "toolUseID": "t9", "data": {"pct": 50}},
+        {
+            "type": "attachment",
+            "uuid": "at1",
+            "sessionId": "s1",
+            "parentUuid": "u1",
+            "attachment": {"kind": "file"},
+        },
+        {
+            "type": "progress",
+            "uuid": "pr1",
+            "sessionId": "s1",
+            "parentUuid": None,
+            "toolUseID": "t9",
+            "data": {"pct": 50},
+        },
     ]
     s = check_adapter(cc, path := write(tmp_path, "s1.jsonl", lines))
     assert [t.uuid for t in s.turns] == ["u1", "at1", "pr1"]
@@ -196,8 +220,14 @@ def test_unknown_block_keeps_native_and_never_reprs(tmp_path):
     path = write(
         tmp_path,
         "s1.jsonl",
-        [{"type": "assistant", "uuid": "a1", "sessionId": "s1",
-          "message": {"role": "assistant", "content": [exotic]}}],
+        [
+            {
+                "type": "assistant",
+                "uuid": "a1",
+                "sessionId": "s1",
+                "message": {"role": "assistant", "content": [exotic]},
+            }
+        ],
     )
     s = check_adapter(cc, path)
     block = s.turns[0].blocks[0]
@@ -213,8 +243,19 @@ def test_tool_result_dict_content_is_not_reprd(tmp_path):
     path = write(
         tmp_path,
         "s1.jsonl",
-        [{"type": "user", "uuid": "u1", "sessionId": "s1", "message": {"role": "user",
-          "content": [{"type": "tool_result", "tool_use_id": "t1", "content": {"foo": "bar"}}]}}],
+        [
+            {
+                "type": "user",
+                "uuid": "u1",
+                "sessionId": "s1",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "t1", "content": {"foo": "bar"}}
+                    ],
+                },
+            }
+        ],
     )
     s = check_adapter(cc, path)
     text = s.turns[0].blocks[0].text
@@ -248,8 +289,13 @@ def test_sidechain_anchors_on_tool_use_not_time(tmp_path):
         "s1.jsonl",
         [
             assistant("a1", "spawning"),
-            user("u2", "subagent work", isSidechain=True, sourceToolAssistantUUID="a1",
-                 timestamp="2020-01-01T00:00:00Z"),
+            user(
+                "u2",
+                "subagent work",
+                isSidechain=True,
+                sourceToolAssistantUUID="a1",
+                timestamp="2020-01-01T00:00:00Z",
+            ),
         ],
     )
     s = check_adapter(cc, path)
@@ -349,8 +395,13 @@ def test_turn_ids_survive_a_skip_rule_change(tmp_path):
     before = cc.parse(write(tmp_path, "s1.jsonl", convo))
     # `attachment` was dropped by this adapter yesterday and is kept today.
     # That rule change must not rewrite the ids of the turns around it.
-    now_kept = {"type": "attachment", "uuid": "at1", "sessionId": "s1",
-                "parentUuid": "u1", "attachment": {"kind": "file"}}
+    now_kept = {
+        "type": "attachment",
+        "uuid": "at1",
+        "sessionId": "s1",
+        "parentUuid": "u1",
+        "attachment": {"kind": "file"},
+    }
     after = cc.parse(write(tmp_path, "s2.jsonl", [convo[0], now_kept, convo[1], convo[2]]))
 
     unchanged = [t for t in after.turns if t.uuid != "at1"]
@@ -372,8 +423,7 @@ def test_parent_uuids_resolve_within_the_session(tmp_path):
     path = write(
         tmp_path,
         "s1.jsonl",
-        [user("u1", "a"), assistant("a1", "b", parentUuid="u1"),
-         user("u2", "c", parentUuid="a1")],
+        [user("u1", "a"), assistant("a1", "b", parentUuid="u1"), user("u2", "c", parentUuid="a1")],
     )
     s = check_adapter(cc, path)
     known = {t.uuid for t in s.turns if t.uuid}
@@ -428,8 +478,12 @@ def test_lone_high_surrogate_does_not_abort_the_parse(tmp_path):
     U+DC80-U+DCFF, so encoding with it raised UnicodeEncodeError and took the
     whole transcript down — one bad character lost every turn in the file.
     """
-    raw = (json.dumps(user("u1", "PLACEHOLDER")).replace("PLACEHOLDER", r"a\ud800b")
-           + "\n" + json.dumps(user("u2", "survivor")) + "\n").encode()
+    raw = (
+        json.dumps(user("u1", "PLACEHOLDER")).replace("PLACEHOLDER", r"a\ud800b")
+        + "\n"
+        + json.dumps(user("u2", "survivor"))
+        + "\n"
+    ).encode()
     s = check_adapter(cc, write(tmp_path, "s1.jsonl", raw))
     assert [t.uuid for t in s.turns] == ["u1", "u2"], "one surrogate lost the whole file"
     assert "\ud800" in s.turns[0].blocks[0].text, "the character itself must survive"
@@ -473,9 +527,12 @@ def test_deeply_nested_payload_does_not_recurse_to_death(tmp_path):
     deep = {"a": 1}
     for _ in range(600):
         deep = {"n": deep}
-    line = {"type": "user", "uuid": "u1", "sessionId": "s1",
-            "message": {"role": "user", "content": [
-                {"type": "tool_use", "name": "T", "input": deep}]}}
+    line = {
+        "type": "user",
+        "uuid": "u1",
+        "sessionId": "s1",
+        "message": {"role": "user", "content": [{"type": "tool_use", "name": "T", "input": deep}]},
+    }
     s = check_adapter(cc, write(tmp_path, "s1.jsonl", [line]))
     assert "nesting too deep" in s.turns[0].blocks[0].text
 
@@ -488,9 +545,11 @@ def test_non_finite_numbers_reach_canonical_json_as_text(tmp_path):
     harness raised ValueError at commit time — long after the parse that
     accepted it, and counted nowhere.
     """
-    raw = (b'{"type":"assistant","uuid":"a1","sessionId":"s1","requestId":"r1",'
-           b'"message":{"role":"assistant","model":"m","usage":{"input_tokens":NaN},'
-           b'"content":[{"type":"text","text":"hi"}]}}\n')
+    raw = (
+        b'{"type":"assistant","uuid":"a1","sessionId":"s1","requestId":"r1",'
+        b'"message":{"role":"assistant","model":"m","usage":{"input_tokens":NaN},'
+        b'"content":[{"type":"text","text":"hi"}]}}\n'
+    )
     s = check_adapter(cc, write(tmp_path, "s1.jsonl", raw))
     assert s.turns[0].usage["input_tokens"] == "nan", "NaN must become text, not a crash"
     assert cc.billable_usage(s) == {}, "a non-int token count must not be summed"
@@ -510,8 +569,10 @@ def test_summary_survives_a_leafuuid_that_points_at_a_kept_turn(tmp_path):
     path = write(
         tmp_path,
         "s1.jsonl",
-        [user("u1", "the conversation"),
-         {"type": "summary", "summary": "we decided X", "leafUuid": "u1"}],
+        [
+            user("u1", "the conversation"),
+            {"type": "summary", "summary": "we decided X", "leafUuid": "u1"},
+        ],
     )
     s = check_adapter(cc, path)
     assert s.skipped.get("duplicate_uuid", 0) == 0, "a pointer was mistaken for an identity"
@@ -531,9 +592,14 @@ def test_compact_boundary_is_a_turn_as_well_as_an_event(tmp_path):
         "s1.jsonl",
         [
             user("u1", "before"),
-            {"type": "system", "subtype": "compact_boundary", "uuid": "cb1",
-             "sessionId": "s1", "parentUuid": "u1",
-             "compactMetadata": {"trigger": "auto", "preTokens": 150000}},
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "uuid": "cb1",
+                "sessionId": "s1",
+                "parentUuid": "u1",
+                "compactMetadata": {"trigger": "auto", "preTokens": 150000},
+            },
             user("u2", "after", parentUuid="cb1", isCompactSummary=True),
         ],
     )
@@ -555,11 +621,22 @@ def test_system_and_attachment_prose_outside_message_is_indexed(tmp_path):
         tmp_path,
         "s1.jsonl",
         [
-            {"type": "system", "uuid": "s1a", "sessionId": "s1",
-             "content": "Model changed to opus"},
-            {"type": "attachment", "uuid": "at1", "sessionId": "s1",
-             "attachment": {"kind": "file", "path": "notes.md",
-                            "content": "the deploy key rotates on Fridays"}},
+            {
+                "type": "system",
+                "uuid": "s1a",
+                "sessionId": "s1",
+                "content": "Model changed to opus",
+            },
+            {
+                "type": "attachment",
+                "uuid": "at1",
+                "sessionId": "s1",
+                "attachment": {
+                    "kind": "file",
+                    "path": "notes.md",
+                    "content": "the deploy key rotates on Fridays",
+                },
+            },
         ],
     )
     s = check_adapter(cc, path)
@@ -574,8 +651,12 @@ def test_queue_operation_remove_keeps_its_human_text(tmp_path):
         tmp_path,
         "s1.jsonl",
         [
-            {"type": "queue-operation", "operation": "remove", "sessionId": "s1",
-             "content": "actually - focus on the parser first"},
+            {
+                "type": "queue-operation",
+                "operation": "remove",
+                "sessionId": "s1",
+                "content": "actually - focus on the parser first",
+            },
             {"type": "queue-operation", "operation": "dequeue", "sessionId": "s1"},
         ],
     )
@@ -592,10 +673,20 @@ def test_image_payload_is_not_inlined_into_the_index(tmp_path):
     that an image of a given type and size was here.
     """
     blob = "A" * 50_000
-    line = {"type": "user", "uuid": "u1", "sessionId": "s1", "message": {"role": "user",
-            "content": [{"type": "image",
-                         "source": {"type": "base64", "media_type": "image/png",
-                                    "data": blob}}]}}
+    line = {
+        "type": "user",
+        "uuid": "u1",
+        "sessionId": "s1",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/png", "data": blob},
+                }
+            ],
+        },
+    }
     s = check_adapter(cc, write(tmp_path, "s1.jsonl", [line]))
     b = s.turns[0].blocks[0]
     assert blob not in b.text and len(b.text) < 100
@@ -605,10 +696,24 @@ def test_image_payload_is_not_inlined_into_the_index(tmp_path):
 
 def test_flatten_keeps_siblings_of_a_text_key(tmp_path):
     """The dict shortcut fired on any dict with a `text` key and dropped the rest."""
-    line = {"type": "user", "uuid": "u1", "sessionId": "s1", "message": {"role": "user",
-            "content": [{"type": "tool_result",
-                         "content": {"text": "ok", "exit_code": 137,
-                                     "stderr": "killed by the oom reaper"}}]}}
+    line = {
+        "type": "user",
+        "uuid": "u1",
+        "sessionId": "s1",
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "content": {
+                        "text": "ok",
+                        "exit_code": 137,
+                        "stderr": "killed by the oom reaper",
+                    },
+                }
+            ],
+        },
+    }
     s = check_adapter(cc, write(tmp_path, "s1.jsonl", [line]))
     text = s.turns[0].blocks[0].text
     assert "oom reaper" in text and "137" in text, "siblings of `text` were discarded"
@@ -625,24 +730,61 @@ def test_session_id_is_resolved_before_any_id_is_computed(tmp_path):
     the id, so the id stayed keyed on "" — identical across unrelated sessions,
     and not the documented function of its own fields.
     """
-    a = check_adapter(cc, write(tmp_path, "a.jsonl", [
-        {"type": "user", "uuid": "u1", "message": {"role": "user", "content": "same words"}},
-        user("u2", "later", sessionId="alpha")]))
-    b = check_adapter(cc, write(tmp_path, "b.jsonl", [
-        {"type": "user", "uuid": "u1", "message": {"role": "user", "content": "same words"}},
-        user("u2", "later", sessionId="beta")]))
+    a = check_adapter(
+        cc,
+        write(
+            tmp_path,
+            "a.jsonl",
+            [
+                {
+                    "type": "user",
+                    "uuid": "u1",
+                    "message": {"role": "user", "content": "same words"},
+                },
+                user("u2", "later", sessionId="alpha"),
+            ],
+        ),
+    )
+    b = check_adapter(
+        cc,
+        write(
+            tmp_path,
+            "b.jsonl",
+            [
+                {
+                    "type": "user",
+                    "uuid": "u1",
+                    "message": {"role": "user", "content": "same words"},
+                },
+                user("u2", "later", sessionId="beta"),
+            ],
+        ),
+    )
     assert a.turns[0].session_id == "alpha" and b.turns[0].session_id == "beta"
     assert a.turns[0].turn_id != b.turns[0].turn_id, "two sessions minted the same turn_id"
 
 
 def test_event_ids_do_not_move_when_a_skip_rule_changes(tmp_path):
     """`seq` was removed from turn_id for churn; Event kept it and churned anyway."""
-    boundary = {"type": "system", "subtype": "compact_boundary", "uuid": "cb1",
-                "sessionId": "s1", "parentUuid": None}
+    boundary = {
+        "type": "system",
+        "subtype": "compact_boundary",
+        "uuid": "cb1",
+        "sessionId": "s1",
+        "parentUuid": None,
+    }
     before = cc.parse(write(tmp_path, "a.jsonl", [user("u1", "x"), boundary]))
-    with_extra = cc.parse(write(tmp_path, "b.jsonl", [
-        user("u1", "x"), {"type": "attachment", "uuid": "at1", "sessionId": "s1",
-                          "attachment": {"k": 1}}, boundary]))
+    with_extra = cc.parse(
+        write(
+            tmp_path,
+            "b.jsonl",
+            [
+                user("u1", "x"),
+                {"type": "attachment", "uuid": "at1", "sessionId": "s1", "attachment": {"k": 1}},
+                boundary,
+            ],
+        )
+    )
     assert before.events[0].event_id == with_extra.events[0].event_id, (
         "a newly-kept line renumbered an event id"
     )
@@ -650,11 +792,21 @@ def test_event_ids_do_not_move_when_a_skip_rule_changes(tmp_path):
 
 def test_agent_id_and_tool_use_id_stay_in_their_own_namespaces(tmp_path):
     """`anchor_uuid` merged a turn uuid with a content-block id; joins went wrong."""
-    path = write(tmp_path, "s1.jsonl", [
-        assistant("a1", "spawn"),
-        user("u2", "sub", isSidechain=True, sourceToolAssistantUUID="a1",
-             toolUseID="toolu_01", agentId="agent-xyz"),
-    ])
+    path = write(
+        tmp_path,
+        "s1.jsonl",
+        [
+            assistant("a1", "spawn"),
+            user(
+                "u2",
+                "sub",
+                isSidechain=True,
+                sourceToolAssistantUUID="a1",
+                toolUseID="toolu_01",
+                agentId="agent-xyz",
+            ),
+        ],
+    )
     s = check_adapter(cc, path)
     sub = s.turns[1]
     assert sub.anchor_uuid == "a1", "a block id displaced the turn uuid"
@@ -675,13 +827,26 @@ def test_skip_reason_keys_are_bounded(tmp_path):
 
 def test_thinking_and_tool_use_blocks_are_projected(tmp_path):
     """Neither kind was covered; dropping either passed the whole E1 suite."""
-    line = {"type": "assistant", "uuid": "a1", "sessionId": "s1", "requestId": "r1",
-            "message": {"role": "assistant", "model": "claude-sonnet-4-5", "content": [
+    line = {
+        "type": "assistant",
+        "uuid": "a1",
+        "sessionId": "s1",
+        "requestId": "r1",
+        "message": {
+            "role": "assistant",
+            "model": "claude-sonnet-4-5",
+            "content": [
                 {"type": "thinking", "thinking": "the lock is held across the await"},
-                {"type": "tool_use", "id": "tu1", "name": "Bash",
-                 "input": {"command": "pytest -q"}},
+                {
+                    "type": "tool_use",
+                    "id": "tu1",
+                    "name": "Bash",
+                    "input": {"command": "pytest -q"},
+                },
                 {"type": "tool_result", "tool_use_id": "tu1", "content": "12 passed"},
-            ]}}
+            ],
+        },
+    }
     s = check_adapter(cc, write(tmp_path, "s1.jsonl", [line]))
     kinds = [b.kind for b in s.turns[0].blocks]
     assert kinds == ["thinking", "tool_use", "tool_result"]
@@ -708,8 +873,7 @@ def test_rollup_includes_subagents(tmp_path):
     main.write_text(billed("a1", "r1", {"input_tokens": 10}))
     subs = tmp_path / "sess" / "subagents"
     subs.mkdir(parents=True)
-    (subs / "agent-one.jsonl").write_text(
-        billed("b1", "r2", {"cache_read_input_tokens": 900}))
+    (subs / "agent-one.jsonl").write_text(billed("b1", "r2", {"cache_read_input_tokens": 900}))
     # A subagent that spawned its own subagent, nested one level deeper.
     deeper = subs / "agent-one" / "subagents"
     deeper.mkdir(parents=True)
@@ -731,8 +895,11 @@ def test_rollup_dedups_a_request_id_seen_in_two_files(tmp_path):
 
 def test_cost_is_estimated_from_a_dated_snapshot_or_not_at_all():
     """There is no costUSD field, so every cost is an estimate with a date."""
-    usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000,
-             "cache_read_input_tokens": 1_000_000}
+    usage = {
+        "input_tokens": 1_000_000,
+        "output_tokens": 1_000_000,
+        "cache_read_input_tokens": 1_000_000,
+    }
     est = cc.estimate_cost("claude-sonnet-4-5-20260929", usage)
     assert est is not None
     assert est["priced_as"] == "claude-sonnet-4-5", "longest-prefix match failed"
@@ -780,7 +947,10 @@ def _corpus_digest(env_extra: dict) -> str:
     env = dict(os.environ, **env_extra)
     out = subprocess.run(
         [sys.executable, "-c", _DIGEST_SCRIPT % src, *_corpus()],
-        capture_output=True, text=True, env=env, check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
     )
     return out.stdout.strip()
 
