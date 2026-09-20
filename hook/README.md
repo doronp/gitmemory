@@ -65,7 +65,7 @@ it, so installing it buys nothing and costs one process per reply.
 $GITMEMORY_HOME/spool/
     .tmp-<pid>-<n>                        being written; a reader ignores any
                                           name starting with a dot
-    <epoch_s>-<pid>-<event>[-<n>].json    complete; the content is the hook's
+    <pid>-<event>[-<n>].json              complete; the content is the hook's
                                           stdin, byte for byte
 ```
 
@@ -88,24 +88,46 @@ the same way on every iteration as a control:
 
 | Metric | Shim | Spawning `true` |
 |---|---|---|
-| p50 | 6.82 ms | 1.63 ms |
-| p95 | 8.40 ms | 2.02 ms |
-| p99 | 10.84 ms | 2.45 ms |
-| max | 12.83 ms | 5.26 ms |
+| p50 | 7.43 ms | 1.86 ms |
+| p95 | 9.06 ms | 2.32 ms |
+| p99 | 10.48 ms | 2.68 ms |
+| max | 37.18 ms | 3.41 ms |
 
-400 iterations on Darwin 25.6.0, arm64 (Apple M4 Pro), under `/bin/dash`,
-against a 58.9 KB `PreCompact` payload.
+400 iterations on Darwin 25.6.0, arm64 (Apple M4 Pro), under `/bin/sh` — here
+bash 3.2.57 in posix mode — against a 58.9 KB `PreCompact` payload.
 
-So the shim's own share of p50 is **5.2 ms**, and the other 1.6 ms is what this
-machine charges to start any process at all. Of that 5.2 ms, the shell is nearly
-free — `dash` running a script that does nothing but `exit 0` costs 1.59 ms
-against `true`'s 1.42 ms. What it buys is the external commands the script
-forks, at roughly 1.5 ms each. There are two left: `cat`, to move stdin to disk,
-and `date`, to name the record. Both are load-bearing and neither has a POSIX
-`sh` builtin equivalent, so this is close to the floor for a shell hook.
+**Every number in this table used to be measured under `/bin/dash`, which does
+not run this shim.** The shebang says `#!/bin/sh` and an agent firing the hook
+gets whatever that is; preferring `dash` when installed was a habit picked up
+from the test harness, which had the same bug. Fixing it moved more than the
+totals — it moved the explanation, because the two shells charge very
+differently for the same script.
 
-A third, `mkdir -p`, used to run on every fire; it is now behind a `[ -d ]` test
-and only runs once. That one-line change is the difference between the 8.3 ms
-this table used to report and the 6.8 ms it reports now — which is the argument
-for keeping the control column. Without it the number looks like irreducible
-overhead instead of three specific forks, one of which was removable.
+So the shim's own share of p50 is **5.6 ms**, and the other 1.9 ms is what this
+machine charges to start any process at all. Of that 5.6 ms:
+
+- **~1.4 ms is the shell itself.** `/bin/sh` running a script that does nothing
+  but `exit 0` costs 2.93 ms against `true`'s 1.54 ms. Under `dash` the same gap
+  is 0.17 ms, which is where the old claim that "the shell is nearly free" came
+  from. It is free in the shell we were not using.
+- **~3 ms is two forks**, at roughly 1.5 ms each: `cat`, to move stdin to disk,
+  and `mv`, to publish it atomically. Neither has a POSIX `sh` builtin
+  equivalent and the `rename(2)` is the seam's whole contract, so both stay.
+- The rest is the script's own builtin work — the collision loops, the `case`
+  tests, `umask`.
+
+Two forks have come off this path, and both were found the same way: by
+counting them. `mkdir -p` used to run on every fire and now sits behind a
+`[ -d ]` test that costs nothing, worth 1.3 ms. `date`, which named the record
+with an epoch prefix, was worth 2.0 ms and was **not load-bearing** — an earlier
+version of this page called it that, and no reader of the spool has ever read
+the timestamp. The watcher wants the event, the arrival time is the file's own
+mtime, and the ordering it seemed to provide feeds an order-independent fold.
+Dropping it also took the grammar's only signed field with it: a clock set
+before 1970 made `date +%s` negative and shifted every field in the name.
+
+That page also said there were "two forks left" while three were running. `mv`
+was never counted, which is how `date` survived an audit that was looking for
+exactly this. The control column is what makes the remainder legible — without
+it, 7.4 ms reads as irreducible overhead rather than as a shell, two forks, and
+a list of what is left to argue with.

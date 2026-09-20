@@ -14,20 +14,41 @@ from pathlib import Path
 
 import pytest
 
+from gitmemory import daemon
+
 SHIM_PATH = Path(__file__).parent.parent / "hook" / "gitmemory-hook.sh"
 
 
 def run_shim_cmd() -> list[str]:
-    """Return command prefix using dash if available, falling back to direct execution."""
-    return ["dash", str(SHIM_PATH)] if shutil.which("dash") else [str(SHIM_PATH)]
+    """The shebang's interpreter, which is the one production uses.
+
+    This preferred `dash` when installed, and that is the wrong shell: the shim
+    says `#!/bin/sh`, and an agent firing a hook gets whatever `/bin/sh` is on
+    that machine — here, bash 3.2.57 in posix mode. So every behaviour test in
+    this file, and every number in `hook/README.md`, was measured under an
+    interpreter that never runs the shim. The reason it was there — catching a
+    bashism — is already covered, and covered better, by the parse test below,
+    which sweeps every shell on the box instead of silently picking one.
+    [E4, review: shell MAJOR]
+    """
+    return [str(SHIM_PATH)]
 
 
 @pytest.fixture
 def clean_env(tmp_path):
-    """Provides an isolated environment for testing the hook shim."""
+    """An isolated environment, including `HOME`.
+
+    `os.environ.copy()` alone carries the real `HOME` in, and the shim falls
+    back to `$HOME/.gitmemory` on any path where `GITMEMORY_HOME` is refused or
+    unset. A mutation run that broke the refusal wrote 74 files into the
+    developer's actual home directory before anyone noticed. A test for a shim
+    whose whole job is writing files should not be able to write outside
+    `tmp_path`, so the fallback now lands inside it too. [E4, review: F1]
+    """
     env = os.environ.copy()
     home = tmp_path / "gitmemory_home"
     env["GITMEMORY_HOME"] = str(home)
+    env["HOME"] = str(tmp_path / "fallback_home")
     return env, home
 
 
@@ -279,6 +300,29 @@ def test_a_home_with_spaces_in_it_works(tmp_path):
     assert files[0].read_bytes() == b"spaced payload"
 
 
+def test_with_no_variable_set_the_spool_lands_under_the_documented_default(clean_env, tmp_path):
+    """`$HOME/.gitmemory`, which is the path the README tells people to expect.
+
+    Untested until now, and it is the branch every first-time user takes. It is
+    also what makes `clean_env`'s `HOME` override load-bearing rather than
+    decorative: a test that exercises the fallback while pointing at a real home
+    directory writes into it. One did, 74 files' worth, during a mutation run
+    that broke the refusal of a relative `GITMEMORY_HOME`. [E4, review: F1]
+    """
+    env, _ = clean_env
+    del env["GITMEMORY_HOME"]
+    fallback = tmp_path / "fallback_home"
+
+    res = subprocess.run(run_shim_cmd() + ["PreCompact"], env=env, input=b"x", capture_output=True)
+
+    assert res.returncode == 0, res.stderr.decode()
+    (record,) = (fallback / ".gitmemory" / "spool").glob("*.json")
+    assert record.read_bytes() == b"x"
+    # And nowhere else. The fixture's tmp_path is the containment boundary, so a
+    # fallback that escaped it would have to land outside this tree.
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["fallback_home"]
+
+
 def test_a_tilde_in_the_variable_is_expanded(tmp_path):
     """`GITMEMORY_HOME=~/store` in a config file arrives as a literal tilde.
 
@@ -302,12 +346,20 @@ def test_a_tilde_in_the_variable_is_expanded(tmp_path):
 
 @pytest.mark.parametrize("event", ["PreCompact", "SessionEnd", "Stop"])
 def test_each_accepted_event_lands_in_the_filename(clean_env, event):
-    """The watcher reads the event out of the name; a wrong name is a lost boundary."""
+    """The watcher reads the event out of the name; a wrong name is a lost boundary.
+
+    Asked through `_event_of`, the reader that actually runs, rather than by
+    re-splitting the name here. The copy said `split("-")[2]`, which was the
+    grammar of the day and broke the moment the `date` fork came off the hot
+    path — while the real reader, which finds the event rather than counting to
+    it, carried on fine. A conformance test that reimplements the thing it is
+    confirming tests the reimplementation. [E4, review: shell MAJOR]
+    """
     env, home = clean_env
     res = subprocess.run(run_shim_cmd() + [event], env=env, input=b"x", capture_output=True)
     assert res.returncode == 0
     (name,) = [f.name for f in (home / "spool").glob("*.json")]
-    assert name.removesuffix(".json").split("-")[2] == event
+    assert daemon._event_of(name) == event
 
 
 def test_a_name_that_is_already_taken_does_not_clobber_it(clean_env):
@@ -350,5 +402,5 @@ def test_a_name_that_is_already_taken_does_not_clobber_it(clean_env):
         assert path.read_bytes() == b"ALREADY HERE", "an existing record was overwritten"
     (suffixed,) = [f for f in spool.glob("*.json") if f not in taken]
     assert suffixed.read_bytes() == b"the new payload"
-    # ...and the watcher can still tell what event it was.
-    assert suffixed.name.removesuffix(".json").split("-")[2] == "PreCompact"
+    # ...and the watcher can still tell what event it was, collision suffix and all.
+    assert daemon._event_of(suffixed.name) == "PreCompact"

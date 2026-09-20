@@ -377,28 +377,27 @@ def _file_key(path: str) -> tuple[int, int] | None:
 
 
 def _event_of(name: str) -> str:
-    """The event out of `<epoch_s>-<pid>-<event>[-<n>].json`, or "".
+    """The event out of `<pid>-<event>[-<n>].json`, or "".
 
-    Read from the third field, not the last: two hooks firing in the same second
-    give the second one a `-1` collision suffix, and taking the last field made
-    that record's event `1`, so a `PreCompact` that raced another hook silently
-    stopped forcing a capture. Found by running it. [E4]
+    Found by position at first — the third field, not the last, because two
+    hooks firing in the same second give the second one a `-1` collision suffix
+    and taking the last field made that record's event `1`, so a `PreCompact`
+    that raced another hook silently stopped forcing a capture. Then a clock set
+    before 1970 turned up: `date +%s` goes negative, the name leads with `-`,
+    every index shifts by one, and the third field comes back as the pid.
 
-    And then checked against the events the shim will actually write, rather
-    than returned raw. Positional parsing assumes the first two fields are a
-    positive integer each, and review found a case where they are not: a clock
-    set before 1970 makes `date +%s` negative, so the name leads with `-` and
-    every index shifts by one — `fields[2]` comes back as the pid. Validating
-    the result closes that and any other grammar drift at once, because the
-    only thing a caller does with this value is test it for membership in
-    `FORCING`, and a field that is not a known event never belongs there. [E4]
+    Two positional bugs in one small grammar was the argument for not parsing
+    positionally. The event is now *found*, wherever it sits. Every other field
+    the shim writes is decimal and every event is alphabetic, so there is
+    nothing for the scan to confuse — and it reads records from both the current
+    shim and the one before it, which carried a leading `date +%s` that no
+    reader ever looked at. That timestamp was one of three forks on the hook's
+    hot path, so dropping it cost the record nothing and bought the session
+    2.0 ms of its 7.6; this function is why it could go. [E4, review: shell MAJOR]
     """
     if not name.endswith(".json"):
         return ""
-    fields = name.removesuffix(".json").split("-")
-    if len(fields) >= 3 and fields[2] in EVENTS:
-        return fields[2]
-    return ""
+    return next((f for f in name.removesuffix(".json").split("-") if f in EVENTS), "")
 
 
 def _payload_path(payload: object) -> str | None:

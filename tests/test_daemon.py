@@ -594,27 +594,48 @@ def test_the_watcher_recovers_once_the_store_is_readable_again(tmp_path, monkeyp
 @pytest.mark.parametrize(
     "name,expected",
     [
+        # The grammar the shim writes: `<pid>-<event>[-<n>].json`.
+        ("4242-PreCompact.json", "PreCompact"),
+        ("4242-PreCompact-1.json", "PreCompact"),
+        ("4242-SessionEnd.json", "SessionEnd"),
+        ("4242-Stop.json", "Stop"),
+        ("4242-unknown.json", "unknown"),
+        # The grammar the shim wrote before the `date` fork came off the hot
+        # path. Records outlive an upgrade by up to one poll, so both are read.
         ("1758300000-4242-PreCompact.json", "PreCompact"),
         ("1758300000-4242-PreCompact-1.json", "PreCompact"),
-        ("1758300000-4242-SessionEnd.json", "SessionEnd"),
-        ("1758300000-4242-Stop.json", "Stop"),
-        ("1758300000-4242-unknown.json", "unknown"),
-        # A clock set before 1970 makes `date +%s` negative, the name leads with
-        # `-`, and every field shifts: `fields[2]` was the pid. [E4, Gemini 07]
-        ("-100-4242-PreCompact.json", ""),
-        # And the general case the validation buys: anything that is not an
-        # event the shim writes is not an event, wherever it sits.
+        # A clock set before 1970 made `date +%s` negative, so the name led with
+        # `-` and every field shifted: `fields[2]` was the pid, and this case
+        # expected "" — the positional reader degrading to not-forcing, which
+        # silently cost that compaction its doorbell. Finding the event instead
+        # of counting to it answers correctly, so the expectation changed with
+        # the parser. [E4, Gemini 07; corrected: shell MAJOR]
+        ("-100-4242-PreCompact.json", "PreCompact"),
+        # Nothing numeric can be mistaken for an event, wherever it sits, which
+        # is the whole reason the scan is unambiguous.
         ("1758300000-4242-4242.json", ""),
+        ("4242-4242.json", ""),
         ("nonsense.json", ""),
-        ("1758300000-4242-PreCompact", ""),
+        ("4242-PreCompact", ""),
     ],
 )
 def test_only_a_real_event_name_parses_as_an_event(name, expected):
     assert daemon._event_of(name) == expected
 
 
-def test_a_negative_epoch_record_does_not_masquerade_as_forcing(tmp_path):
-    """The parse bug mattered because the pid landed in `FORCING`'s lookup. [E4]"""
+def test_a_record_whose_fields_are_shifted_is_still_read_as_the_event_it_is(tmp_path):
+    """A clock set before 1970, which is what made the positional parse fail.
+
+    The original of this test asserted the degraded answer: not forcing, because
+    the pid had landed where the event was counted to be. Degrading was the best
+    a positional reader could do, and it still cost that compaction its doorbell
+    — the session waited out the interval for a capture the hook had already
+    asked for. Finding the event rather than counting to it answers correctly,
+    so this now asserts the capture is forced. The property the old name was
+    reaching for holds either way and holds for every shifted name, not just
+    this one: no numeric field matches an event, so a pid cannot masquerade as
+    one. [E4, Gemini 07; corrected: shell MAJOR]
+    """
     home = str(tmp_path / "home")
     root = tmp_path / "proj"
     src = _write(str(root / "a.jsonl"), TURN)
@@ -622,10 +643,11 @@ def test_a_negative_epoch_record_does_not_masquerade_as_forcing(tmp_path):
     _spool(home, "-100-4242-PreCompact.json", {"transcript_path": src})
 
     wanted, _ = daemon.drain_spool(home, daemon.load_watches(home))
+    assert wanted == {_key(src): True}
 
-    # Still a doorbell — the record is consumed and the session noticed — but it
-    # must not claim to be a compaction boundary it cannot be trusted to name.
-    assert wanted == {_key(src): False}
+    # The masquerade itself, checked directly rather than through the shift that
+    # used to cause it: a name whose every field is a number names no event.
+    assert daemon._event_of("-100-4242-4242.json") == ""
 
 
 def _case_insensitive(where) -> bool:

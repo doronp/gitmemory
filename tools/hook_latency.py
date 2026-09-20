@@ -108,8 +108,11 @@ def main() -> None:
         print(f"Error: shim script not found at {shim_path}", file=sys.stderr)
         sys.exit(1)
 
-    # Use dash if available to match the test environment, otherwise execute directly
-    run_cmd = ["dash", str(shim_path)] if shutil.which("dash") else [str(shim_path)]
+    # The shebang's interpreter, which is the one an agent firing the hook gets.
+    # This preferred `dash` "to match the test environment", and the test
+    # environment was itself wrong — so every number ever published from this
+    # tool described a shell that does not run the shim. [E4, review: shell MAJOR]
+    run_cmd = [str(shim_path)]
 
     # 3. Prepare payload and temporary environment
     payload = generate_payload()

@@ -11,7 +11,7 @@ change it without the other.
 ```
 $GITMEMORY_HOME/spool/
     .tmp-<pid>-<n>            # being written; readers ignore any name starting with a dot
-    <epoch_s>-<pid>-<event>[-<n>].json    # complete; content is the hook's stdin, verbatim
+    <pid>-<event>[-<n>].json  # complete; content is the hook's stdin, verbatim
 ```
 
 - `<event>` is the shim's **argv[1]**, not something parsed out of stdin: one of
@@ -20,8 +20,15 @@ $GITMEMORY_HOME/spool/
   POSIX sh is a hook script with an escaping bug.
 - The file's **content is stdin byte-for-byte**. The shim constructs no JSON.
 - `-<n>` is a collision suffix, appended only if the name already exists.
-  `date +%s%N` is not portable — macOS before 26 emits a literal `N` — and the
-  spool has no ordering requirement, so seconds plus pid is enough.
+  Uniqueness is the pid plus that suffix; **there is no timestamp in the name.**
+  It carried an `<epoch_s>` prefix at first, on the theory that the spool wanted
+  ordering. It does not — the watcher's fold over records is order-independent,
+  the arrival time is the file's own mtime, and nothing ever read the field. The
+  `date` it cost was one of three forks on the one path a user waits for, worth
+  2.0 ms of 7.6, and it was the grammar's only signed field: a clock set before
+  1970 made `date +%s` negative and shifted every index in the name. So the
+  watcher *finds* the event in the name rather than counting to it, which reads
+  both grammars and is what let the prefix go.
 - Completion is `rename(2)` from the dot-name. A `kill -9` mid-write leaves a
   `.tmp-` file, which the watcher ignores and sweeps when it is older than an
   hour. That is the whole durability argument for the shim.

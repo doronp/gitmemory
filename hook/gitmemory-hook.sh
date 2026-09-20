@@ -28,8 +28,10 @@ if [ "$1" = "PreCompact" ] || [ "$1" = "SessionEnd" ] || [ "$1" = "Stop" ]; then
     E="$1"
 fi
 # `[ -d ]` first: `mkdir` is an external command and costs about as much as the
-# whole shell does (~1.5 ms of the shim's ~8 ms, measured). The directory exists
-# on every fire but the first, so the test pays for itself immediately. [E4]
+# shell itself does — 1.3 ms of the shim's 5.6 ms, measured under `/bin/sh`, not
+# under the `dash` the first measurement used by mistake. The directory exists on
+# every fire but the first, so the test pays for itself immediately.
+# [E4; re-measured, review: shell MAJOR]
 if [ ! -d "$H/spool" ] && ! mkdir -p "$H/spool" 2>/dev/null; then
     exit 0
 fi
@@ -46,8 +48,14 @@ if ! cat > "$T" 2>/dev/null; then
     exit 0
 fi
 set +C
-S=$(date +%s 2>/dev/null || echo "0")
-B="$H/spool/${S}-${P}-${E}"
+# No timestamp in the name. It was the leading field for a long time and no
+# reader ever read it: the watcher wants the event, the ordering is an
+# order-independent fold, and the arrival time is the file's own mtime. What it
+# cost was a third fork on the hot path — `cat`, `date`, `mv` — worth 1.9 ms of
+# the shim's 7.6 ms, on the one path in this system a user waits for. It also
+# took the grammar's only signed field with it; a clock set before 1970 made
+# `date +%s` negative and shifted every index in the name. [E4, review: shell MAJOR]
+B="$H/spool/${P}-${E}"
 F="${B}.json"
 N=0
 while [ -e "$F" ] || [ -h "$F" ]; do

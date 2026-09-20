@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import signal
 import subprocess
 import time
@@ -36,7 +35,8 @@ SHIM = os.path.join(
 
 
 def _shim_cmd() -> list[str]:
-    return ["dash", SHIM] if shutil.which("dash") else [SHIM]
+    """The shebang's interpreter — see `tests/test_hook.py`. [E4, review: shell MAJOR]"""
+    return [SHIM]
 
 
 def _transcript(path: str, turns: int, *, start: int = 0) -> str:
@@ -301,8 +301,12 @@ def test_a_forced_name_collision_still_parses_as_a_compaction(world):
     p = subprocess.Popen(
         _shim_cmd() + ["PreCompact"], env=env, stdin=subprocess.PIPE, stderr=subprocess.PIPE
     )
-    now = int(time.time())
-    taken = [os.path.join(spool, f"{s}-{p.pid}-PreCompact.json") for s in (now, now + 1)]
+    # Written while the shim is blocked in `cat`, which is before it picks a
+    # name, so the collision is real rather than raced. Two of them, so the
+    # suffix loop is exercised past its first step.
+    taken = [
+        os.path.join(spool, n) for n in (f"{p.pid}-PreCompact.json", f"{p.pid}-PreCompact-1.json")
+    ]
     for path in taken:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write('{"transcript_path": "/nowhere/at/all.jsonl"}')
@@ -313,7 +317,7 @@ def test_a_forced_name_collision_still_parses_as_a_compaction(world):
     (suffixed,) = [
         f for f in os.listdir(spool) if f.endswith(".json") and os.path.join(spool, f) not in taken
     ]
-    assert suffixed.removesuffix(".json").split("-")[-1] == "1", suffixed
+    assert suffixed.removesuffix(".json").split("-")[-1] == "2", suffixed
     assert daemon._event_of(suffixed) == "PreCompact"
 
     # And it still *forces*: the transcript is younger than the interval, so a
