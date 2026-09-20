@@ -13,7 +13,8 @@ and then ask git what landed. No fixtures, no monkeypatching, no fakes.
 The three properties the ship gate asks for, in order:
 
 1. a compaction captured through the hook is in the store and in a commit;
-2. a hook killed mid-write loses nothing — not the segment, not the store;
+2. a `kill -9` mid-write loses nothing — on either side of the spool: the
+   shim writing its record, and the watcher writing the bytes themselves;
 3. concurrent hooks do not clobber each other and all of them arrive.
 """
 
@@ -23,6 +24,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 
 import pytest
@@ -168,7 +170,7 @@ def test_a_second_compaction_appends_rather_than_rewriting(world):
     assert first.commit != second.commit
 
 
-# --- 2. a hook killed mid-write ------------------------------------------------
+# --- 2. killed mid-write --------------------------------------------------------
 
 
 def test_a_hook_killed_mid_write_loses_nothing(world):
@@ -210,6 +212,97 @@ def test_a_hook_killed_mid_write_loses_nothing(world):
 
     assert result.errors == []
     assert result.appended == os.path.getsize(src), "the kill cost us the transcript"
+    assert store.verify(home) == []
+
+
+_SUICIDE = """
+import os, signal, sys
+from gitmemory import store
+
+home, source, session = sys.argv[1], sys.argv[2], sys.argv[3]
+store.CHUNK = 1 << 16
+real = store._create
+
+
+def create(path):
+    fh = real(path)
+
+    class Killed:
+        writes = 0
+
+        def write(self, data):
+            n = fh.write(data)
+            Killed.writes += 1
+            if Killed.writes == 3:
+                fh.flush()  # the partial belongs on disk, not in a buffer we lose
+                os.kill(os.getpid(), signal.SIGKILL)
+            return n
+
+        def __getattr__(self, name):
+            return getattr(fh, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return fh.__exit__(*exc)
+
+    return Killed()
+
+
+store._create = create
+store.capture(source, "claude-code", session, home=home)
+"""
+
+
+def test_a_capture_killed_mid_write_loses_nothing(world):
+    """SIGKILL inside the copy loop — the half of the gate where the bytes live.
+
+    The hook test above kills the shim, which is the cheap half: a lost record
+    costs latency and nothing else, because the watcher was never going to need
+    it. This kills a real `store.capture` three chunks into the segment it is
+    writing, so what is on disk afterwards is a `.incoming.` temp holding real
+    transcript bytes that no manifest mentions. SIGKILL is not catchable, so
+    `_capture`'s own `except BaseException: _unlink(tmp)` does not run — this is
+    the state a machine actually crashes into, not the tidy one.
+
+    The kill is self-inflicted rather than raced from here on purpose. A
+    megabyte copy is a window of a few milliseconds, and a test that polls for a
+    temp file to appear is a test that passes or flakes on machine load. [E4]
+    """
+    home, proj = world
+    src = _transcript(str(proj / "s-e2e.jsonl"), 12000)
+    size = os.path.getsize(src)
+    assert size > 3 << 16, size  # the child must die with bytes still unread
+    sid = store.session_id_for(src)
+
+    child = subprocess.run(
+        [sys.executable, "-c", _SUICIDE, home, src, sid],
+        capture_output=True,
+        cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    )
+    assert child.returncode == -signal.SIGKILL, child.stderr.decode(errors="replace")
+
+    # The floor: if the capture never got as far as writing bytes, everything
+    # below is vacuous — a clean sweep of a store nothing ever touched.
+    seg_dir = os.path.join(home, "raw", "claude-code", sid, "g00")
+    partial = [f for f in os.listdir(seg_dir) if f.startswith(".incoming.")]
+    assert len(partial) == 1, os.listdir(seg_dir)
+    assert 0 < os.path.getsize(os.path.join(seg_dir, partial[0])) < size, "not killed mid-copy"
+    assert store.sessions(home) == [], "a manifest outlived the capture that was writing it"
+
+    result = _sweep(home)
+
+    assert result.errors == []
+    assert result.appended == size, "the kill cost us the transcript"
+    assert [f for f in os.listdir(seg_dir) if f.startswith(".")] == [], "the temp was left behind"
+
+    (stored,) = store.sessions(home)
+    assert stored.size == size
+    kept = sum(os.path.getsize(s) for s in stored.segments)
+    assert kept == size, "the dead capture's bytes were counted twice"
+    with open(src, "rb") as fh:
+        assert store.span(stored, 0, size) == fh.read()
     assert store.verify(home) == []
 
 
