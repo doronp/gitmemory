@@ -107,7 +107,14 @@ class Turn:
 
     def __post_init__(self) -> None:
         digest = sha256_text("".join(b.content_sha256 for b in self.blocks))
-        self.turn_id = _id(self.session_id, self.seq, self.role, digest)
+        # Identity, NOT position. `seq` is a counter over non-skipped lines, so
+        # putting it in the id means any change to a skip rule renumbers every
+        # later turn and churns the whole committed tree — the exact failure
+        # this project exists to avoid. The harness already hands us a stable
+        # node id; use it. Lines with no uuid fall back to byte offset, which
+        # is stable under skip-rule changes and under appends.
+        identity = self.uuid or f"@{self.byte_offset}"
+        self.turn_id = _id(self.session_id, identity, self.role, digest)
         for b in self.blocks:  # blocks are built before the turn_id exists
             b.turn_id = self.turn_id
             b.block_id = _id(b.turn_id, b.seq, b.kind, b.content_sha256)

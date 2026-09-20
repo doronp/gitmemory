@@ -196,8 +196,11 @@ def test_unknown_block_keeps_native_and_never_reprs(tmp_path):
     s = check_adapter(cc, path)
     block = s.turns[0].blocks[0]
     assert block.native == exotic, "native payload lost"
-    assert block.text == "", "unknown block must not be stringified"
+    # Searchable AND recoverable: valid JSON, never a Python repr. Empty text
+    # would hide a secret or an error string inside an unrecognised block.
+    assert json.loads(block.text) == exotic, f"not re-parseable JSON: {block.text!r}"
     assert "'" not in block.text, "a Python repr leaked into a text field"
+    assert "web_search" in block.text, "unknown block is not searchable"
 
 
 def test_tool_result_dict_content_is_not_reprd(tmp_path):
@@ -313,3 +316,79 @@ def test_third_party_corpus(path):
 def test_corpus_is_present_or_explicitly_absent():
     if not _corpus():
         pytest.skip("run tests/fetch_fixtures.sh to enable the third-party corpus")
+
+
+# --- Review round 1 (Gemini pair-review): id stability and DAG integrity ---
+
+
+def test_turn_ids_survive_a_skip_rule_change(tmp_path):
+    """The churn trap: ids must not be a function of a counter over kept lines.
+
+    A line we skip today may be a line we keep tomorrow (the identity rule in
+    this adapter already changed once). If `seq` were in `turn_id`, adding or
+    removing one skipped line would renumber every later turn and rewrite the
+    whole committed tree — the exact churn this project exists to prevent.
+    """
+    convo = [user("u1", "a"), assistant("a1", "b"), user("u2", "c")]
+    before = cc.parse(write(tmp_path, "s1.jsonl", convo))
+    # `attachment` was dropped by this adapter yesterday and is kept today.
+    # That rule change must not rewrite the ids of the turns around it.
+    now_kept = {"type": "attachment", "uuid": "at1", "sessionId": "s1",
+                "parentUuid": "u1", "attachment": {"kind": "file"}}
+    after = cc.parse(write(tmp_path, "s2.jsonl", [convo[0], now_kept, convo[1], convo[2]]))
+
+    unchanged = [t for t in after.turns if t.uuid != "at1"]
+    assert [t.seq for t in unchanged] == [0, 2, 3], "fixture does not renumber; it proves nothing"
+    assert [t.turn_id for t in before.turns] == [t.turn_id for t in unchanged], (
+        "a newly-kept line renumbered its neighbours — every later tree object would churn"
+    )
+
+
+def test_turn_id_changes_when_content_changes(tmp_path):
+    """The other half: the same uuid with different bytes must NOT collide."""
+    a = cc.parse(write(tmp_path, "a.jsonl", [user("u1", "original")]))
+    b = cc.parse(write(tmp_path, "b.jsonl", [user("u1", "rewritten")]))
+    assert a.turns[0].turn_id != b.turns[0].turn_id, "a rewrite would be invisible in the diff"
+
+
+def test_parent_uuids_resolve_within_the_session(tmp_path):
+    """A DAG with dangling edges is broken memory. Roots are legitimate; strays are not."""
+    path = write(
+        tmp_path,
+        "s1.jsonl",
+        [user("u1", "a"), assistant("a1", "b", parentUuid="u1"),
+         user("u2", "c", parentUuid="a1")],
+    )
+    s = check_adapter(cc, path)
+    known = {t.uuid for t in s.turns if t.uuid}
+    dangling = [t.uuid for t in s.turns if t.parent_uuid and t.parent_uuid not in known]
+    assert dangling == [], f"parent_uuid points outside the session: {dangling}"
+
+
+def test_canonical_output_survives_lone_surrogates(tmp_path):
+    """Byte fidelity means text may hold lone surrogates. Our own path must not crash."""
+    raw = json.dumps(user("u1", "X")).encode().replace(b'"X"', b'"caf\xe9"') + b"\n"
+    s = check_adapter(cc, write(tmp_path, "s1.jsonl", raw))
+    blob = s.to_canonical()  # must not raise UnicodeEncodeError
+    assert blob.decode("utf-8", "surrogateescape")
+    assert s.turns[0].blocks[0].content_sha256, "hashing a surrogate-bearing block failed"
+
+
+@pytest.mark.parametrize("path", _corpus()[:40])
+def test_canonical_output_has_no_floats(path):
+    """Floats are the one JSON type whose text form is language-dependent.
+
+    They never reach the manifest by construction, but if they started
+    appearing in canonical output the cross-language story would need revising
+    rather than silently drifting.
+    """
+    doc = json.loads(cc.parse(path).to_canonical().decode("utf-8", "surrogateescape"))
+    stack = [doc]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, float):
+            raise AssertionError(f"float reached canonical output in {path}")
+        if isinstance(node, dict):
+            stack.extend(node.values())
+        elif isinstance(node, list):
+            stack.extend(node)

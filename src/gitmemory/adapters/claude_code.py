@@ -16,9 +16,10 @@ import os
 from glob import glob
 
 from ..jsonl import iter_records
-from ..records import Block, Event, Session, Turn
+from ..records import Block, Event, Session, Turn, canonical_json
 
 AGENT = "claude-code"
+_DEC = ("utf-8", "surrogateescape")
 
 # Internal line types that carry no uuid/timestamp and no DAG role. Vendored
 # from claude-code-log (MIT, Copyright (c) 2025 Daniel Demmel) — field
@@ -84,8 +85,12 @@ def _blocks(content) -> list[tuple[str, str, str | None, dict]]:
         elif kind == "tool_result":
             out.append(("tool_result", _flatten(item.get("content")), None, item))
         else:
-            # Unknown block: queryable as empty, recoverable from native.
-            out.append(("text", "", None, item))
+            # Unknown block: canonical JSON, so it stays *searchable* as well
+            # as recoverable. Empty text would be a retrieval hole — a secret
+            # or an error string inside an unrecognised block must still be
+            # findable. What we must never write is `str(dict)`: that is a
+            # Python repr, not JSON, and nothing can parse it back.
+            out.append(("text", canonical_json(item).decode(*_DEC), None, item))
     return out
 
 

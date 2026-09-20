@@ -92,7 +92,7 @@ Every item below was found by recon on real transcripts and is a required passin
 | Trap | Handling |
 |---|---|
 | `parentUuid` is `null` at every `compact_boundary` | walk `parentUuid // logicalParentUuid` |
-| usage over-counts **2.79×** (one assistant line per content block, each repeating cumulative usage) | dedup by `requestId`; drop `<synthetic>` model rows |
+| usage over-counts **2.79×** (one assistant line per content block, each repeating cumulative usage) | dedup by `requestId`; drop `<synthetic>` model rows. **Settled from data [E1]:** across 1,223 requests in claude-code-log's corpus, usage within a `requestId` is monotonically non-decreasing in **0 counter-examples** — it is cumulative, so last-write-wins is exact (identical to max-wins, verified). Independent over-count on that corpus: **2.46×**. |
 | no `costUSD` field | tokens × a **vendored, dated** price snapshot; tile says "estimated" + shows date |
 | subagents are 92% of files; one session had 78% of cache-read tokens in `subagents/**` | per-session rollup must include them |
 | ~78% of sessions never compact | watcher, not hook, is the capture guarantee |
