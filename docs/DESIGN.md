@@ -103,6 +103,31 @@ Every item below was found by recon on real transcripts and is a required passin
 | PreCompact **cannot** inject context, only block; a block-shaped error leaves the conversation uncompacted | **shim exits 0 unconditionally** |
 | sidechain interleaving | anchor on the parent's `toolUseId`, **not** on time **[R1]** |
 
+**Departures from this table made while building [E1, round 2]** — recorded
+rather than made silently:
+
+1. **A line is a turn iff it carries identity *or content*.** The identity-only
+   rule dropped `type: summary` (which carries `leafUuid`, never `uuid`) and
+   `queue-operation`/`remove` (which carries real human steering text and no id
+   at all). Text is also read from `content`, `summary`, `attachment` and
+   `toolUseResult`, not only `message.content`: on the MIT corpus reading only
+   `message` lost 122 of 133 `system` lines and all 54 attachments.
+2. **`leafUuid` is a pointer, not an identity** (`Turn.ref_uuid`). Folding it
+   into `uuid` made a summary collide with the turn it summarises and lose the
+   dedup race — three summaries silently dropped, counted as `duplicate_uuid`.
+3. **Sidechain anchoring splits into two fields.** `sourceToolAssistantUUID` is
+   a turn uuid and `toolUseID` is a content-block id; merging them into one
+   `anchor_uuid` made joins silently wrong. `agentId` is now projected too
+   (`Turn.agent_id`) — it covers the sidechains the other two miss.
+4. **`compact_boundary` is a turn as well as an event.** It carries a uuid and
+   parents the summary that follows; emitting only the event deleted the node
+   and left a dangling DAG edge.
+5. **Ids key on `anchor`/`byte_offset`, never `seq`.** `Event.event_id` still
+   keyed on `seq` after `turn_id` stopped doing so, so a skip-rule change
+   churned every later event.
+6. **Image payloads are projected, not inlined.** Base64 was 61.7% of all
+   indexed text; the bytes stay in `native` and in the raw segment.
+
 ### 2.3 Triggers — hook AND watcher
 
 - **Hook (latency, best-effort).** `PreCompact` + `SessionEnd` + `Stop`. ~20 lines POSIX sh.
@@ -368,7 +393,7 @@ Public + synthetic only. **Never this machine's history.**
 | # | Goal | Ship gate |
 |---|---|---|
 | E0 | ~~Honesty gate~~ **PASSED 2026-09-20** — four tools read at code level, 3-lens panel | 2 BUILD / 1 PR_TO_fable. Dissent recorded in §6. |
-| E1 | **(riskiest)** Canonical records + CC adapter + conformance suite | Every §2.2 trap is a passing test; determinism test green |
+| E1 | ~~**(riskiest)** Canonical records + CC adapter + conformance suite~~ **PASSED 2026-09-20, on the second attempt** | Every §2.2 trap is a passing test; determinism test green. First attempt was signed off wrongly — see below. |
 | E2 | ~~Segment store + contiguity proof + `verify` + redaction gate~~ **PASSED 2026-09-20** | 11 mutation classes + 150 seeded fuzz rounds, zero undetected; `push` refuses with no config |
 | E3 | Index + retrieval + CLI | Benchmark arms scored on mutated LongMemEval-S |
 | E4 | Hook shim + watcher + git daemon | p50/p99 published; `kill -9` mid-write loses nothing; concurrent spool proven |
@@ -379,6 +404,31 @@ Public + synthetic only. **Never this machine's history.**
 **Process:** per-module code review after each module's commit (skilled reviewer agents on
 distinct lenses, findings adversarially verified). One full security review at RC1. Claude and
 Gemini pair-review each other's modules; neither merges the other's code unreviewed.
+
+### E1 was signed off once before it was true
+
+The first E1 sign-off claimed both halves of the gate and held neither:
+
+- **"Every §2.2 trap is a passing test."** Two traps — per-session rollup
+  including subagents, and cost estimated from a dated price snapshot — had
+  neither a test nor an implementation. Both now exist (`session_files`,
+  `rollup_usage`, `estimate_cost`, `PRICES_AS_OF`).
+- **"Determinism test green."** The test compared `to_canonical()` against
+  itself inside one interpreter, sharing interned strings, dict ordering and
+  one `PYTHONHASHSEED`. It is now run in a fresh process under two different
+  seeds, which is where a rebuild actually happens.
+
+The standalone review round that caught this ran 42 agents over six lenses and
+returned 65 finding-sets; 35 of 36 adversarial verdicts were confirmed by
+execution, one refuted. The load-bearing finding was that **the conformance
+suite could not fail**: an adapter whose `parse` returned an empty Session
+passed all 162 corpus cases, because every rule quantified over records the
+mutation had already removed. `tests/test_conformance_can_fail.py` is the
+standing answer — 14 mutations, each one the old suite missed.
+
+The lesson is recorded rather than tidied away: a gate checked only by the code
+that has to pass it is not a gate, and a passing suite is evidence about the
+suite until something has tried to break it.
 
 ---
 

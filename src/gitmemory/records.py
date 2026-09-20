@@ -25,10 +25,14 @@ __all__ = [
     "sha256_text",
 ]
 
-# Transcript text can carry lone surrogates (jsonl.py decodes with
-# surrogateescape so byte offsets stay true). Every encode on this path must
-# therefore use surrogateescape too, or hashing a real transcript raises.
-_ENC = ("utf-8", "surrogateescape")
+# Transcript text can carry lone surrogates: jsonl.py decodes with
+# surrogateescape so byte offsets stay true, and a JSON `\ud800` escape is
+# *legal input* that decodes to a lone surrogate too — JS emits them whenever a
+# tool result is sliced mid-pair. `surrogateescape` only round-trips
+# U+DC80–U+DCFF, so encoding with it raises UnicodeEncodeError on the high half
+# and aborts the parse of an entire transcript. `surrogatepass` is total over
+# every str CPython can hold, which is the only property hashing needs.
+_ENC = ("utf-8", "surrogatepass")
 
 
 def canonical_json(obj: object) -> bytes:
@@ -38,10 +42,16 @@ def canonical_json(obj: object) -> bytes:
     across platforms, and the only consumer of canonical JSON is our own
     rebuild-twice check. NaN/Infinity are rejected — they are not JSON, and a
     third party verifying the tree with `jq` would choke on them.
+
+    `ensure_ascii=True` is not cosmetic. With it off, surrogateescape'd bytes
+    from an invalid-UTF-8 transcript pass straight through into the output, so
+    the file we commit as "canonical JSON" is not valid UTF-8 and our own
+    reader cannot parse it back. Escaping makes the output pure ASCII: valid
+    UTF-8 by construction, re-parseable, and `jq`-checkable by a stranger.
     """
     return json.dumps(
-        obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False
-    ).encode(*_ENC)
+        obj, sort_keys=True, ensure_ascii=True, separators=(",", ":"), allow_nan=False
+    ).encode("ascii")
 
 
 def sha256_text(text: str) -> str:
@@ -101,6 +111,12 @@ class Turn:
     usage: dict = field(default_factory=dict)
     is_sidechain: bool = False
     anchor_uuid: str | None = None  # sidechain → the tool_use that spawned it
+    agent_id: str | None = None  # sidechain → which subagent; a different namespace
+    # A *pointer* to another line's uuid (Claude Code's `leafUuid` on summaries).
+    # Deliberately not folded into `uuid`: a pointer in the identity namespace
+    # makes a summary collide with the turn it points at, and the dedup check
+    # then drops the summary. Measured: 3 lost summaries on the MIT corpus.
+    ref_uuid: str | None = None
     native: dict = field(default_factory=dict)
     blocks: list[Block] = field(default_factory=list)
     turn_id: str = ""
@@ -122,16 +138,28 @@ class Turn:
 
 @dataclass(slots=True)
 class Event:
+    """A boundary in the transcript, keyed on the turn that caused it.
+
+    Never on `seq`: that counts non-skipped lines, so any change to a skip rule
+    renumbers every later event and churns the committed tree — the same defect
+    that was removed from `turn_id`. `anchor` is the `turn_id` of the line the
+    event was read from, which makes an event exactly as stable as that turn.
+    """
+
     session_id: str
     seq: int
     kind: str  # session_start | session_end | compaction | fork
+    byte_offset: int = -1
+    anchor: str = ""  # turn_id of the line this event was read from
     meta: dict = field(default_factory=dict)
     event_id: str = ""
 
     def __post_init__(self) -> None:
         if self.kind not in ("session_start", "session_end", "compaction", "fork"):
             raise ValueError(f"unknown event kind: {self.kind!r}")
-        self.event_id = _id(self.session_id, self.seq, self.kind)
+        if not self.anchor:
+            raise ValueError("an event must anchor on the turn it was read from")
+        self.event_id = _id(self.session_id, self.kind, self.anchor)
 
 
 @dataclass(slots=True)
@@ -149,6 +177,11 @@ class Session:
     turns: list[Turn] = field(default_factory=list)
     events: list[Event] = field(default_factory=list)
     skipped: dict[str, int] = field(default_factory=dict)  # reason -> count, never silent
+    # Every JSON value the reader got out of the file, including ones it could
+    # not decode. The conformance suite asserts len(turns) + sum(skipped) ==
+    # records_seen, which is the only check that can actually catch a dropped
+    # line: without it an adapter that returns nothing passes every other rule.
+    records_seen: int = 0
 
     def to_canonical(self) -> bytes:
         """Canonical JSON for the whole session. Stable across rebuilds."""
@@ -170,6 +203,7 @@ class Session:
                 "turns": [
                     {
                         "turn_id": t.turn_id,
+                        "session_id": t.session_id,
                         "seq": t.seq,
                         "role": t.role,
                         "model": t.model,
@@ -182,6 +216,8 @@ class Session:
                         "usage": t.usage,
                         "is_sidechain": t.is_sidechain,
                         "anchor_uuid": t.anchor_uuid,
+                        "agent_id": t.agent_id,
+                        "ref_uuid": t.ref_uuid,
                         "blocks": [
                             {
                                 "block_id": b.block_id,
@@ -196,31 +232,17 @@ class Session:
                     for t in self.turns
                 ],
                 "events": [
-                    {"event_id": e.event_id, "seq": e.seq, "kind": e.kind, "meta": e.meta}
+                    {
+                        "event_id": e.event_id,
+                        "seq": e.seq,
+                        "kind": e.kind,
+                        "byte_offset": e.byte_offset,
+                        "anchor": e.anchor,
+                        "meta": e.meta,
+                    }
                     for e in self.events
                 ],
                 "skipped": self.skipped,
+                "records_seen": self.records_seen,
             }
         )
-
-
-def billable_usage(session: Session) -> dict[str, int]:
-    """Token totals with Claude Code's 2.79x over-count removed.
-
-    Claude Code writes one assistant line per content block and repeats the
-    *cumulative* usage on each, so naive summation over-counts. Recon measured
-    2.79x on a real transcript. Dedup by `request_id`; `<synthetic>` rows are
-    not billed at all.
-    """
-    seen: dict[str, dict] = {}
-    for t in session.turns:
-        if t.role != "assistant" or t.model == "<synthetic>":
-            continue
-        key = t.request_id or t.uuid or f"seq:{t.seq}"
-        seen[key] = t.usage  # last write per request wins: usage is cumulative
-    total: dict[str, int] = {}
-    for usage in seen.values():
-        for k, v in usage.items():
-            if isinstance(v, int):
-                total[k] = total.get(k, 0) + v
-    return total

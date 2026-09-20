@@ -21,9 +21,7 @@ def _capture(args) -> int:
     boundaries = None
     if not args.no_parse:
         session = get_adapter(args.agent).parse(args.source)
-        boundaries = [
-            e.meta["byte_offset"] for e in session.events if e.kind == "compaction"
-        ]
+        boundaries = [e.byte_offset for e in session.events if e.kind == "compaction"]
     cap = store.capture(args.source, args.agent, session_id, home=args.home, boundaries=boundaries)
     if cap.diverged:
         print(f"diverged: {cap.diverged}", file=sys.stderr)
