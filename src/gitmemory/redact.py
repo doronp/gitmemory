@@ -27,8 +27,8 @@ __all__ = ["Finding", "gate", "push_allowed", "scan_bytes", "scan_group", "scan_
 
 # How far a credential may straddle a segment boundary and still be seen.
 # ponytail: a fixed carry, not a full re-stream. A single secret longer than
-# this AND cut by a segment boundary is still missed; raise it if a detector
-# ever needs more.
+# this AND cut by a segment boundary is still missed — uncut, `scan_path` has
+# the whole file. Raise it if a detector ever needs more.
 SEAM = 512
 
 # Anchored on issuer-assigned prefixes, not entropy: a high-entropy heuristic
@@ -54,7 +54,10 @@ SUSPECT: tuple[tuple[str, re.Pattern[bytes]], ...] = (
         ),
     ),
     ("bearer_header", re.compile(rb"(?i)\bauthorization\s*:\s*bearer\s+[A-Za-z0-9._~+/-]{20,}")),
-    ("pg_url_with_password", re.compile(rb"(?i)\b(?:postgres(?:ql)?|mysql|mongodb)://[^\s:@/]+:[^\s@/]+@")),
+    (
+        "pg_url_with_password",
+        re.compile(rb"(?i)\b(?:postgres(?:ql)?|mysql|mongodb)://[^\s:@/]+:[^\s@/]+@"),
+    ),
 )
 
 
@@ -116,17 +119,25 @@ def scan_group(paths: list[str]) -> list[Finding]:
     the rest are already reported per file. [E2]
     """
     found: list[Finding] = []
-    tail, prev = b"", ""
+    tail, first = b"", ""  # bytes carried across the cut, and the file they start in
     for path in paths:
         found += scan_path(path)
         head, new_tail = _edge(path, SEAM)
         if tail:
             found += [
-                Finding(f"{prev} + {path}", f.offset, f.detector, f.tier, f.shape, f.length)
+                Finding(f"{first} + {path}", f.offset, f.detector, f.tier, f.shape, f.length)
                 for f in scan_bytes(tail + head, path)
                 if f.offset < len(tail) < f.offset + f.length
             ]
-        tail, prev = new_tail, path
+        if len(new_tail) < SEAM:
+            # A segment shorter than SEAM extends the carry instead of replacing
+            # it: three ten-byte segments can hold a credential that no pair of
+            # them shows, and `new_tail` alone would drop the oldest. `first`
+            # stays put so the label names where the span began, in two names
+            # rather than one per segment. [E3]
+            tail, first = (tail + head)[-SEAM:], first or path
+        else:
+            tail, first = new_tail, path
     return found
 
 

@@ -89,9 +89,7 @@ def test_stored_bytes_equal_bytes_written_once(home, src):
         store.capture(src, "claude-code", "sess", home=home)
 
     raw = os.path.join(home, "raw")
-    stored = sum(
-        os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(raw) for f in fs
-    )
+    stored = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(raw) for f in fs)
     assert stored == os.path.getsize(src), "segments duplicated bytes; snapshots in disguise"
 
 
@@ -105,7 +103,11 @@ def test_a_stranger_can_check_it_with_cat_and_shasum(home, src):
     man_rel = "sessions/claude-code/sess/g00.json"
     proof = subprocess.run(
         f"cat $(jq -r '.segments|sort_by(.start)|.[].path' {man_rel}) | shasum -a 256",
-        shell=True, cwd=home, capture_output=True, text=True, check=True,
+        shell=True,
+        cwd=home,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     assert proof.stdout.split()[0] == manifest(home)["file_sha256"]
 
@@ -198,9 +200,12 @@ def test_generations_keep_stacking(home, src):
         transcript(src, 5 + gen, start=100 * gen)
         assert store.capture(src, "claude-code", "sess", home=home).generation == gen
     assert store.verify(home) == []
-    assert manifest(home, 3)["prev_manifest_sha256"] == hashlib.sha256(
-        Path(os.path.join(home, "sessions", "claude-code", "sess", "g02.json")).read_bytes()
-    ).hexdigest()
+    assert (
+        manifest(home, 3)["prev_manifest_sha256"]
+        == hashlib.sha256(
+            Path(os.path.join(home, "sessions", "claude-code", "sess", "g02.json")).read_bytes()
+        ).hexdigest()
+    )
 
 
 def test_generation_zero_may_not_claim_an_ancestor(home, src):
@@ -435,9 +440,7 @@ def test_our_own_manifests_do_not_trip_the_gate(home, src):
     """A gate that fires on every sha256 is a gate nobody leaves on."""
     transcript(src, 30)
     store.capture(src, "claude-code", "sess", home=home)
-    ok, findings = redact.gate(
-        [os.path.join(d, f) for d, _, fs in os.walk(home) for f in fs]
-    )
+    ok, findings = redact.gate([os.path.join(d, f) for d, _, fs in os.walk(home) for f in fs])
     assert ok and findings == [], f"false positives on a clean store: {findings}"
 
 
@@ -458,8 +461,8 @@ def test_push_is_denied_by_default(home):
     "cfg,expect",
     [
         ('[remote.origin]\nurl = "git@h:r.git"\n', "allow_push"),
-        ("[remote.other]\nurl = \"x\"\nallow_push = true\n", "no [remote.origin]"),
-        ('[remote.origin]\nallow_push = true\n', "no url"),
+        ('[remote.other]\nurl = "x"\nallow_push = true\n', "no [remote.origin]"),
+        ("[remote.origin]\nallow_push = true\n", "no url"),
     ],
 )
 def test_push_stays_denied_until_every_field_is_set(home, cfg, expect):
@@ -827,7 +830,7 @@ def test_a_dotfile_in_a_generation_directory_is_a_stray(home, src):
     assert [p for p in store.verify(home) if ".evil.jsonl" in p]
 
 
-def test_one_unparseable_manifest_does_not_hide_tampering_elsewhere(tmp_path):
+def test_one_unparseable_manifest_does_not_hide_tampering_elsewhere(tmp_path, monkeypatch):
     """[E2] A crash in the sweep suppressed every later session's report and
     blamed the exception, which reads as "verify is broken", not "store is".
 
@@ -842,10 +845,19 @@ def test_one_unparseable_manifest_does_not_hide_tampering_elsewhere(tmp_path):
         store.capture(source, "claude-code", sid, home=home)
 
     bad = manifest(home, sid="aaa")
-    bad["agent"] = {"not": "a string"}
     Path(home, "sessions", "claude-code", "aaa", "g00.json").write_text(json.dumps(bad))
     tampered = _sorted_segs(manifest(home, sid="zzz"))[0]["path"]
     Path(home, tampered).write_bytes(b"replaced\n")
+
+    # Simulate a crash inside _verify_manifest
+    orig_scandir = os.scandir
+
+    def mock_scandir(path):
+        if "aaa" in str(path) and "raw" in str(path):
+            raise TypeError("simulated crash")
+        return orig_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", mock_scandir)
 
     problems = store.verify(home)
     assert [p for p in problems if "aaa/g00.json" in p and "unverifiable manifest" in p], problems
@@ -981,9 +993,7 @@ def test_an_orphan_holding_pruned_bytes_is_kept_not_overwritten(home, src):
 
     assert store.verify(home) == []
     assert manifest(home, gen=1)["diverged_from"]["at_byte"] == end
-    kept = b"".join(
-        Path(home, s["path"]).read_bytes() for s in _sorted_segs(manifest(home, gen=0))
-    )
+    kept = b"".join(Path(home, s["path"]).read_bytes() for s in _sorted_segs(manifest(home, gen=0)))
     assert b"ORIGINAL" in kept, "the only copy of the pruned bytes"
     assert b"REDACTED" in Path(src).read_bytes()
 
@@ -1138,3 +1148,176 @@ def test_the_console_script_target_exists():
         target = tomllib.load(fh)["project"]["scripts"]["gitmemory"]
     module, _, attr = target.partition(":")
     assert callable(getattr(importlib.import_module(module), attr))
+
+
+# --- the trust root: a manifest is untrusted data -------------------------- #
+
+
+def rewrite(home: str, mutate) -> str:
+    """Put the g00 manifest through `mutate` and write it back. Returns its path."""
+    path = os.path.join(home, "sessions", "claude-code", "sess", "g00.json")
+    man = json.loads(Path(path).read_text())
+    mutate(man)
+    Path(path).write_text(json.dumps(man))
+    return path
+
+
+def two_segments(home, src) -> None:
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    transcript(src, 5, start=10)
+    store.capture(src, "claude-code", "sess", home=home)
+
+
+def test_a_reordered_manifest_is_read_in_offset_order(home, src):
+    """`verify` sorted by start and `sessions` did not, so a manifest whose
+    segments were swapped passed the proof and then handed every caller a
+    concatenation that was never the transcript."""
+    two_segments(home, src)
+    rewrite(home, lambda m: m["segments"].reverse())
+
+    assert store.verify(home) == [], "verify sorts, so it still sees a clean tiling"
+    (stored,) = store.sessions(home)
+    assert [os.path.basename(p) for p in stored.segments] == sorted(
+        os.path.basename(s["path"]) for s in manifest(home)["segments"]
+    )
+
+
+def test_a_segment_path_outside_the_store_fails_the_read(home, src):
+    """Not a skip. `segment_groups` feeds the egress gate, so a run dropped for
+    naming an outside path is a run the seam scan never sees."""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    rewrite(home, lambda m: m["segments"][0].update(path="../escaping-path.jsonl"))
+
+    with pytest.raises(store.EscapingSegment, match="escapes the store"):
+        store.sessions(home)
+
+
+def test_a_truncated_manifest_is_skipped_not_raised(home, src):
+    """`json.JSONDecodeError` is a `ValueError`, so re-raising ValueError out of
+    `sessions` to report an escaping path made the ordinary half-written
+    manifest a full disk leaves behind cost the whole store."""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    store.capture(src, "claude-code", "other", home=home)
+    path = os.path.join(home, "sessions", "claude-code", "sess", "g00.json")
+    Path(path).write_text(Path(path).read_text()[:23])
+
+    assert [s.session_id for s in store.sessions(home)] == ["other"]
+
+
+def test_a_malformed_segment_entry_costs_its_generation_not_one_segment(home, src):
+    """Skipping just the entry leaves a run one segment short, which reads as a
+    shorter transcript rather than a broken one: every offset past the gap
+    silently addresses the wrong bytes."""
+    two_segments(home, src)
+    rewrite(home, lambda m: m["segments"].__setitem__(0, "not-a-dict"))
+
+    assert store.sessions(home) == []
+    assert any("malformed segment entry" in p for p in store.verify(home))
+
+
+def test_a_segment_entry_with_an_unsortable_start_costs_only_its_generation(home, src):
+    """`sessions` has to call this entry malformed for the same reason `verify`
+    does: ordering by a start it cannot read is ordering by nothing, and the
+    two readers disagreeing about what a valid manifest is has been the shape
+    of every bug in this file."""
+    two_segments(home, src)
+    store.capture(src, "claude-code", "other", home=home)
+    rewrite(home, lambda m: m["segments"][0].update(start="0"))
+
+    assert [s.session_id for s in store.sessions(home)] == ["other"]
+    assert any("malformed segment entry" in p for p in store.verify(home))
+
+
+def test_a_credential_split_across_three_segments_is_caught_at_the_seams(home, src):
+    """No single segment holds the key, and no single file scan can see it."""
+    transcript(src, 2)
+    for piece in (b'{"k":"' + AKIA[:5], AKIA[5:15], AKIA[15:] + b'"}\n'):
+        with open(src, "ab") as fh:
+            fh.write(piece)
+        store.capture(src, "claude-code", "sess", home=home)
+
+    groups = store.segment_groups(home)
+    assert len(groups[0]) == 3
+    assert all(redact.scan_path(p) == [] for p in groups[0]), "no one segment matches"
+
+    ok, findings = redact.gate([], groups, allow_empty=True)
+    assert ok is False, "but the bytes that would leave are the concatenation"
+    assert [f.detector for f in findings if " + " in f.path] == ["aws_access_key_id"]
+
+
+def test_a_manifest_naming_an_unsafe_agent_is_reported_not_trusted(home, src):
+    """`agent` and `session_id` are path components everywhere else in the
+    store, and `verify` was the one reader that took them on trust."""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    rewrite(home, lambda m: m.update(agent="/absolute-path-unsafe"))
+
+    assert any("unsafe agent name" in p for p in store.verify(home))
+
+
+def test_an_escaping_segment_path_stops_orphan_adoption(home, src):
+    """Adoption rebuilds a run from the manifest, so it is a second reader of
+    the same untrusted list and needs the same guard."""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    size = manifest(home)["size"]
+    rewrite(home, lambda m: m["segments"][0].update(path="../escaping-file"))
+    orphan = Path(home, "raw", "claude-code", "sess", "g00", f"{size:012d}-{size + 10:012d}.jsonl")
+    orphan.write_bytes(b"0123456789")
+
+    with pytest.raises(store.EscapingSegment, match="escapes the store"):
+        store.capture(src, "claude-code", "sess", home=home)
+
+
+@pytest.mark.parametrize("bad", ["10", True, None, [], {}])
+def test_a_manifest_field_of_the_wrong_type_is_refused_not_crashed_on(home, src, bad):
+    """The next capture reads `size` to know where to tile from. A string there
+    used to reach arithmetic as a TypeError, which is not a report — and `True`
+    is the one that gets through a bare `isinstance(val, int)` and tiles the
+    next segment from byte 1."""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    rewrite(home, lambda m: m.update(size=bad))
+
+    with pytest.raises(ValueError, match="size"):
+        store.capture(src, "claude-code", "sess", home=home)
+
+
+def test_a_terminal_escape_in_a_transcript_does_not_reach_the_terminal(home, src, capsys):
+    """Recall prints bytes an attacker chose. `\\x1b[2K\\r` erases the line it
+    was found on, which is how a hit hides the hit above it."""
+    from gitmemory.__main__ import main
+
+    transcript(src, 5)
+    with open(src, "ab") as fh:
+        fh.write(
+            b'{"type":"user","uuid":"u99","sessionId":"sess","message":'
+            b'{"role":"user","content":"needle \\u001b[2K \\r"}}\n'
+        )
+    assert main(["--home", home, "capture", src, "--session-id", "sess"]) == 0
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+
+    assert main(["--home", home, "recall", "needle"]) == 0
+    out = capsys.readouterr().out
+    assert "needle" in out
+    assert "\x1b" not in out and "\r" not in out
+    assert "\\x1b" in out
+
+
+def test_the_store_is_owner_only_on_disk(home, src):
+    """The store holds whatever the transcript held, which on a shared box is
+    the same argument as `~/.ssh`."""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+
+    for root, _dirs, files in os.walk(home):
+        if ".git" in root.split(os.sep):
+            continue
+        if root != home:
+            assert os.stat(root).st_mode & 0o777 == 0o700, root
+        for name in files:
+            assert os.stat(os.path.join(root, name)).st_mode & 0o777 == 0o600, name
