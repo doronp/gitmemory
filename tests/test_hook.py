@@ -373,10 +373,21 @@ def test_a_name_that_is_already_taken_does_not_clobber_it(clean_env):
     as event `1` and silently stopped forcing a capture. Untested code on both
     sides of one seam. [E4]
 
-    Forced rather than raced: the shim blocks in `cat` until stdin closes, and
-    `dash <script>` execs in the process we started, so its pid is `p.pid` and
-    the name it is about to choose is predictable. Both candidate seconds are
-    planted because the shim calls `date` after the write, not before.
+    Forced rather than raced: the shim blocks in `cat` until stdin closes and
+    picks its name only afterwards, and the shebang execs in the process we
+    started, so its pid is `p.pid` and the name it is about to choose is
+    predictable. Two are planted so the suffix loop has to step past its first
+    try rather than landing on `-1` by default.
+
+    The planted names are the shim's current grammar, and for one commit they
+    were not. Dropping the `date` prefix left this test planting
+    `<epoch>-<pid>-PreCompact.json`, which the shim no longer picks — so nothing
+    collided, the suffix loop never ran, and the test went on passing while
+    testing nothing. Its end-to-end twin failed loudly on the same change and
+    got fixed; this one did not, because the assertion it happened to break on
+    had just been rewritten to ask `_event_of` instead of splitting the name.
+    A collision test has to assert that the collision happened.
+    [E4, review: shell MAJOR]
     """
     env, home = clean_env
     spool = home / "spool"
@@ -389,8 +400,7 @@ def test_a_name_that_is_already_taken_does_not_clobber_it(clean_env):
     )
     assert p.stdin is not None
     spool.mkdir(parents=True, exist_ok=True)
-    now = int(time.time())
-    taken = [spool / f"{s}-{p.pid}-PreCompact.json" for s in (now, now + 1)]
+    taken = [spool / f"{p.pid}-PreCompact.json", spool / f"{p.pid}-PreCompact-1.json"]
     for path in taken:
         path.write_bytes(b"ALREADY HERE")
 
@@ -402,5 +412,58 @@ def test_a_name_that_is_already_taken_does_not_clobber_it(clean_env):
         assert path.read_bytes() == b"ALREADY HERE", "an existing record was overwritten"
     (suffixed,) = [f for f in spool.glob("*.json") if f not in taken]
     assert suffixed.read_bytes() == b"the new payload"
+    assert suffixed.name == f"{p.pid}-PreCompact-2.json", "the collision was never forced"
     # ...and the watcher can still tell what event it was, collision suffix and all.
     assert daemon._event_of(suffixed.name) == "PreCompact"
+
+
+def test_a_symlink_planted_at_the_record_name_is_not_written_through(clean_env):
+    """`set -C` and the `[ -h ]` tests, which nothing exercised.
+
+    The spool sits under a home directory the shim creates with `umask 077`, so
+    this is a defence in depth rather than the front door — but the shim is the
+    one part of gitmemory that runs inside someone else's agent, with their
+    environment, and a spool directory that is group- or world-writable for any
+    local reason turns both candidate paths into symlink targets. A plain
+    `cat > "$T"` follows a symlink and writes through it; `[ -e ]` alone does
+    not see a dangling one, which is the case that matters, because a link to a
+    file that does not exist yet is exactly how you get the shim to create it.
+
+    The two names are not covered by the same thing, and writing this test as
+    though they were is how that came out. On the `.tmp-` the guard is real and
+    the negative control confirms it: strip `[ -h ]` and the payload goes
+    through the link into the victim file. On the published record there is no
+    write-through to prevent — `mv` is `rename(2)`, which replaces the symlink
+    rather than following it — so `[ -h "$F" ]` buys something smaller and worth
+    naming honestly: the shim does not silently destroy a name it did not
+    create. Both are asserted below, each for what it actually does.
+
+    `set -C` is a third guard and this test cannot reach it, because the `[ -h ]`
+    loop has already moved off any planted name by the time `cat` runs. It
+    covers the window between that test and the write, which is a race, not a
+    state. Left in and left untested on purpose. [E4, review: F2]
+    """
+    env, home = clean_env
+    spool = home / "spool"
+    spool.mkdir(parents=True)
+    target = home / "victim"
+
+    p = subprocess.Popen(
+        run_shim_cmd() + ["PreCompact"],
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert p.stdin is not None
+    (spool / f".tmp-{p.pid}-0").symlink_to(target)
+    (spool / f"{p.pid}-PreCompact.json").symlink_to(target)
+
+    p.stdin.write(b"the payload")
+    p.stdin.close()
+    assert p.wait() == 0, "a planted link is still not a reason to fail the session"
+
+    assert not target.exists(), "the shim wrote through the temp symlink"
+    assert (spool / f"{p.pid}-PreCompact.json").is_symlink(), "the shim clobbered a link"
+    written = [f for f in spool.glob("*.json") if not f.is_symlink()]
+    assert [f.read_bytes() for f in written] == [b"the payload"]

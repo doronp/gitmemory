@@ -37,10 +37,16 @@ if [ ! -d "$H/spool" ] && ! mkdir -p "$H/spool" 2>/dev/null; then
 fi
 P=$$
 N=0
+# `[ -h ]` as well as `[ -e ]`: a *dangling* symlink is not `-e`, and it is the
+# case that matters, because a link to a file that does not exist yet is how you
+# get `cat >` to create one. This guard is load-bearing on the temp name and only
+# here — `cat` follows a link, `mv` below does not. [E4, review: F2]
 while [ -e "$H/spool/.tmp-$P-$N" ] || [ -h "$H/spool/.tmp-$P-$N" ]; do
     N=$((N + 1))
 done
 T="$H/spool/.tmp-$P-$N"
+# And `set -C` for the window between that test and this write, which is a race
+# rather than a state and so is the one guard here with no test. [E4, review: F2]
 set -C
 if ! cat > "$T" 2>/dev/null; then
     set +C

@@ -91,6 +91,28 @@ def test_no_tracked_file_contains_owner_data(what: str, pattern: re.Pattern):
     assert not hits, f"{what} appears in tracked files: {', '.join(hits[:20])}"
 
 
+def test_the_scan_actually_has_files_to_scan():
+    """The other half of the negative control below, and the half that was missing.
+
+    `test_the_patterns_would_actually_catch_something` proves the patterns work.
+    It says nothing about whether they were pointed at anything. Every assertion
+    in this file is "no hits", which passes just as cleanly over an empty corpus
+    — and `_tracked()` can return one: `git -C` against a path that is not a
+    repository, a checkout where everything is somehow ignored, a future edit
+    that filters the list too hard. `check=True` catches git failing, not git
+    succeeding with nothing to say.
+
+    The floor is deliberately far below the real count (51 files at the time of
+    writing) so it fails on collapse rather than drifting into a maintenance
+    chore. The named files are the ones that would carry a pasted path.
+    [E4, review: F4]
+    """
+    tracked = set(_tracked())
+    assert len(tracked) > 40, f"the owner-data scan saw only {len(tracked)} files"
+    for rel in ("src/gitmemory/daemon.py", "README.md", "hook/gitmemory-hook.sh"):
+        assert rel in tracked, f"{rel} is not in the scanned set"
+
+
 def test_the_allowlist_only_names_files_that_exist():
     """An allowlist entry for a deleted file is a hole nobody notices opening."""
     missing = [rel for rel in ALLOWED if not (ROOT / rel).is_file()]

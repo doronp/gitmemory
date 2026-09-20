@@ -26,13 +26,29 @@ def _write(path, text: str, *, append: bool = False) -> str:
     return str(path)
 
 
-def _config(home: str, roots, agent: str = "claude-code", pattern: str | None = None) -> None:
+def _config(
+    home: str,
+    roots,
+    agent: str = "claude-code",
+    pattern: str | None = None,
+    *,
+    git: bool = True,
+) -> None:
+    """Write `config.toml`, and by default stand in for `run()`'s `gitrepo.init`.
+
+    `tick` commits but does not initialise — `run` does, once per start — so
+    every test that drives `tick` directly needs a repository from somewhere,
+    and this is it. `git=False` is for the one test that is *about* that init:
+    it asserted `.git` existed after `run`, having had this helper create it a
+    moment earlier, so it passed with the init deleted. [E4, review: F3]
+    """
     listed = ", ".join(json.dumps(str(r)) for r in roots)
     body = f'[[watch]]\nagent = "{agent}"\nroots = [{listed}]\n'
     if pattern:
         body += f"pattern = {json.dumps(pattern)}\n"
     _write(os.path.join(home, "config.toml"), body)
-    gitrepo.init(home)
+    if git:
+        gitrepo.init(home)
 
 
 def _key(path) -> tuple[int, int]:
@@ -423,6 +439,73 @@ def test_a_transcript_rewritten_to_the_same_length_is_still_noticed(tmp_path):
     assert [s.generation for s in store.sessions(home)] == [0, 1]
 
 
+def test_a_same_length_rewrite_that_also_keeps_the_mtime_is_recovered_on_the_next_append(tmp_path):
+    """The blind spot in the test above, and how far it actually goes.
+
+    `changed` is `size != stored or mtime > recorded`, so a rewrite that changes
+    neither is invisible to the pass — `rsync -a`, a restore from an archive, an
+    editor that preserves times. The test above advances the mtime by ten
+    seconds and so never meets this.
+
+    Measured rather than assumed, because the assumption was that those bytes
+    were lost. They are not. The pass that misses the rewrite is followed by one
+    that sees the *next* append, and the store compares prefixes rather than
+    trusting the length: it forks a generation, keeps the original bytes in the
+    old one, and `verify` stays clean. So this is the same shape as the hook —
+    latency, not loss — and it is bounded by the next byte the agent writes.
+
+    What is genuinely lost is the case with no next byte: a transcript rewritten
+    to the same length and then never touched again keeps its original capture.
+    Closing that means hashing a tail on every pass for every session, every
+    five seconds, against a fault no agent this adapter targets can produce; the
+    contiguity proof is what makes that trade safe to take. [E4, review: F7]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    watches = daemon.load_watches(home)
+    assert daemon.tick(home, watches, interval=0).appended == len(TURN)
+
+    before = os.stat(src)
+    _write(src, TURN.replace("hello", "world"))
+    os.utime(src, (before.st_atime, before.st_mtime))
+    missed = daemon.tick(home, watches, interval=0, now=time.time() + 7200)
+    assert missed.appended == 0, "neither size nor mtime moved; the pass cannot see it"
+
+    _write(src, TURN, append=True)
+    recovered = daemon.tick(home, watches, interval=0, now=time.time() + 14400)
+
+    assert recovered.appended == 2 * len(TURN), "the fork re-copies the rewritten file whole"
+    assert [(s.generation, s.size) for s in store.sessions(home)] == [
+        (0, len(TURN)),
+        (1, 2 * len(TURN)),
+    ]
+    assert store.verify(home) == []
+
+
+def test_an_infinite_interval_still_captures_a_forced_record(tmp_path):
+    """The gate and its override, separated by making the gate unarguable.
+
+    Every other interval test picks a number and then picks a `now` far enough
+    past it, which tests the arithmetic as much as the rule. `inf` cannot be
+    waited out, so what gets captured here got captured because a hook record
+    said to. [E4, review: F5]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    watches = daemon.load_watches(home)
+    assert daemon.tick(home, watches, interval=0).appended == len(TURN)
+
+    _write(src, TURN, append=True)
+    assert daemon.tick(home, watches, interval=float("inf")).appended == 0
+
+    _spool(home, "4242-PreCompact.json", {"transcript_path": src})
+    assert daemon.tick(home, watches, interval=float("inf")).appended == len(TURN)
+
+
 def test_an_unreadable_transcript_is_reported_and_the_pass_continues(tmp_path):
     home = str(tmp_path / "home")
     root = tmp_path / "proj"
@@ -496,10 +579,12 @@ def _subject(home: str) -> str:
 
 
 def test_run_once_initialises_the_repository_and_commits(tmp_path):
+    """`git=False`: the repository has to be one `run` made. [E4, review: F3]"""
     home = str(tmp_path / "home")
     root = tmp_path / "proj"
     _write(str(root / "a.jsonl"), TURN)
-    _config(home, [root])
+    _config(home, [root], git=False)
+    assert not os.path.exists(os.path.join(home, ".git"))
     lines: list[str] = []
     assert daemon.run(home, once=True, interval=0, log=lines.append) == 0
     assert os.path.isdir(os.path.join(home, ".git"))
