@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import time
 
 import pytest
@@ -1142,3 +1143,66 @@ def test_a_git_that_is_briefly_unavailable_is_retried_rather_than_fatal(tmp_path
         daemon.run(home, poll=0, log=lines.append)
     assert calls["n"] == 2 and passes["n"] == 1
     assert [line for line in lines if "git init" in line], lines
+
+
+def _committed(lines: list[str]) -> bool:
+    """Did a pass log a real commit? `run` prints `commit=<sha>`, or `commit=None`."""
+    return any("commit=" in line and "commit=None" not in line for line in lines)
+
+
+def test_a_repository_deleted_under_a_running_watcher_comes_back(tmp_path, monkeypatch):
+    """`.git` is not a start-up fact, and treating it as one stopped versioning.
+
+    `run` inits once per start and then sets a flag. Delete the repository while
+    it is running and the flag is still True, so it never inits again: every
+    later pass captures the bytes correctly, fails to commit, logs the same
+    sentence, and leaves the store unversioned for ever. `verify` stays clean
+    throughout, which is exactly why nothing notices.
+
+    The first version of this test drove two `run(once=True)` calls with a real
+    `rm -rf` between them, and its negative control caught it: `started` is a
+    local, so every `once=True` call inits unconditionally and the test passed
+    against the unfixed code. The flag only persists *within* one `run`, so the
+    bug is only reachable across passes of a single call — which is what this
+    does, deleting the repository from inside `sleep` between pass one and pass
+    two and leaving through the `KeyboardInterrupt` that `run` re-raises.
+    [E4, review: CLI 9]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = str(root / "a.jsonl")
+    _write(src, TURN)
+    _config(home, [root], git=False)
+
+    # Keyed on the repository existing, not on a sleep count. `run` sleeps in two
+    # places — the end of a pass, and the retry after `gitrepo.init` fails — and
+    # counting made the second one look like the first: a single transient init
+    # failure (the `.git/config` lock collision this loop is built to survive)
+    # fired the deletion before there was anything to delete, and the test died
+    # on `FileNotFoundError`. It failed exactly once in fourteen full-suite runs
+    # and never in isolation; the cause was confirmed by simulating one failing
+    # `init` rather than by waiting for it again. [E4, review: CLI 9]
+    passes: list[int] = []
+    deleted: list[int] = []
+
+    def sleep(_seconds):
+        passes.append(1)
+        assert len(passes) < 10, "run never reached a pass that could commit"
+        if not deleted:
+            if os.path.isdir(os.path.join(home, ".git")):
+                shutil.rmtree(os.path.join(home, ".git"))
+                _write(src, TURN, append=True)
+                deleted.append(1)
+            return
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(time, "sleep", sleep)
+    lines: list[str] = []
+    with pytest.raises(KeyboardInterrupt):
+        daemon.run(home, poll=0, interval=0, log=lines.append)
+
+    assert deleted, "the repository was never deleted; the test proves nothing"
+    assert os.path.isdir(os.path.join(home, ".git")), "the repository was not rebuilt"
+    committed = [line for line in lines if "commit=" in line and "commit=None" not in line]
+    assert len(committed) == 2, f"both passes must commit: {lines}"
+    assert store.verify(home) == []

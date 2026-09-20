@@ -320,6 +320,23 @@ def _fsync_dir(path: str) -> None:
     no manifest names — `_adopt_orphans` is what makes that state recoverable
     rather than permanent. The earlier version of this docstring claimed the
     fsync closed that window. It does not. [E2]
+
+    And on macOS `os.fsync` does not reach the platter. It flushes the page
+    cache to the device and returns; only `fcntl(F_FULLFSYNC)` asks the drive to
+    empty its own write cache, and the difference is not subtle — measured here,
+    28.2 µs against 2991.3 µs, a factor of 106. So the ordering this function
+    establishes is real against a *process* dying, which is the failure the
+    store is built for and the one the `kill -9` tests exercise, and is not
+    guaranteed against power loss, where the drive may commit the two renames in
+    either order.
+
+    Not fixed with `F_FULLFSYNC`, deliberately. It is macOS-only, so it buys a
+    platform branch on the capture path, and what it would buy back is already
+    covered from the other end: `verify` reads the segments and checks they tile
+    the range the manifest claims, so a reordered power-loss state is detected
+    rather than trusted, and `_adopt_orphans` recovers the one it can. A
+    guarantee that is checked afterwards is worth more than one asserted at
+    write time. [E4, review: concurrency 8]
     """
     fd = os.open(path, os.O_RDONLY)
     try:
@@ -359,7 +376,10 @@ def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> 
     committing. [E4, review]
 
     Write ordering makes "segment on disk, manifest not written" the only crash
-    state. Nothing used to reclaim it: the next capture resumes from the
+    state — for a process crash. Power loss can reorder the two publications,
+    because `os.fsync` on macOS does not flush the drive's own cache; see
+    `_fsync_dir`. That state is detected by `verify` rather than repaired here.
+    Nothing used to reclaim the ordinary one: the next capture resumes from the
     recorded offset, publishes a differently-named overlapping segment, and
     `verify` reports an unrecorded file on every run thereafter with no command
     that fixes it.

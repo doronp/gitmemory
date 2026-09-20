@@ -18,7 +18,18 @@ yours to do, and to undo.
 `$GITMEMORY_HOME` **must be an absolute path.** Your agent sets the hook's
 working directory to whatever project you are in, so a relative value would
 create a separate spool under every directory you visit and the watcher would
-read none of them. The shim refuses one and says so on stderr.
+read none of them. The shim refuses one and says so on stderr. It also refuses
+when `$HOME` is unset and `$GITMEMORY_HOME` is not absolute, because the
+default `$HOME/.gitmemory` would then expand to `/.gitmemory` while the watcher
+resolving the same default through the password database finds your real home —
+the two ends of the seam pointing at different directories, in silence.
+
+Both refusals exit 0 and write to stderr, and **whether you ever see them is
+your agent's decision**, not this shim's: some agents discard hook stderr
+entirely. If you have installed the hook and no records are appearing, run it
+by hand — `echo '{}' | ./gitmemory-hook.sh PreCompact` — where you can see what
+it says. Either way the watcher's sweep still captures the session; a refused
+hook costs latency, not bytes.
 
 For Claude Code, in `~/.claude/settings.json` — each event key takes an array of
 matcher groups, and the event name is passed in `args`, because Claude Code

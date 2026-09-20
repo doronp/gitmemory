@@ -676,7 +676,16 @@ def run(
         # a retry on the next poll instead of process death. Still once per
         # *successful* start, so the steady state is the zero-subprocess idle
         # pass it was before. [E4, review: concurrency 7]
-        if not started:
+        # `or not exists(.git)`: the flag alone made the repository a start-up
+        # fact, and it is not one. Delete `.git` under a running watcher — a
+        # `rm -rf` aimed at the wrong path, a store restored from a backup that
+        # skipped dotfiles — and every pass from then on captured bytes
+        # correctly, failed to commit, logged the same sentence, and never tried
+        # to init again, because `started` was still True. The bytes were never
+        # at risk and `verify` stayed clean; what stopped for ever was the
+        # versioning, which is half the product. One `stat` per pass buys it
+        # back. Tested against the failure rather than the flag. [E4, review: CLI 9]
+        if not started or not os.path.exists(os.path.join(home, ".git")):
             try:
                 gitrepo.init(home)
                 started = True

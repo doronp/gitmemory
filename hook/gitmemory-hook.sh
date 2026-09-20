@@ -6,6 +6,30 @@
 # the worst a broken run can do is cost the session one immediate capture, and
 # the watcher's sweep picks it up anyway.
 umask 077
+# Every parameter is expanded with a `:-` default, so the shim survives being
+# run under `set -u`. It does not set `-u` itself, but `SHELLOPTS=nounset` is
+# exported into the environment by some setups and `/bin/sh` here is bash, which
+# honours it: measured, the shim died on line 27 with `$1: unbound variable`,
+# printing that into the agent's stderr and losing the doorbell. [E4, review]
+#
+# `$HOME` is the one that cannot be defaulted, because a wrong guess is a spool
+# the watcher does not read. With `HOME` unset the default expands to
+# `/.gitmemory`, which is absolute — so it passes the check below — and then
+# fails to `mkdir` and exits 0 in silence. The watcher meanwhile resolves the
+# same default through `expanduser`, which falls back to the password database
+# and finds the real home, so the two disagree about where the seam is. Refused
+# out loud instead, on the project's own rule that loud and degraded beats
+# silent and degraded. An absolute `GITMEMORY_HOME` needs no `HOME` at all and
+# is not refused. [E4, review]
+case "${GITMEMORY_HOME:-}" in
+    /*) ;;
+    *)
+        if [ -z "${HOME:-}" ]; then
+            echo "gitmemory: HOME unset and GITMEMORY_HOME is not absolute" >&2
+            exit 0
+        fi
+        ;;
+esac
 H="${GITMEMORY_HOME:-$HOME/.gitmemory}"
 case "$H" in
     \~/*) H="$HOME/${H#\~/}" ;;
@@ -24,7 +48,7 @@ case "$H" in
         ;;
 esac
 E="unknown"
-if [ "$1" = "PreCompact" ] || [ "$1" = "SessionEnd" ] || [ "$1" = "Stop" ]; then
+if [ "${1:-}" = "PreCompact" ] || [ "${1:-}" = "SessionEnd" ] || [ "${1:-}" = "Stop" ]; then
     E="$1"
 fi
 # `[ -d ]` first: `mkdir` is an external command and costs about as much as the
@@ -48,7 +72,13 @@ T="$H/spool/.tmp-$P-$N"
 # And `set -C` for the window between that test and this write, which is a race
 # rather than a state and so is the one guard here with no test. [E4, review: F2]
 set -C
-if ! cat > "$T" 2>/dev/null; then
+# `2>/dev/null` *before* `> "$T"`, not after. Redirections are applied left to
+# right, so with the old order the shell reported a refused open — which is what
+# `set -C` exists to cause — on a stderr it had not yet silenced, and
+# `cannot overwrite existing file` landed in the agent's output. The branch
+# below then ran and cleaned up correctly, so the only symptom was the noise,
+# which is the whole thing this shim promises not to make. [E4, review]
+if ! cat 2>/dev/null > "$T"; then
     set +C
     rm -f "$T" 2>/dev/null
     exit 0

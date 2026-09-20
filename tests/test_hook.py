@@ -467,3 +467,89 @@ def test_a_symlink_planted_at_the_record_name_is_not_written_through(clean_env):
     assert (spool / f"{p.pid}-PreCompact.json").is_symlink(), "the shim clobbered a link"
     written = [f for f in spool.glob("*.json") if not f.is_symlink()]
     assert [f.read_bytes() for f in written] == [b"the payload"]
+
+
+def test_the_shim_survives_being_run_under_nounset(clean_env):
+    """`SHELLOPTS=nounset` in the environment, and no `argv[1]`.
+
+    The shim does not set `-u` itself, so this looked like someone else's
+    problem. It is not: `SHELLOPTS` is exported by some setups, `/bin/sh` here
+    is bash, and bash honours it in a script it starts. Measured before the fix,
+    the shim died on `[ "$1" = "PreCompact" ]` with `$1: unbound variable`,
+    which is both halves of the failure — the doorbell is lost *and* the noise
+    lands in the agent's stderr, from a shim whose entire contract is to do
+    neither. Every expansion now carries a `:-` default. [E4, review]
+    """
+    env, home = clean_env
+    env["SHELLOPTS"] = "nounset"
+
+    res = subprocess.run(run_shim_cmd(), env=env, input=b"no argv", capture_output=True)
+
+    assert res.returncode == 0, res.stderr.decode()
+    assert res.stderr == b"", res.stderr.decode()
+    (record,) = (home / "spool").glob("*.json")
+    assert record.read_bytes() == b"no argv"
+    # Unnamed events are `unknown`, not a crash and not a guess.
+    assert daemon._event_of(record.name) == "unknown"
+
+
+def test_with_no_home_and_no_absolute_override_the_shim_refuses_out_loud(tmp_path):
+    """`HOME` unset is a disagreement between the two ends of the seam.
+
+    The default is `$HOME/.gitmemory`, so with `HOME` unset it expands to
+    `/.gitmemory` — absolute, so the existing refusal waves it through — and
+    then fails to `mkdir` and exits 0 saying nothing. The watcher resolving the
+    same default goes through `expanduser`, which falls back to the password
+    database and finds the real home. So the hook writes nowhere, the watcher
+    reads somewhere else, and neither says a word about it.
+
+    Refused with a message instead, on this project's own rule that loud and
+    degraded beats silent and degraded. An absolute `GITMEMORY_HOME` does not
+    need `HOME` at all and is unaffected — asserted below, because a refusal
+    that fires too widely would break the one configuration that is fine.
+    [E4, review]
+    """
+    env = {k: v for k, v in os.environ.items() if k not in ("HOME", "GITMEMORY_HOME")}
+
+    res = subprocess.run(run_shim_cmd() + ["PreCompact"], env=env, input=b"x", capture_output=True)
+
+    assert res.returncode == 0
+    assert b"HOME unset" in res.stderr
+    assert not Path("/.gitmemory").exists(), "the shim wrote to the filesystem root"
+
+    env["GITMEMORY_HOME"] = str(tmp_path / "store")
+    ok = subprocess.run(run_shim_cmd() + ["PreCompact"], env=env, input=b"y", capture_output=True)
+    assert ok.returncode == 0, ok.stderr.decode()
+    assert ok.stderr == b"", "an absolute home needs no HOME and must not be refused"
+    (record,) = (tmp_path / "store" / "spool").glob("*.json")
+    assert record.read_bytes() == b"y"
+
+
+def test_a_refused_write_is_silent(clean_env):
+    """A failed `cat >` must not put the shell's own error in the agent's output.
+
+    Redirections apply left to right, so `cat > "$T" 2>/dev/null` silences a
+    stderr the shell has already used: it reports the refused open first, on the
+    original stderr, and only then swaps it for `/dev/null`. The failure branch
+    always handled the failure correctly — `rm -f`, exit 0 — so the sole symptom
+    was a line of noise, which is the one thing this shim promises not to emit.
+
+    Forced with a read-only spool rather than with `set -C`: noclobber only
+    fires in the window between the `[ -e ]` test and the write, which is a race
+    no test can hold open. `EACCES` takes the same branch through the same
+    redirect and is deterministic. [E4, review]
+    """
+    env, home = clean_env
+    spool = home / "spool"
+    spool.mkdir(parents=True)
+    os.chmod(spool, 0o500)
+    try:
+        res = subprocess.run(
+            run_shim_cmd() + ["PreCompact"], env=env, input=b"x", capture_output=True
+        )
+    finally:
+        os.chmod(spool, 0o700)
+
+    assert res.returncode == 0
+    assert res.stderr == b"", res.stderr.decode()
+    assert list(spool.iterdir()) == [], "a refused write left something behind"
