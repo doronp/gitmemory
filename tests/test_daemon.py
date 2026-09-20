@@ -1145,11 +1145,6 @@ def test_a_git_that_is_briefly_unavailable_is_retried_rather_than_fatal(tmp_path
     assert [line for line in lines if "git init" in line], lines
 
 
-def _committed(lines: list[str]) -> bool:
-    """Did a pass log a real commit? `run` prints `commit=<sha>`, or `commit=None`."""
-    return any("commit=" in line and "commit=None" not in line for line in lines)
-
-
 def test_a_repository_deleted_under_a_running_watcher_comes_back(tmp_path, monkeypatch):
     """`.git` is not a start-up fact, and treating it as one stopped versioning.
 
@@ -1174,26 +1169,39 @@ def test_a_repository_deleted_under_a_running_watcher_comes_back(tmp_path, monke
     _write(src, TURN)
     _config(home, [root], git=False)
 
-    # Keyed on the repository existing, not on a sleep count. `run` sleeps in two
-    # places — the end of a pass, and the retry after `gitrepo.init` fails — and
-    # counting made the second one look like the first: a single transient init
-    # failure (the `.git/config` lock collision this loop is built to survive)
-    # fired the deletion before there was anything to delete, and the test died
-    # on `FileNotFoundError`. It failed exactly once in fourteen full-suite runs
-    # and never in isolation; the cause was confirmed by simulating one failing
-    # `init` rather than by waiting for it again. [E4, review: CLI 9]
+    # `run` is not the only caller of `time.sleep` in this process, and patching
+    # the module attribute cannot tell them apart. `subprocess.Popen._wait`
+    # busy-polls a child with `time.sleep(delay)` whenever a timeout is set, and
+    # `gitrepo._git` always sets one — so every `git` invocation slow enough to
+    # need a second look was arriving here as a pass boundary. That fired the
+    # deletion in the middle of `gitrepo.init`, between two of its `git config`
+    # calls, and the next one died with `fatal: not in a git directory`; it also
+    # burned a pass, so `run` hit the `KeyboardInterrupt` one commit early.
+    # Roughly one run in twenty, and two wrong theories — an init lock
+    # collision, then the `interval` gate — before the probe printed the caller:
+    # `subprocess.py:2079 _wait delay=0.001`. So discriminate on the duration.
+    # `run` sleeps `poll` and nothing else; `_wait` sleeps a doubling sequence
+    # from 0.0005 and never zero. Anything that is not `poll` belongs to
+    # somebody else and is passed through to the real sleep, which is what that
+    # caller is owed. [E4, review: CLI 9]
+    real_sleep = time.sleep
     passes: list[int] = []
     deleted: list[int] = []
 
-    def sleep(_seconds):
+    def sleep(seconds):
+        if seconds != 0:  # not `run`'s `poll=0`
+            return real_sleep(seconds)
         passes.append(1)
         assert len(passes) < 10, "run never reached a pass that could commit"
         if not deleted:
+            # `isdir` as well: `run` sleeps in two places, the end of a pass and
+            # the retry after `init` fails, and deleting what a failed init left
+            # behind would raise here instead of testing anything.
             if os.path.isdir(os.path.join(home, ".git")):
                 shutil.rmtree(os.path.join(home, ".git"))
                 _write(src, TURN, append=True)
                 deleted.append(1)
-            return
+            return None
         raise KeyboardInterrupt
 
     monkeypatch.setattr(time, "sleep", sleep)
@@ -1206,3 +1214,24 @@ def test_a_repository_deleted_under_a_running_watcher_comes_back(tmp_path, monke
     committed = [line for line in lines if "commit=" in line and "commit=None" not in line]
     assert len(committed) == 2, f"both passes must commit: {lines}"
     assert store.verify(home) == []
+
+
+def test_two_names_for_one_file_are_discovered_once(tmp_path):
+    """Deduplication is by device and inode, because paths lie about identity.
+
+    The motivating case is APFS, where `~/Projects` and `~/projects` are one
+    directory and `realpath` corrects neither spelling — two watch roots, two
+    strings per file, two `session_id_for` values, and the same bytes captured
+    into two sessions that both look healthy to `verify`. It is awkward to force
+    a case collision in a test that must also run on a case-sensitive
+    filesystem, so the same condition is made with a hard link: two names, one
+    inode, and capturing it twice is duplication either way. [E4, review]
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    _write(str(root / "a.jsonl"), TURN)
+    os.link(root / "a.jsonl", root / "b.jsonl")
+
+    found = daemon.discover([daemon.Watch(agent="claude-code", roots=(str(root),))])
+
+    assert [os.path.basename(p) for _, p in found] == ["a.jsonl"], "one file, one entry"

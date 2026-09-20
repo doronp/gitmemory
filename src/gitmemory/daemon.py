@@ -416,26 +416,37 @@ def _unlink(path: str) -> None:
 
 
 def discover(watches: list[Watch]) -> list[tuple[Watch, str]]:
-    """Every transcript under every watch root, deduplicated by real path.
+    """Every transcript under every watch root, deduplicated by device and inode.
 
     `recursive=True` so `**` means what it looks like. Symlinked directories are
     not followed by `glob`, which is the conservative answer: a symlink into
     somewhere the owner did not configure is exactly the escape this module is
     careful about elsewhere.
+
+    Deduplicated by real path at first, which is the same mistake `_same_dir`
+    was written for: `realpath` resolves symlinks but does not correct case, so
+    on APFS two watch roots spelled `~/Projects` and `~/projects` are one
+    directory that yields two different strings for every file under it. Both
+    survive the set, both get a `session_id_for` of their own, and the same
+    bytes are captured twice into two sessions that each look perfectly healthy
+    to `verify`. The kernel already knows they are one file; `_file_key` asks
+    it. A path that cannot be `stat`ed is dropped, which `isfile` did anyway.
+    [E4, review: CLI minor]
     """
-    seen: set[str] = set()
+    seen: set[tuple[int, int]] = set()
     out = []
     for watch in watches:
         for root in watch.roots:
             for path in sorted(glob(os.path.join(root, watch.pattern), recursive=True)):
                 real = os.path.realpath(path)
-                if real in seen or not os.path.isfile(real):
+                key = _file_key(real)
+                if key is None or key in seen or not os.path.isfile(real):
                     continue
                 # A glob can climb out through a symlinked leaf even though it
                 # will not descend one.
                 if _covers([watch], real) is None:
                     continue
-                seen.add(real)
+                seen.add(key)
                 out.append((watch, real))
     return out
 
