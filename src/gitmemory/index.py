@@ -147,7 +147,14 @@ DEFAULT_WEIGHTS = Weights()
 
 @dataclass(frozen=True, slots=True)
 class Hit:
-    """One turn, ranked. `byte_offset` is the key every other layer agrees on."""
+    """One turn, ranked. `byte_offset` is the key every other layer agrees on.
+
+    It is an offset into the *generation* — the concatenation of its segments —
+    and not into a file, because that concatenation is what the parser read.
+    The two coincide only while a generation is still one segment. To get the
+    bytes, `store.span(stored, hit.byte_offset, hit.byte_len)`; `session_key`
+    names which `store.sessions()` entry to pass. [E3]
+    """
 
     byte_offset: int
     byte_len: int

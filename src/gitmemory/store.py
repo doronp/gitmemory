@@ -49,6 +49,7 @@ __all__ = [
     "resolve_home",
     "segment_groups",
     "sessions",
+    "span",
     "verify",
 ]
 
@@ -675,6 +676,38 @@ def segment_groups(home: str) -> list[list[str]]:
     leaves the machine is the concatenation, not any one file. [E2]
     """
     return [list(s.segments) for s in sessions(home)]
+
+
+def span(stored: Stored, offset: int, length: int) -> bytes:
+    """`length` bytes at a generation-relative `offset`, across segment cuts.
+
+    Every offset in this system — a `Turn`, a compaction boundary, a `Hit` —
+    addresses the *concatenation* of a generation, because that is what the
+    parser was handed. A segment is a copy window, not a unit of meaning.
+
+    So the resolver is this and not `(path, offset)`: no such pair exists for a
+    turn the store happened to cut in half, and a caller who seeks with one
+    reads whatever the following segment begins with — plausible bytes from the
+    wrong place, which is the failure this whole layer is built to prevent. [E3]
+
+    Sizes come from the files rather than the manifest on purpose: a manifest is
+    untrusted data, and whether its arithmetic matches the bytes is `verify`'s
+    question, not this reader's. Segments are immutable once published — a
+    capture writes a new one — so the sizes cannot move underneath the walk.
+
+    A short generation returns short rather than raising: the caller asked what
+    is there.
+    """
+    out = bytearray()
+    pos = 0  # where the current segment starts within the generation
+    for seg in stored.segments:
+        size = os.path.getsize(seg)
+        if pos + size > offset and len(out) < length:
+            with open(seg, "rb") as fh:
+                fh.seek(max(0, offset - pos))
+                out += fh.read(length - len(out))
+        pos += size
+    return bytes(out)
 
 
 def verify(home: str | None = None) -> list[str]:

@@ -96,6 +96,34 @@ def seek(src: str, hit) -> bytes:
         return fh.read(hit.byte_len)
 
 
+def test_a_hit_in_a_multi_segment_generation_resolves_across_the_cut(home, src):
+    """A hit's offset addresses the generation, not a file.
+
+    Every other offset test in this file has one segment, where the two are the
+    same number and a file seek happens to work. Two captures make them differ,
+    and the wrong reading is not an error — it returns the wrong turn's bytes,
+    confidently. `store.span` is the only resolver for the same reason there is
+    no `(path, offset)` form of it: a turn can straddle the cut. [E3]
+    """
+    write(src, [user("u1", "the first aardvark")])
+    store.capture(src, "claude-code", "sess", home=home)
+    write(src, [user("u2", "the peculiar marmoset")])
+    store.capture(src, "claude-code", "sess", home=home)
+    index.build(home)
+    db = index.open_db(index.db_path(home))
+    hit = index.search(db, "marmoset")[0]
+    db.close()
+
+    stored = next(s for s in store.sessions(home) if s.key == hit.session_key)
+    assert len(stored.segments) == 2, "the fixture has to actually span a cut"
+    assert (
+        store.span(stored, hit.byte_offset, hit.byte_len) == Path(src).read_bytes().split(b"\n")[1]
+    )
+    with open(stored.segments[0], "rb") as fh:  # what a (path, offset) resolver would do
+        fh.seek(hit.byte_offset)
+        assert fh.read(hit.byte_len) != store.span(stored, hit.byte_offset, hit.byte_len)
+
+
 def test_the_offset_a_hit_carries_is_where_the_turn_starts(home, src):
     """The whole system agrees on byte offsets. If seeking there lands on the
     wrong line, every other layer — bench, dashboard, recall — is lying.

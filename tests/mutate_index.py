@@ -361,6 +361,13 @@ MUTANTS = [
         "                pos, byte_pos = end, byte_pos + (end - pos)",
         "test_multibyte_before_a_second_object_on_the_same_line",
     ),
+    (
+        "span seeks with the generation offset inside a segment",
+        "store.py",
+        "                fh.seek(max(0, offset - pos))",
+        "                fh.seek(offset)",
+        "test_a_hit_in_a_multi_segment_generation_resolves_across_the_cut",
+    ),
 ]
 
 

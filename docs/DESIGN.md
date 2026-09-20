@@ -365,6 +365,35 @@ The index carries **no dependency**: FTS5 ships with CPython. The `hybrid` extra
 *against* BM25 — a dependency each of them has to earn on the benchmark, not one the index
 takes on faith.
 
+**Four things the implementation settled that this section did not say [E3]:**
+
+- **A hit is scored per block, returned per turn**, and the partition is
+  `(turn_id, agent, session_id)` with `ORDER BY score, generation DESC, block_seq`. Each half of
+  that is load-bearing. `MIN()` with bare columns does pick the winning row but does not say
+  *which* winning row on a tie, so the representative followed insert order and the same content
+  indexed differently answered differently. Partitioning on `turn_id` alone collapsed a turn in
+  session A with a verbatim-identical turn in session B and silently under-delivered `k` —
+  `turn_id` is derived over the record's `sessionId`, which §2.2 records as reused across a fork.
+  Generations of *one* session do collapse, newest first, because a pruner rewrite copies a turn
+  forward unchanged and returning it per generation spends the budget on one text.
+- **`Hit.byte_offset` addresses the generation, not a file.** The parser is handed the
+  concatenation of a generation's segments, so that is what every offset in the system means.
+  `store.span(stored, offset, length)` is the resolver, and deliberately *not* a
+  `(path, offset)` pair: no such pair exists for a turn the store cut in half, and seeking with
+  one returns whatever the next segment begins with — plausible bytes from the wrong place.
+  While a generation is still one segment the two coincide, which is why every single-segment
+  test passes either way.
+- **`_PATH` is bounded per component, not just possessive.** The `paths` column is fed from
+  `native["input"]` — a tool call the *model* wrote — so the regex runs on attacker-choosable
+  text. A possessive `+` stops backtracking *within* a component; what caps the work per start
+  position is the explicit `{1,255}` bound. Unbounded, a long run of path characters is a
+  quadratic scan on the index path.
+- **The derived copy is sanitised; raw is not.** `jsonl` decodes with `surrogateescape` and
+  `records` hashes with `surrogatepass`, so a transcript that caught a binary `cat` keeps those
+  bytes exactly. sqlite3 encodes strict UTF-8 and raised from inside the row loop, so one bad
+  byte cost the whole store its index. `_encodable` replaces on the way *into* the index only —
+  the loss is in the derived copy, and raw, which is what the offsets point at, still has it.
+
 ### 2.8 Recall surface
 
 `gitmemory recall "<query>"` (CLI) · MCP server · an **optional, off-by-default**
