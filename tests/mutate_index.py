@@ -1596,27 +1596,97 @@ MUTANTS = [
         # dev fixture notices.
         "a stop-listed noun is a whole word",
         "derive.py",
+        # `(?:)` rather than deleting the group: dropping `(?![\w-]` leaves an
+        # unbalanced paren, the module stops importing, and the whole suite goes
+        # red at collection — which the harness used to score as a clean CAUGHT
+        # with perfect attribution. A mutant has to be a program. [E5]
         r'''    r"(?![\w-]))[\w-]+\b"''',
-        r'''    r"))[\w-]+\b"''',
+        r'''    r"(?:))[\w-]+\b"''',
         "test_a_compound_noun_is_still_a_prohibition",
+    ),
+    # --- the graph emitter ---------------------------------------------------
+    (
+        "a decision naming a block from elsewhere becomes a blank node",
+        "graph.py",
+        "            if d.source_ref not in text_of:",
+        "            if False:",
+        "test_a_decision_naming_a_block_from_somewhere_else_is_an_error",
+    ),
+    (
+        "a replayed turn is drawn as two decisions",
+        "graph.py",
+        "            nodes.setdefault(",
+        "            nodes.__setitem__(",
+        "test_the_same_block_replayed_into_a_second_transcript_is_one_node",
+    ),
+    (
+        "the emission depends on the order the store was walked",
+        "graph.py",
+        '        "nodes": [nodes[i] for i in sorted(nodes)],',
+        '        "nodes": list(nodes.values()),',
+        "test_emission_does_not_depend_on_the_order_the_store_was_walked",
+    ),
+    (
+        "a decision repeated back to back draws an edge to itself",
+        "graph.py",
+        "            if a.source_ref != b.source_ref:",
+        "            if True:",
+        "test_a_decision_is_never_joined_to_itself",
+    ),
+    (
+        "a label is cut mid-word instead of on a space",
+        "graph.py",
+        '    cut = flat.rfind(" ", 0, LABEL_CHARS)',
+        "    cut = -1",
+        "test_a_label_is_one_line_and_ends_on_a_word",
     ),
 ]
 
 
-def run(args: list[str]) -> bool:
-    """True when pytest is green.
+def run(args: list[str]) -> int:
+    """pytest's exit code. 0 green, 1 tests failed, >=2 it never got that far.
 
     `tests bench` explicitly, not pytest's configured `testpaths`: naming them
     here keeps the harness honest about what it ran even if `testpaths` changes
     under it. The corpus test is deselected by `addopts`, so this is the offline
     suite and it takes about a second. [E3]
+
+    The exit code, not a green/red boolean, because the difference between 1 and
+    2 is the difference between a mutant that was caught and one that was never
+    run. See `BROKEN` in `main`. [E5]
     """
-    return (
-        subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "tests", "bench", *args], cwd=ROOT
-        ).returncode
-        == 0
-    )
+    return subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "tests", "bench", *args], cwd=ROOT
+    ).returncode
+
+
+def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
+    """What two pytest exit codes mean: `(caught, tag, note)`.
+
+    Split out of the loop so it can be tested without spawning pytest twice per
+    case — the harness is the thing every other negative control in this repo
+    leans on, and a scoring bug here quietly converts the whole mutation record
+    into decoration. [E5]
+    """
+    if suite == 0:
+        return False, "SURVIVED", ""
+    if suite > 1:
+        # pytest exits 2 when collection fails, and a mutant that stops the
+        # module importing takes the whole suite down with it — including the
+        # intended test, which then "fails" and is credited with having caught
+        # something. That is attribution on no evidence: the mutant was never
+        # run. Deleting a group out of a regex is the usual way in. Rewrite the
+        # row so that the mutant is a program.
+        return False, "BROKEN", f": the mutant does not import (pytest exit {suite})"
+    if intended == 5:
+        # pytest's "no tests ran". The row names a test that does not exist —
+        # renamed, deleted, or mistyped — and the old green/red boolean read
+        # that as green and called the mutant MISSED, which sends you looking
+        # at the behaviour instead of at the row.
+        return False, "NO TEST", f": nothing matches -k {test}"
+    if intended == 0:
+        return False, "MISSED", f": caught, but not by {test}"
+    return True, "CAUGHT", f"  <- {test}"
 
 
 def main() -> int:
@@ -1647,14 +1717,10 @@ def main() -> int:
             intended = run(["-q", "-k", test])
         finally:
             path.write_text(original)
-        if suite:
-            print(f"SURVIVED  {name}")
+        caught, tag, note = verdict(suite, intended, test)
+        print(f"{tag:<9} {name}{note}")
+        if not caught:
             bad.append(name)
-        elif intended:
-            print(f"MISSED    {name}: caught, but not by {test}")
-            bad.append(name)
-        else:
-            print(f"CAUGHT    {name}  <- {test}")
     print(f"\n{len(selected) - len(bad)}/{len(selected)} caught by their intended test")
     return 1 if bad else 0
 

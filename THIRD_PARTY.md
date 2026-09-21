@@ -81,16 +81,25 @@ depends on something, and `src/gitmemory/derive.py` now does.
 |---|---|---|---|
 | `sumy` | 0.13.0 | Apache-2.0 | LexRank over prose blocks (`derive.ideas`) |
 | `numpy` | ≥2.0 | BSD-3-Clause | LexRank's matrix; sumy does not declare it |
+| `graphifyy` | 0.9.65 | Apache-2.0 | the decision graph (`graph.build` → `build_from_json`) |
 
 `sumy`'s default tokenizer downloads an `nltk` `punkt` model on first use.
 gitmemory never reaches it: `derive._Tok` supplies the two methods sumy's
 `Sentence` actually calls, so the derivation path stays offline. That is a
 property, not an accident — see `docs/tasks/E5-dependency-verification.md`.
 
-`graphifyy` 0.9.65 (Apache-2.0 by `License-Expression` in the wheel; PyPI's
-JSON licence field is empty, which is a packaging gap and not a licence gap)
-is declared in the `derive` extra and gets its row here when the decision graph
-clears its gate and the first line of code imports it.
+`graphifyy`'s licence is Apache-2.0 by `License-Expression` in the wheel. **PyPI's
+JSON licence field is empty**, which is a packaging gap rather than a licence
+gap, and is one of the things to report upstream at RC1: a downstream tool that
+reads licences from the index rather than the wheel sees no licence at all.
+
+The division of labour is deliberate and is recorded in DESIGN.md §"The graph
+layer is graphify, not ours": graphify gets a nodes/edges dict and supplies the
+graph, the community detection and the rendering; gitmemory decides what a
+decision *is*, which is the part that can be wrong, and keeps the gate on it.
+`tests/test_graph.py` asserts our emitted dict against graphify's own
+`validate_extraction` rather than against our reading of its schema, so an
+upgrade that moves a required field fails a test instead of a diagram.
 
 ## Not taken
 
