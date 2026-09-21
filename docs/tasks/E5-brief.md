@@ -114,6 +114,17 @@ end, and the number that goes in the README is that one. An extractor iterated
 against the set that grades it has measured its author's persistence, not its own
 precision. If `test` comes in far below `dev`, that gap gets published too.
 
+**Interpretation note, added after round 1 of the corpus build, before any
+extractor existed and before any score was taken.** The corpus as delivered makes
+`dev` and `test` disjoint in their *templates* as well as their seeds and filler
+vocabularies. That is more than this paragraph asked for, and it changes what the
+`test` number means: it measures generalisation to unseen sentence forms, not
+only to unseen fillers. It is kept, because it can only make the bar harder — but
+it is written down here rather than in the results, because a dev/test gap under
+disjoint templates does not read the same as one under shared templates, and
+deciding which of those we measured after seeing the gap is the thing this brief
+exists to prevent.
+
 **The corpus is synthetic or public. It is never the owner's transcripts.** The
 secondary set of 30 "real-shaped" sessions in §2.6 means *authored to look like
 real sessions*, not *taken from real sessions*. `tests/test_no_owner_data.py`
@@ -154,3 +165,41 @@ refuses to run without it and the old table did not say so.
    so the extractor is born inside the constraint rather than fitted to it.
 4. Extractor and corpus, in parallel and apart.
 5. Scored run. One number, published either way.
+
+## Deviation: the blind was broken at step 4, and how it is being restored
+
+Recorded when it happened, before any extractor existed and before any score was
+taken.
+
+Step 4 says the extractor's author does not see the generator's source or plant
+records until the first scored run. The corpus was delivered needing review, and
+reviewing it meant reading all 732 lines of the generator — its templates, its
+filler vocabularies, its plant probabilities and its plant records. The reviewer
+and the extractor's author are the same author. So at the moment the review
+finished, the blind this brief spent a section justifying was gone.
+
+Two things it is worth being exact about, because the honest version of this is
+narrower than "the blind is broken, the number is worthless":
+
+- Exposure to the generator's **structure** was never blind and was never meant
+  to be. The distractor families were enumerated in the corpus brief, by the same
+  author, as pre-registration. That is the design.
+- Exposure to the generator's **surface** — the literal templates and fillers the
+  extractor would be graded against — is new, is not the design, and is the part
+  that would let an extractor be fitted to strings rather than to structure.
+
+So, restoration, both parts required before the scored run:
+
+1. **Fresh surface.** Round 3 regenerates all four template sets and both filler
+   vocabularies. The forms the reviewer read do not appear in the graded corpus.
+2. **Fresh author.** The extractor is written by an agent that has not read
+   `bench/`. It may run the generator and look at the sessions it emits — that is
+   the `dev` split doing its job — but not the source that produced them. The
+   reviewer reviews its lines, which is the direction of information the blind
+   permits.
+
+What no procedure recovers: the reviewer knows, and can no longer unknow, that
+`usage` leaked and that no gold reversal followed a tool failure. Both are being
+fixed, so neither is exploitable — but "I know which two bugs were fixed" is a
+form of knowledge the original design did not grant, and it is on the record here
+rather than absent from it.
