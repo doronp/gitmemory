@@ -92,3 +92,85 @@ No sentence, phrase, template or word of the held-out split was disclosed, and
 they were told not to try to infer any. **Run 2 will be scored on a freshly
 generated split at a seed they have never been scored on**, because seed 20042
 has now informed a revision and is spent.
+
+---
+
+## Run 2 — PASSED
+
+A freshly generated held-out split (`--split test --seed 31337`, 100 sessions,
+346 gold), dumped and smoke-checked against a perfect and an empty extractor
+*before* the revised extractor was run against it.
+
+| | precision | recall | matched | predicted | gold |
+|---|---|---|---|---|---|
+| **held-out (fresh split)** | **1.0000** | **1.0000** | 346 | 346 | 346 |
+| directives | 1.0000 | 1.0000 | 169 | 169 | 169 |
+| post-failure reversals | 1.0000 | 1.0000 | 103 | 103 | 103 |
+| other reversals | 1.0000 | 1.0000 | 74 | 74 | 74 |
+
+Dev is unchanged at 1.0000 / 1.0000 — the author re-scored it after every single
+widening, and no widening ever caught a dev gold. The spent split from run 1 also
+goes to 1.0000 / 1.0000, which is what the revision was aimed at and is not
+evidence of anything by itself.
+
+**The gate is met: 1.0000 ≥ 0.85 and 1.0000 ≥ 0.60.**
+
+### What changed between the runs
+
+The guards were rewritten as classes. The one real bug: `_REPAIR` — "that's a
+typo, not a decision" — sat in the *assistant* branch, so a user correcting a
+misspelling could not be suppressed at all, and every one of run 1's false
+positives was a user block. The rest is class widening: a citation frame
+`as <subject>? <slot>* <saying-verb>` over ~45 saying verbs in place of two
+out-of-sync verb lists, an adverb slot inside the frames, the polite and
+imperative variants of the same speech act, a perfect-tense branch separating
+"we have never used pickle" (a memory) from "we never use pickle" (a rule), and
+a whole-word requirement in the prohibition stop list that had been deleting
+"no time-based tests" because "no time" is a formula.
+
+Two candidate members were added and then removed for costing recall rather than
+buying precision, which is the right direction to fail in.
+
+## What a 1.0000 here does and does not mean
+
+It means the extractor covers this generator's templates, in both of the
+vocabularies the generator draws from, with nothing fitted to either — the
+author never saw the held-out pool and their tests contain no string from the
+dev dump.
+
+It does not mean the extractor reads English. To put a number on the difference,
+the reviewer wrote a **third-vocabulary probe**: 37 hand-labelled sentences in
+phrasings taken from neither pool, written without reading the author's own probe
+or tests, and deliberately stocked with shapes chosen to fail. Scored against the
+same code that just went 346/346:
+
+| group | |
+|---|---|
+| directives | 5/6 |
+| reversals | 5/5 |
+| guard: restatement | 1/5 |
+| guard: deliberation | 1/3 |
+| guard: retrospective | 0/2 |
+| guard: opinion | 3/3 |
+| guard: repair | 2/2 |
+| one-sided prose (must stay silent) | 6/6 |
+| **class generalisation** | **23/32** |
+| declared ceilings | 2/5 |
+
+Seven of the nine class misses are false positives from guards — the same
+failure mode as run 1, in a vocabulary a third head produced. Two are
+structural rather than lexical and worth naming:
+
+- `_BACKREF` is anchored with `.match()`, on the reasoning that a discourse
+  connective lives at the start of the sentence. "You already have this one, but
+  repeating for safety: …" puts the frame after an introductory clause and
+  escapes the guard entirely.
+- `_OPINION` allows an adverb between the auxiliary and the verb ("don't *really*
+  think") but not between the subject and the auxiliary. "I *genuinely* don't
+  know which fits here" therefore reads as a prohibition, on the strength of the
+  word "don't".
+
+So the honest reading of this epoch: **the pre-registered gate passed on a blind
+split, and the corpus is two samples of English rather than English.** The
+secondary set named in `docs/DESIGN.md` — hand-labelled real-shaped sessions —
+is still owed, and nothing in this file substitutes for it.

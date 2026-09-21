@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from gitmemory import derive, gitrepo, index, store
+from gitmemory import derive, gitrepo, index, records, store
 from gitmemory.__main__ import main
 
 # Distinct vocabularies, so LexRank has something to rank and a test can tell
@@ -949,3 +949,453 @@ def test_two_sentences_sharing_no_vocabulary_rank_nothing_and_warn_about_nothing
     assert [str(w.message) for w in caught] == [], "the warning still escapes"
     assert payload["sentences_ranked"] == 2, "the fixture never reached the summariser"
     assert payload["ideas"] == [], "NaN-ranked selections were written as ideas"
+
+
+# --------------------------------------------------------------------------- #
+# decisions
+#
+# Every fixture below is hand-written. None of it is copied out of
+# `bench/fixture-dev`: a test whose input came from the corpus the extractor was
+# tuned against tests the tuning, and would go green on an extractor that had
+# memorised a hundred templates and understood nothing.
+# --------------------------------------------------------------------------- #
+
+
+def parsed(home, src, lines):
+    """The `Session` for a hand-written transcript."""
+    return index.parse_generation(stored(home, src, lines))
+
+
+def labelled(session) -> list[tuple[str, str]]:
+    """Each decision as `(kind, the text it was read out of)`.
+
+    Resolving the id back to text is the point: a test that asserted only on
+    `kind` would pass for an extractor that found the right number of decisions
+    in the wrong blocks.
+    """
+    by_id = {b.block_id: b.text for t in session.turns for b in t.blocks}
+    return [(d.kind, by_id[d.source_ref]) for d in derive.decisions(session)]
+
+
+def test_a_user_constraint_is_a_directive(home, src):
+    """The first of the two labels. A standing rule the user imposes on the work
+    — both halves named, what to do and what not to do — is the thing a decision
+    record exists to carry forward into the next session.
+    """
+    rule = "Keep every timestamp in UTC; no local time anywhere in the tree."
+    session = parsed(home, src, [user("u1", rule)])
+    assert labelled(session) == [("directive", rule)]
+
+
+def test_an_assistant_changing_course_is_a_reversal(home, src):
+    """The second label, and the one that decays fastest out of context: six
+    turns later the transcript still contains the abandoned approach, and a
+    reader who does not know it was dropped will reintroduce it.
+    """
+    turn = "I'll replace the polling loop with an inotify watch."
+    session = parsed(
+        home, src, [user("u1", "Why is the watcher so slow?"), assistant("a1", [text(turn)])]
+    )
+    assert labelled(session) == [("reversal", turn)]
+
+
+def test_ordinary_conversation_yields_no_decisions(home, src):
+    """Almost every block of a real transcript is neither label. An extractor
+    that fires on plain narration produces a decision log nobody can read,
+    which is worse than an empty one because it looks complete.
+    """
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "Can you run the tests and tell me what fails?"),
+            assistant("a1", [text("The suite passes; I'll paste the diff below.")]),
+            user("u2", "Nice, that reads much better now."),
+        ],
+    )
+    assert derive.decisions(session) == []
+
+
+def test_retrying_a_failed_command_is_not_a_reversal(home, src):
+    """Repeating something is not abandoning it, and the post-failure turn is
+    where that confusion is most expensive: every failure in a transcript is
+    followed by an assistant turn, so an extractor that reads "the command
+    failed, running it again" as a course change reports one reversal per
+    failure and its precision collapses on exactly the slice the gate watches.
+    """
+    lines = [
+        user("u1", "Run the migration."),
+        assistant(
+            "a1",
+            [
+                text("Running the migration now."),
+                {"type": "tool_use", "id": "t1", "name": "Bash", "input": {"command": "migrate"}},
+            ],
+        ),
+        {
+            "type": "user",
+            "uuid": "u2",
+            "sessionId": "s1",
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "t1",
+                        "content": "connection refused; Exit code 1",
+                    }
+                ],
+            },
+        },
+        assistant("a2", [text("That failed because the daemon was down. Let me run it again.")]),
+    ]
+    assert derive.decisions(parsed(home, src, lines)) == []
+
+
+def test_an_empty_session_has_no_decisions(home, src):
+    """A transcript with nothing in it is the shape a fresh capture has, and the
+    daemon derives on every capture — so this runs on the happy path before the
+    user has typed anything.
+
+    Deliberately asked *after* a session that does have decisions in it: an
+    accumulator that outlives the call answers the empty session with the
+    previous one's nodes, and a test that only ever saw the empty case would
+    read that as correct.
+    """
+    populated = parsed(home, src, [user("u1", "Use the vendored parser, never the system one.")])
+    assert len(derive.decisions(populated)) == 1
+    assert derive.decisions(records.Session("s1", "claude-code", "/nowhere.jsonl")) == []
+
+
+def test_the_same_sentence_twice_yields_two_distinct_source_refs(home, src):
+    """A decision is an event in a transcript, not a string, and the same rule
+    restated in a later turn is a second event that has to be citable on its
+    own. De-duplicating on text would silently drop it, and the strict
+    one-to-one scorer would then mark the survivor's twin a miss.
+    """
+    rule = "Use the vendored parser, never the system one."
+    session = parsed(home, src, [user("u1", rule), user("u2", rule)])
+    out = derive.decisions(session)
+    assert [d.kind for d in out] == ["directive", "directive"]
+    assert out[0].source_ref != out[1].source_ref, "the two statements collapsed into one node"
+
+
+def test_every_decision_names_a_block_that_exists_in_the_session(home, src):
+    """The same floor the ideas path stands on: a node whose `source_ref` does
+    not resolve is an assertion this product cannot show you. Checked against
+    the real ids rather than against "looks like a hash", because a
+    sixty-four-character string is easy to produce and proves nothing.
+    """
+    lines = [
+        user("u1", "Write it to Parquet rather than CSV."),
+        assistant(
+            "a1",
+            [
+                text("I'll drop the CSV writer and use pyarrow instead."),
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "Bash",
+                    "input": {"command": "rm -rf csv/ # use parquet instead of csv"},
+                },
+            ],
+        ),
+    ]
+    session = parsed(home, src, lines)
+    real = {b.block_id for t in session.turns for b in t.blocks}
+    prose = {b.block_id for t in session.turns for b in t.blocks if b.kind == "text"}
+    out = derive.decisions(session)
+    assert len(out) == 2
+    for d in out:
+        assert d.source_ref in real, "a decision names a block that is not in the session"
+        assert d.source_ref in prose, "a decision was anchored on machine output"
+
+
+def test_decisions_come_back_in_the_order_they_occur(home, src):
+    """A decision log is read top to bottom, and the last word on a subject is
+    the one that stands. Out of order, a reversal can appear to precede the
+    approach it reverses.
+
+    Asserted on the texts, and on a sequence of labels that is not a palindrome:
+    with two directives around one reversal, reversing the list is invisible,
+    and the first version of this test was caught being exactly that by its own
+    negative control.
+    """
+    first = "Configuration comes from the environment, not from a dotfile."
+    second = "Also: never log the raw token."
+    third = "On second thought, one table beats the three I sketched."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", first),
+            assistant("a1", [text("Understood. Reading the loader now.")]),
+            user("u2", second),
+            assistant("a2", [text(third)]),
+        ],
+    )
+    assert labelled(session) == [
+        ("directive", first),
+        ("directive", second),
+        ("reversal", third),
+    ]
+
+
+def test_the_same_sentence_is_labelled_by_who_said_it(home, src):
+    """The two labels are defined by speaker, not by wording: from the user
+    "store it in Parquet instead of CSV" is a rule to obey, from the assistant
+    it is a course change already taken. Collapsing them loses the distinction
+    the per-slice breakdown is built on.
+    """
+    line = "Store it in Parquet instead of CSV."
+    session = parsed(home, src, [user("u1", line), assistant("a1", [text(line)])])
+    assert [k for k, _ in labelled(session)] == ["directive", "reversal"]
+
+
+def test_restating_an_agreed_rule_is_not_a_new_decision(home, src):
+    """A back-reference is the commonest distractor in a long session and it
+    quotes the rule verbatim, so anything keying on the rule's own words fires
+    on it. The tell is the discourse connective in front, not the rule behind.
+    """
+    session = parsed(home, src, [user("u1", "As we agreed, never touch the vendored tree.")])
+    assert derive.decisions(session) == []
+
+
+def test_weighing_two_approaches_is_not_choosing_between_them(home, src):
+    """Deliberation names both candidates in one sentence, which is the exact
+    shape of a reversal, and it is what an assistant does immediately before
+    every real decision. Reading it as the decision dates the record one turn
+    early and attributes it to a sentence that committed to nothing.
+    """
+    session = parsed(
+        home,
+        src,
+        [assistant("a1", [text("The options are a queue or a semaphore instead of the lock.")])],
+    )
+    assert derive.decisions(session) == []
+
+
+def test_narrating_an_old_switch_is_not_making_one(home, src):
+    """ "We moved off CSV last year" is a report, and it carries the substitution
+    frame in full. Without the retrospective guard the extractor mines project
+    history for decisions and files them under today's session.
+    """
+    session = parsed(
+        home,
+        src,
+        [assistant("a1", [text("Historically we replaced the CSV reader with a parser.")])],
+    )
+    assert derive.decisions(session) == []
+
+
+# --------------------------------------------------------------------------- #
+# the guards, as classes
+#
+# Each test below gives a guard several members of its class — a different
+# saying-verb, an adverb dropped into the middle of the frame, the polite form
+# of the same request — and one bare control that *is* a decision. The control
+# is load-bearing: without it a guard that suppressed everything would pass, and
+# the assertion on the whole list is what makes each suppressed line a claim
+# rather than a hope.
+#
+# The members were written before the regexes were widened to admit them. A test
+# that only fails for the one phrasing its rule was built around is a test a
+# memoriser passes, which is the failure these exist to catch.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_typo_correction_from_the_user_is_not_a_directive(home, src):
+    """A repair borrows the substitution frame whole — "I meant uv, not pip" —
+    and the user mistypes as readily as the assistant does. Guarding repairs on
+    one role leaves the other side unguarded, and the user side is where every
+    directive in the corpus is scored.
+    """
+    control = "Never commit the generated files."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "Sorry, typo — never `pip`, always `uv`."),
+            user("u2", "Correction: no raw SQL in the handlers."),
+            user("u3", "My mistake — never the system parser, always the vendored one."),
+            user("u4", "Ignore my last message, I mistyped: no local time anywhere."),
+            user("u5", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_a_citation_keeps_its_shape_when_words_are_added(home, src):
+    """A citation is a frame with open positions — "as <someone> <had already>
+    <said>" — not a fixed pair of words. Any verb of saying fills the last slot
+    and any adverb fills the middle one, so a rule keyed on the two-word form
+    reads every longer citation as a fresh instruction.
+    """
+    control = "No secrets in the repository."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "As we have already discussed, never commit secrets."),
+            user("u2", "As you flagged earlier, no raw SQL in the handlers."),
+            user("u3", "As I explicitly spelled out, avoid global mutable state."),
+            user("u4", "As they specified, only the scheduler may write to that table."),
+            user("u5", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_being_asked_to_remember_a_rule_is_not_a_new_rule(home, src):
+    """The same back-reference in its polite and imperative clothes. "Please
+    remember", "don't forget", "just a reminder" all do the job "as we agreed"
+    does, and they are commoner in a long session because the speaker is
+    exasperated by then.
+    """
+    control = "Never force-push to main."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "Please remember, no secrets in the repository."),
+            user("u2", "Don't forget: never edit the generated files."),
+            user("u3", "Just a friendly reminder: never force-push to main."),
+            user("u4", "Bear in mind that logs must never carry a token."),
+            user("u5", "For the record, we never ship on a Friday."),
+            user("u6", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_an_unsettled_comparison_is_not_a_decision(home, src):
+    """Deliberation is any verb of comparing over any preposition that takes the
+    alternatives, plus the bare disjunctions — "either ... or", "X versus Y",
+    "up in the air". The set being still open is the whole tell, and it survives
+    the choice of verb.
+    """
+    control = "Forbid raw SQL in the handlers."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "I'm still deciding whether to forbid raw SQL."),
+            user("u2", "Comparing between a queue and a lock, no strong leaning."),
+            user("u3", "Either we forbid the cache, or we allow it everywhere."),
+            user("u4", "Postgres versus SQLite; no ORM either way."),
+            user("u5", "That one is still up in the air, so do not build on it."),
+            user("u6", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_background_framing_is_not_an_instruction(home, src):
+    """A clause announced as background — "for context", "FYI", "back in 2019",
+    "since then" — reports how things were. The frame marks it, and it marks it
+    even when the tense of the clause behind is ambiguous, which is why the
+    frame is what the guard keys on.
+    """
+    control = "No CI-less merges from here on."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "For context, the old build never ran the tests."),
+            user("u2", "FYI, the previous team never wrote tests."),
+            user("u3", "Back in 2019 we had no CI whatsoever."),
+            user("u4", "Since then we never rebuilt the index."),
+            user("u5", "Early on we decided not to use an ORM."),
+            user("u6", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_a_hedged_opinion_is_still_an_opinion(home, src):
+    """ "I don't think so" imposes nothing, and neither does "I don't *really*
+    think so" or "I don't buy it". The adverb in the middle and the choice of
+    attitude verb are free; the first-person negation is the class.
+    """
+    control = "Don't add a cache here."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "I don't really think that is the right call."),
+            user("u2", "We don't necessarily want it that way."),
+            user("u3", "I don't buy the argument that it is slower."),
+            user("u4", "I don't follow why that would matter."),
+            user("u5", "I'm not convinced we should forbid the cache."),
+            user("u6", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_reporting_never_having_seen_it_is_not_forbidding_it(home, src):
+    """The sharpest pair in the file: "we have never used pickle" and "we never
+    use pickle" differ by an auxiliary, and one is a report of what happened
+    while the other is a rule about what may happen. Without the tense cue the
+    extractor turns every recollection into a prohibition.
+    """
+    control = "We never commit secrets."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "I have never seen that particular failure."),
+            user("u2", "We've never needed that option."),
+            user("u3", "I'd never used pyarrow before this week."),
+            user("u4", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_having_no_opinion_is_not_forbidding_one(home, src):
+    """ "I have no strong view" is the speaker declining to constrain anything,
+    and it is written with the same determiner as "no raw SQL". The noun after
+    it is what separates them: a view, an objection, a recollection is something
+    the speaker holds, not something the code does.
+    """
+    control = "No raw SQL in the handlers."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "I have no strong view on it."),
+            user("u2", "We have no strong feelings about that approach."),
+            user("u3", "I have no context on that decision."),
+            user("u4", "I have no memory of agreeing to that."),
+            user("u5", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_a_compound_noun_is_still_a_prohibition(home, src):
+    """The other direction, and the reason the guards are written with word
+    boundaries: "time" heads the list of nouns that make "no" a formula rather
+    than a ban, but "no time-based tests" is a ban. A stop-list matched on a
+    prefix quietly deletes a whole family of real directives, and the recall it
+    costs shows up on no dev fixture that happens to lack the compound.
+    """
+    lines = [
+        "No time-based tests in the suite.",
+        "No issue-tracker links in commit messages.",
+        "No view-model logic in the template.",
+    ]
+    session = parsed(home, src, [user(f"u{i}", t) for i, t in enumerate(lines)])
+    assert labelled(session) == [("directive", t) for t in lines]
+
+
+def test_a_decision_is_frozen_and_hashable(home, src):
+    """The scorer counts decisions in a `Counter`, so a `Decision` has to be
+    usable as a dict key; and a node whose `source_ref` can be reassigned after
+    it was read off the block is provenance in name only.
+    """
+    d = derive.Decision("directive", "deadbeef")
+    assert len({d, derive.Decision("directive", "deadbeef")}) == 1, "not usable as a scorer key"
+    with pytest.raises(AttributeError):
+        d.source_ref = "cafe"  # type: ignore[misc]

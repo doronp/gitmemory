@@ -52,7 +52,7 @@ asserted.
 
 ## Status
 
-Under construction, epoch by epoch. 852 tests, plus one gated on the
+Under construction, epoch by epoch. 874 tests, plus one gated on the
 LongMemEval download (`-m corpus`).
 
 | | | |
@@ -61,9 +61,16 @@ LongMemEval download (`-m corpus`).
 | E2 | Segment store, contiguity proof, `verify`, redaction gate | passed |
 | E3 | Index + retrieval + CLI | passed — 470 LongMemEval instances, [gate report](docs/benchmarks/E3-longmemeval.md) |
 | E4 | Hook shim + watcher + git daemon | in review |
-| E5 | Derivation and decision graph | |
+| E5 | Derivation and decision graph | extractor passed — 1.0000/1.0000 on a blind split, [gate report](docs/benchmarks/E5-decision-gate.md); graph not wired |
 | E6 | Dashboard | |
 | E7 | RC1: security review, private repo | |
+
+**Read the E5 number carefully.** 1.0000 precision and recall is the score on a
+held-out split the extractor's author could not see, and it is the gate that was
+pre-registered before anything was measured. It is *not* evidence the extractor
+reads English: a probe in a third vocabulary, written by the reviewer, scores the
+same code **23/32**. The corpus is two samples of the language, and passing on
+the second one is the weaker claim of the two. Both numbers are in the report.
 
 The discipline the test count does not show: every fix is pinned by a negative
 control — mutate the module to remove the behaviour, confirm the named test

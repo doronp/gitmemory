@@ -1361,6 +1361,245 @@ MUTANTS = [
         """            with contextlib.nullcontext():""",
         "test_prose_with_no_rankable_word_ranks_nothing_and_warns_about_nothing",
     ),
+    # ======================================================================= #
+    # E5: the decision extractor.
+    #
+    # `decisions` is the one function in the tree with its own pre-registered
+    # gate, and the gate is not a substitute for these rows: it is scored on a
+    # synthetic corpus, so an extractor can be perfect there and hold none of
+    # the properties below. Each row reverts one of them.
+    # ======================================================================= #
+    (
+        "a user constraint is read as a directive",
+        "derive.py",
+        """        if _CONTRAST.search(text) or _PROHIBIT.search(text):""",
+        """        if False:""",
+        "test_a_user_constraint_is_a_directive",
+    ),
+    (
+        "a course change is read as a reversal",
+        "derive.py",
+        """        if _SWITCH.search(text) or _CONTRAST.search(text) or _PIVOT.search(text):""",
+        """        if False:""",
+        "test_an_assistant_changing_course_is_a_reversal",
+    ),
+    (
+        # The one-sided fire, which is the whole failure mode: a transcript is
+        # mostly plans and mostly instructions, so an extractor that accepts one
+        # half of the pair labels half the session.
+        "one half of the pair is enough for a reversal",
+        "derive.py",
+        """        if _ABANDON.search(text) and (_ADOPT.search(text) or _COMMIT.search(text)):""",
+        """        if _ABANDON.search(text) or _ADOPT.search(text) or _COMMIT.search(text):""",
+        "test_ordinary_conversation_yields_no_decisions",
+    ),
+    (
+        # Retries are excluded structurally — they carry no abandonment — rather
+        # than by a rule of their own. This puts "again" in the abandonment
+        # class, which is what "repeating it is giving it up" would look like.
+        "repeating something is not abandoning it",
+        "derive.py",
+        r"""    r"|step(?:s|ped|ping)? away from|no longer [\w-]+)\b",""",
+        r"""    r"|step(?:s|ped|ping)? away from|again|no longer [\w-]+)\b",""",
+        "test_retrying_a_failed_command_is_not_a_reversal",
+    ),
+    (
+        "the decision list outlives the call that built it",
+        "derive.py",
+        """    out: list[Decision] = []
+    for turn, block in _prose(session):""",
+        """    out: list[Decision] = decisions.__dict__.setdefault("seen", [])
+    for turn, block in _prose(session):""",
+        "test_an_empty_session_has_no_decisions",
+    ),
+    (
+        "the same rule stated twice is two nodes, not one",
+        "derive.py",
+        """            out.append(Decision(kind, block.block_id))""",
+        """            if not any(d.kind == kind for d in out):
+                out.append(Decision(kind, block.block_id))""",
+        "test_the_same_sentence_twice_yields_two_distinct_source_refs",
+    ),
+    (
+        # The provenance floor. A turn id resolves to something real, which is
+        # what makes this the plausible version of getting it wrong: the node
+        # still looks traceable and no longer names the bytes it was read from.
+        "a decision names its block, not its turn",
+        "derive.py",
+        """            out.append(Decision(kind, block.block_id))""",
+        """            out.append(Decision(kind, turn.turn_id))""",
+        "test_every_decision_names_a_block_that_exists_in_the_session",
+    ),
+    (
+        "decisions come back in the order they occur",
+        "derive.py",
+        """            out.append(Decision(kind, block.block_id))
+    return out""",
+        """            out.append(Decision(kind, block.block_id))
+    return out[::-1]""",
+        "test_decisions_come_back_in_the_order_they_occur",
+    ),
+    (
+        "who said it is what decides which label it gets",
+        "derive.py",
+        """    if role == "user":
+        # A substitution frame carries both sides in one phrase;""",
+        """    if role in ("user", "assistant"):
+        # A substitution frame carries both sides in one phrase;""",
+        "test_the_same_sentence_is_labelled_by_who_said_it",
+    ),
+    (
+        "a back-reference is a restatement, not a new decision",
+        "derive.py",
+        """        _BACKREF.match(text)""",
+        """        False""",
+        "test_restating_an_agreed_rule_is_not_a_new_decision",
+    ),
+    (
+        "naming the alternatives is not picking one",
+        "derive.py",
+        """        or _DELIBERATION.search(text)""",
+        """        or False""",
+        "test_weighing_two_approaches_is_not_choosing_between_them",
+    ),
+    (
+        "a past switch is reported, not made",
+        "derive.py",
+        """        or _RETROSPECTIVE.search(text)""",
+        """        or False""",
+        "test_narrating_an_old_switch_is_not_making_one",
+    ),
+    (
+        "a decision is immutable once it is read off the block",
+        "derive.py",
+        """@dataclass(frozen=True, slots=True)""",
+        """@dataclass(slots=True)""",
+        "test_a_decision_is_frozen_and_hashable",
+    ),
+    # ======================================================================= #
+    # E5: the guards as classes.
+    #
+    # The rows above revert a rule. These revert a *widening*: each one puts a
+    # guard back to the handful of phrasings one corpus happened to contain,
+    # which is the shape the extractor failed its first held-out run in. They
+    # are the only rows in the file that can distinguish a rule from a lookup
+    # table, because the guard still fires on the corpus either way.
+    # ======================================================================= #
+    (
+        "a repair is a repair whoever typed it",
+        "derive.py",
+        """        or _REPAIR.search(text)""",
+        """        or (role == "assistant" and _REPAIR.search(text))""",
+        "test_a_typo_correction_from_the_user_is_not_a_directive",
+    ),
+    (
+        # The adverb slot. Without it the frame is a fixed two-word sequence and
+        # every citation with a word inside it reads as a fresh instruction.
+        "a citation may have words inside it",
+        "derive.py",
+        r'''    rf"as(?: (?:i|we|you|they|it))?{_MID} {_SAYING}\b"''',
+        r'''    rf"as(?: (?:i|we|you|they|it))? {_SAYING}\b"''',
+        "test_a_citation_keeps_its_shape_when_words_are_added",
+    ),
+    (
+        # The head-verb class, cut back to the five that appear in the dev dump.
+        "any verb of saying opens a citation",
+        "derive.py",
+        r"""_SAYING = (
+    r"(?:noted|noting|mentioned|mentioning|stated|stating|said|say|says|saying"
+    r"|discussed|discussing|agreed|agreeing|decided|deciding|established"
+    r"|covered|covering|explained|explaining|asked|asking|requested|requesting"
+    r"|specified|specifying|flagged|flagging|pointed out|indicated|indicating"
+    r"|emphasi[sz]ed|stressed|highlighted|underlined|described|outlined"
+    r"|set out|laid out|spelled out|spelt out|wrote|written|told you|put it"
+    r"|observed|remarked|reiterated|repeated|confirmed|clarified|warned"
+    r"|instructed|directed|insisted|required|advised|suggested|promised)"
+)""",
+        r'''_SAYING = r"(?:noted|mentioned|stated|said|discussed)"''',
+        "test_a_citation_keeps_its_shape_when_words_are_added",
+    ),
+    (
+        "asking to remember is restating",
+        "derive.py",
+        r'''    r"|(?:please |just )?(?:remember|recall|bear in mind|keep in mind)\b"
+    r"|(?:please )?(?:do ?n[o']t|never) forget\b"''',
+        r'''    r"|remember(?:,| that\b)"''',
+        "test_being_asked_to_remember_a_rule_is_not_a_new_rule",
+    ),
+    (
+        "any verb of comparing leaves the set open",
+        "derive.py",
+        r'''    r"|(?:choos|select|pick|decid|deliberat|debat|compar|evaluat|assess|mull"
+    r"|agonis|agoniz|wonder|think)\w* (?:\w+ )?(?:between|among|amongst|over"
+    r"|about whether|whether)"''',
+        r'''    r"|(?:choos|decid|pick|deliberat)ing between"''',
+        "test_an_unsettled_comparison_is_not_a_decision",
+    ),
+    (
+        "a disjunction is two candidates, not a choice",
+        "derive.py",
+        r"""    r"|\beither\b[^.;:!?]{1,60}\bor\b",""",
+        r"""    r"",""",
+        "test_an_unsettled_comparison_is_not_a_decision",
+    ),
+    (
+        # The frame, not the tense: "FYI" and "for context" announce a report
+        # whatever the clause behind them looks like.
+        "background is announced by its framing",
+        "derive.py",
+        r"""    r"|for (?:context|background|history)|as (?:context|background)"
+    r"|fyi|fwiw|just so you know|for what it'?s worth)\b",""",
+        r"""    r")\b",""",
+        "test_background_framing_is_not_an_instruction",
+    ),
+    (
+        "an opinion may be hedged",
+        "derive.py",
+        r'''    rf" (?:(?:\w+ly|quite|even|much|all that|so|too|just) )?{_MIND}\b"''',
+        r'''    rf" {_MIND}\b"''',
+        "test_a_hedged_opinion_is_still_an_opinion",
+    ),
+    (
+        "any verb of believing reports rather than orders",
+        "derive.py",
+        r"""_MIND = (
+    r"(?:think|believe|know|knew|see|saw|feel|felt|care|mind|want|wanted|wish"
+    r"|remember|recall|follow|understand|get|got|buy|tell|reckon|suppose|guess"
+    r"|imagine|expect|agree|worry|bother|notice|reproduce|repro|like|love|hate"
+    r"|trust|doubt|fancy|mean|intend|fully (?:get|follow)|quite (?:see|follow))"
+)""",
+        r'''_MIND = r"(?:think|believe|know|see|feel|care|mind|want|remember|get)"''',
+        "test_a_hedged_opinion_is_still_an_opinion",
+    ),
+    (
+        # The one-auxiliary difference between "we have never used it" and "we
+        # never use it", which is the difference between a memory and a rule.
+        "the perfect reports, the present orders",
+        "derive.py",
+        r'''    r"|\b(?:i|we)(?:'?ve| have|'?d| had) never\b"''',
+        r'''    r""''',
+        "test_reporting_never_having_seen_it_is_not_forbidding_it",
+    ),
+    (
+        "an attitude is held, not forbidden",
+        "derive.py",
+        r"""    r"|\b(?:i|we)(?:'?ve| have| had|'?d) no (?:\w+ )?"
+    r"(?:view|opinion|preference|objection|idea|clue|issue|problem|feelings?"
+    r"|thoughts?|comment|complaint|doubt|memory|recollection|experience"
+    r"|visibility|insight|say|stake|context|sense)\b",""",
+        r"""    r"",""",
+        "test_having_no_opinion_is_not_forbidding_one",
+    ),
+    (
+        # The recall side. A stop list matched on a prefix deletes "no
+        # time-based tests" because "no time" is a formula, and nothing on the
+        # dev fixture notices.
+        "a stop-listed noun is a whole word",
+        "derive.py",
+        r'''    r"(?![\w-]))[\w-]+\b"''',
+        r'''    r"))[\w-]+\b"''',
+        "test_a_compound_noun_is_still_a_prohibition",
+    ),
 ]
 
 
