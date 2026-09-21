@@ -126,6 +126,17 @@ def iter_records(
             if raw.isspace():
                 continue
 
+            # A UTF-8 BOM is three bytes of file encoding, not three bytes of
+            # JSON, and `raw_decode` refuses them — so a BOM used to cost the
+            # whole first line, counted as a decode error. Skipped by moving
+            # the span start past it rather than by slicing the line, so the
+            # offsets stay true: the object still begins where it begins.
+            # Claude Code does not write one; an adapter for an agent on
+            # Windows will meet one. [E7 parsing-F15]
+            if lineno == 1 and raw.startswith(b"\xef\xbb\xbf"):
+                raw = raw[3:]
+                this_start += 3
+
             # surrogateescape round-trips invalid UTF-8 byte-exactly, so the
             # offsets below are true byte offsets even for malformed input
             # (errors="replace" would inflate lengths: U+FFFD is 3 bytes).

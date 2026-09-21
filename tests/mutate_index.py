@@ -3346,6 +3346,35 @@ MUTANTS = [
         "        return {k: _scrub(v, depth + 1) for k, v in value.items()}",
         "test_the_other_identifiers_are_bounded_too_including_the_usage_keys",
     ),
+    # --- E7 parsing-F13 + F14 + F15 ---
+    (
+        "a symlink loop bills one subagent file once per level",
+        "src/gitmemory/adapters/claude_code.py",
+        "        if real in seen:",
+        "        if False:",
+        "test_a_symlink_loop_bills_a_subagent_file_once",
+    ),
+    (
+        "the sidechain flag is truthiness again, so \"false\" is true",
+        "src/gitmemory/adapters/claude_code.py",
+        '            is_sidechain=obj.get("isSidechain") is True,',
+        '            is_sidechain=bool(obj.get("isSidechain")),',
+        "test_a_sidechain_flag_is_a_boolean_not_a_truthy_string",
+    ),
+    (
+        "a byte order mark costs the whole first line again",
+        "jsonl.py",
+        "if lineno == 1 and raw.startswith(",
+        "if False and raw.startswith(",
+        "test_a_byte_order_mark_does_not_cost_the_first_line",
+    ),
+    (
+        "the bom is skipped but the span start is not moved past it",
+        "jsonl.py",
+        "                this_start += 3",
+        "                this_start += 0",
+        "test_a_byte_order_mark_does_not_cost_the_first_line",
+    ),
 ]
 
 

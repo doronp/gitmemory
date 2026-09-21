@@ -412,7 +412,13 @@ def parse(path: str) -> Session:
             # null at every compaction boundary; logicalParentUuid survives it.
             parent_uuid=_str_or_none(_get(obj, "parentUuid", "logicalParentUuid")),
             usage=_scrub(raw_usage) if isinstance(raw_usage, dict) else {},
-            is_sidechain=bool(obj.get("isSidechain")),
+            # `is True`, not `bool()`: the string "false" is truthy, and this
+            # flag decides whether a turn is a subagent's — which `rollup_usage`
+            # and the sidechain views read. Over the 162-fixture corpus the
+            # value is a real boolean on all 4,392 lines that carry it (3,774
+            # False, 618 True), so tightening costs nothing real and closes the
+            # one reading a line could choose. [E7 parsing-F14]
+            is_sidechain=obj.get("isSidechain") is True,
             # Sidechains anchor on the spawning tool_use, never on time. The
             # two keys below are different namespaces and are kept apart:
             # `sourceToolAssistantUUID` is a turn uuid, `toolUseID` is a
@@ -514,7 +520,24 @@ def session_files(path: str) -> list[str]:
     main = os.path.abspath(path)
     stem = os.path.splitext(main)[0]
     subs = sorted(_glob.glob(os.path.join(_glob.escape(stem), "**", "*.jsonl"), recursive=True))
-    return [main] + [s for s in subs if os.path.abspath(s) != main]
+
+    # Deduped by realpath, because `**` walks into symlinked directories and a
+    # directory that links back to its own ancestor turns one subagent file
+    # into one path per level until the kernel's symlink limit stops it.
+    # Measured: a single `agent-1.jsonl` under a self-linking `subagents/`
+    # yielded 16 extra paths — and `rollup_usage` parses every path this
+    # returns, so that is the same tokens billed 17 times. Bounded by the
+    # kernel, not by us, which is the part that made it worth a line of code.
+    # [E7 parsing-F13]
+    seen = {os.path.realpath(main)}
+    out = [main]
+    for s in subs:
+        real = os.path.realpath(s)
+        if real in seen:
+            continue
+        seen.add(real)
+        out.append(s)
+    return out
 
 
 def rollup_usage(path: str) -> dict[str, int]:

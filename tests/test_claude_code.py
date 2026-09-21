@@ -463,9 +463,18 @@ def test_canonical_output_survives_lone_surrogates(tmp_path):
 def test_canonical_output_has_no_floats(path):
     """Floats are the one JSON type whose text form is language-dependent.
 
-    They never reach the manifest by construction, but if they started
-    appearing in canonical output the cross-language story would need revising
-    rather than silently drifting.
+    This is an observation about the corpus, not a guarantee about the code,
+    and the docstring used to say the opposite: "they never reach the manifest
+    by construction". They do. `_scrub` passes finite floats through and
+    `canonical_json` accepts them by design — `{"usage": {"ratio": 0.25}}` on
+    one line puts a float at `.turns[0].usage.ratio` in canonical output, which
+    `test_a_float_from_a_transcript_does_reach_canonical_output` now pins.
+
+    So what this test measures is that no real transcript has yet exercised
+    that path. That is worth knowing and worth watching: if floats start
+    appearing in real input, the cross-language story needs revising rather
+    than silently drifting. It is not worth claiming as an invariant.
+    [E7 parsing-F8]
     """
     doc = json.loads(cc.parse(path).to_canonical().decode("utf-8", "surrogateescape"))
     stack = [doc]
@@ -1641,3 +1650,139 @@ def test_two_long_model_names_stay_two_models(tmp_path):
     """
     assert cc._bounded_id("A" * 5000) != cc._bounded_id("A" * 4999 + "B")
     assert cc._bounded_id("claude-sonnet-4-5") == "claude-sonnet-4-5"
+
+
+# --- E7 parsing-F8/F9/F10/F12/F13/F14/F15: the tail of the parsing round ---
+
+
+def test_a_float_from_a_transcript_does_reach_canonical_output(tmp_path):
+    """The claim `test_canonical_output_has_no_floats` used to make, refuted.
+
+    That test asserted no float appears in canonical output over the MIT
+    corpus and its docstring explained this as holding "by construction". It
+    does not: `_scrub` passes finite floats through, `canonical_json` permits
+    them deliberately, and one line is enough to show it.
+
+    Pinned rather than prevented. Rejecting floats would mean either dropping
+    a value a transcript supplied or rewriting it, and `native` is supposed to
+    be what the file said. The cross-language caveat in `canonical_json`'s
+    docstring is the real contract; the corpus test is a watch, not a wall.
+    [E7 parsing-F8]
+    """
+    lines = [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "sessionId": "s1",
+            "message": {"content": "x", "usage": {"ratio": 0.25}},
+        }
+    ]
+    doc = json.loads(check_adapter(cc, write(tmp_path, "s.jsonl", lines)).to_canonical())
+    assert doc["turns"][0]["usage"]["ratio"] == 0.25
+    assert isinstance(doc["turns"][0]["usage"]["ratio"], float)
+
+
+def test_an_invalid_byte_and_its_escape_are_one_record_and_two_files(tmp_path):
+    """Reported as a `turn_id` collision; it is content addressing working.
+
+    A raw `\\xff` decodes through `surrogateescape` to U+DCFF, and the six
+    characters `\\udcff` in a JSON string unescape to the same U+DCFF. The two
+    files parse to the same value, so they get the same `turn_id` — exactly as
+    `{"a":"x"}` and `{"a":"\\u0078"}` do. An id over parsed content that
+    distinguished two spellings of one value would be the bug.
+
+    The byte-level distinction is the store's job and the store keeps it:
+    captured through the CLI the two files produce different `file_sha256`,
+    different segment digests and different session keys. Both halves are
+    asserted here so the reasoning cannot rot into an untested claim.
+    [E7 parsing-F9, not a defect]
+    """
+    head = b'{"type":"user","uuid":"u1","sessionId":"s1","message":{"content":"x'
+    raw_byte = write(tmp_path, "a.jsonl", head + b'\xff"}}\n')
+    escaped = write(tmp_path, "b.jsonl", head + b'\\udcff"}}\n')
+
+    a, b = cc.parse(raw_byte), cc.parse(escaped)
+    assert a.turns[0].turn_id == b.turns[0].turn_id
+    assert pathlib.Path(raw_byte).read_bytes() != pathlib.Path(escaped).read_bytes()
+    assert hashlib.sha256(pathlib.Path(raw_byte).read_bytes()).hexdigest() != hashlib.sha256(
+        pathlib.Path(escaped).read_bytes()
+    ).hexdigest(), "the byte layer must still tell them apart"
+
+
+def test_a_symlink_loop_bills_a_subagent_file_once(tmp_path):
+    """`rollup_usage` parses every path `session_files` returns.
+
+    `**` walks into symlinked directories, so a `subagents/` directory holding
+    a link back to its own parent turns one file into one path per level until
+    the kernel's symlink limit stops it. Measured before the dedup: a single
+    `agent-1.jsonl` came back 17 times, which is the same tokens billed 17
+    times. Bounded by the kernel rather than by us — which is what made a line
+    of code worth it. [E7 parsing-F13]
+    """
+    main = tmp_path / "x.jsonl"
+    main.write_text(json.dumps(user("u1", "main")) + "\n")
+    subs = tmp_path / "x" / "subagents"
+    subs.mkdir(parents=True)
+    (subs / "agent-1.jsonl").write_text(json.dumps(user("a1", "sub")) + "\n")
+    os.symlink(tmp_path / "x", subs / "loop")
+
+    files = cc.session_files(str(main))
+    assert len(files) == 2, f"one main + one subagent, got {len(files)}"
+    assert [os.path.basename(f) for f in files] == ["x.jsonl", "agent-1.jsonl"]
+
+
+def test_a_sidechain_flag_is_a_boolean_not_a_truthy_string(tmp_path):
+    """"false" is a true string. This flag decides whose tokens these are.
+
+    `bool(obj.get("isSidechain"))` made every non-empty string a sidechain,
+    including the string "false". Over the 162-fixture corpus the value is a
+    real boolean on all 4,392 lines that carry it — 3,774 False, 618 True — so
+    `is True` costs nothing real and removes the reading a line could choose.
+    [E7 parsing-F14]
+    """
+    lines = [
+        dict(user(f"u{i}", "x"), isSidechain=v)
+        for i, v in enumerate(["false", "true", 1, 0, [], True, False])
+    ]
+    turns = check_adapter(cc, write(tmp_path, "s.jsonl", lines)).turns
+    assert [t.is_sidechain for t in turns] == [False, False, False, False, False, True, False]
+
+
+def test_a_byte_order_mark_does_not_cost_the_first_line(tmp_path):
+    """Three bytes of file encoding used to be counted as a broken line.
+
+    `raw_decode` refuses a BOM, so a BOM-prefixed transcript lost its whole
+    first line to `json_decode_error`. Claude Code does not write one; an
+    adapter for an agent on Windows will meet one, and this reader is shared.
+
+    The span start moves past the BOM rather than the line being re-sliced
+    into a new buffer, so the object's offset is still where the object is —
+    `read_span` has to keep landing on parseable JSON. [E7 parsing-F15]
+    """
+    body = json.dumps(user("u1", "hello")).encode()
+    path = write(tmp_path, "s.jsonl", b"\xef\xbb\xbf" + body + b"\n")
+    s = check_adapter(cc, path)
+
+    assert [t.uuid for t in s.turns] == ["u1"]
+    assert s.skipped == {}
+    assert s.turns[0].byte_offset == 3
+    from gitmemory.jsonl import read_span
+
+    assert json.loads(read_span(path, s.turns[0].byte_offset, s.turns[0].byte_len))
+
+
+def test_an_elision_marker_is_forgeable_and_native_is_the_answer(tmp_path):
+    """A line can say `[N chars elided]` and be indistinguishable from one.
+
+    There is no in-band marker an in-band forger cannot write, so this is not
+    fixed, it is bounded: the projection is a projection, and `native` carries
+    what the file actually said. Asserted here so "check `native`" stays a
+    property of the code rather than a sentence in a review.
+    [E7 parsing-F12, accepted]
+    """
+    forged = "[100000 chars elided]"
+    assert cc._scrub("A" * 100_000) == cc._scrub(forged)
+
+    lines = [dict(user("u1", forged))]
+    t = check_adapter(cc, write(tmp_path, "s.jsonl", lines)).turns[0]
+    assert t.native["message"]["content"] == forged, "native must hold the literal text"
