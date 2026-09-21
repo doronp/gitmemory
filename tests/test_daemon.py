@@ -1579,3 +1579,23 @@ def test_an_absolute_pattern_is_refused_rather_than_walked(tmp_path):
 
     assert [w.pattern for w in got] == [daemon.PATTERN]
     assert any("pattern" in m for m in said), said
+
+
+def test_a_root_of_slash_is_refused_for_being_slash(tmp_path):
+    """`docs/watching.md` documents this refusal; the code could not reach it.
+
+    `_inside(root, home)` asks whether the store is at or below the root, and
+    everything is at or below `/`, so the store check above caught it first and
+    said the wrong thing: "contains the store itself" — true, and not the
+    reason. The branch that names the actual hazard, a filesystem-wide walk
+    every poll, was dead code. [E4, review: docs 8]
+    """
+    home = str(tmp_path / "home")
+    _write(
+        os.path.join(home, "config.toml"),
+        '[[watch]]\nagent = "claude-code"\nroots = ["/"]\n',
+    )
+
+    said: list[str] = []
+    assert daemon.load_watches(home, log=said.append) == []
+    assert any("whole filesystem" in m for m in said), said

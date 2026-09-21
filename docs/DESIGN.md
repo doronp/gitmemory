@@ -130,7 +130,10 @@ rather than made silently:
 
 ### 2.3 Triggers — hook AND watcher
 
-- **Hook (latency, best-effort).** `PreCompact` + `SessionEnd` + `Stop`. ~20 lines POSIX sh.
+- **Hook (latency, best-effort).** `PreCompact` + `SessionEnd` + `Stop`. 112 lines of POSIX sh,
+  53 of them not comments. **[E4, review: docs 9 — the estimate was "~20 lines" and it stayed in
+  the document while the file grew. What it grew for is in the file: every guard has a comment
+  naming the failure it was written against.]**
   Reads hook JSON on stdin, writes **one file** to `spool/`, `exit 0`. No git, no Python, no
   network on the hot path. Budget is 10 s; target <50 ms; **p50/p99 measured and published**,
   which no tool in the field does.
@@ -141,8 +144,11 @@ rather than made silently:
 If the hook is never installed the system is still correct. That is what makes it safe to ship.
 
 **Spool concurrency [R1 raised, C resolved]:** each hook invocation writes its **own** file
-`spool/<epoch_ns>-<pid>.json`. No shared file → no torn writes → no `flock` to get wrong.
-Fewer moving parts than a lock.
+`spool/<pid>-<event>[-<n>].json`. No shared file → no torn writes → no `flock` to get wrong.
+Fewer moving parts than a lock. **[E4, review: docs 2 — this said `<epoch_ns>-<pid>.json`. The
+leading timestamp was removed in E4: no reader ever read it, it cost a third `date` fork on the
+one path a user waits for, and a clock set before 1970 made it negative and shifted every
+field. `<n>` is the collision suffix when one pid fires the same event twice.]**
 
 **Hook/watcher double-write [R1 raised, C resolved]:** both derive the same next offset from the
 same committed state, so the loser writes an identical segment or none. Idempotent by
@@ -157,20 +163,25 @@ turning O(N) storage into O(N²). **Gemini verified and conceded this in R2.**
 
 JSONL is append-only. So store **segments**, not files:
 
+**[E4, review: docs 5 — the diagram below is a `find` over a real store. The one it replaces had
+a `<date>` level nothing writes, no `g<NN>/` level, a `manifest.json`, and three files that do
+not exist.]**
+
 ```
 $GITMEMORY_HOME/                      # default ~/.gitmemory
-  raw/<agent>/<session_id>/
-      000000000000-000000131072.jsonl     # bytes [0, 131072)
+  raw/<agent>/<session_id>/g<NN>/
+      000000000000-000000131072.jsonl     # bytes [0, 131072) of generation NN
       000000131072-000000164000.jsonl     # bytes [131072, 164000)
-  sessions/<agent>/<date>/<session_id>/
-      manifest.json                        # canonical JSON + contiguity proof
-      turns.jsonl                          # normalized projection
-      snapshots/000.json …                 # append-only; writing an existing N raises
-  derived/<session_id>/ …                  # rebuildable, committed so diffs are reviewable
+  sessions/<agent>/<session_id>/
+      g00.json                             # canonical JSON + contiguity proof, one per generation
+      g01.json                             # written only when the source diverges — see §2.5a
   index/                                   # .gitignored — SQLite is not diffable
   spool/                                   # .gitignored — one file per hook fire
+  .locks/                                  # .gitignored — one per session, capture serialisation
   config.toml
 ```
+
+`derived/` is E5 and does not exist yet; §2.6 describes what will land there.
 
 Each capture commits **only the bytes appended since the last recorded offset**. Consequences:
 
@@ -196,23 +207,38 @@ but `derived/` is rewritten on every rebuild and orphans blobs **[R2]**.
 
 ### 2.5 The contiguity proof
 
-`manifest.json` carries exactly **[R2]**:
+A manifest is `sessions/<agent>/<session_id>/g<NN>.json` — one per generation, `g00` first. It
+carries eleven fields **[E4, review: docs 1/4 — "exactly six" and `manifest.json` were both
+wrong, and they were wrong in the recipe below, which is the product's central claim]**:
 
 ```
-session_id, agent, file_sha256, prev_manifest_sha256,
+schema, session_id, agent, generation, size, source_path,
+file_sha256, prev_manifest_sha256, diverged_from,
 segments: [{path, start, end, sha256}, ...],
-compact_boundaries: [seq, ...]
+compact_boundaries: [byte_offset, ...]
 ```
 
-**Verification, by a stranger with only the repo and no access to this machine:**
+`segments[].path` is relative to `$GITMEMORY_HOME`, and `compact_boundaries` holds byte offsets
+into this generation, not `seq` numbers.
+
+**Verification, by a stranger with only the repo and no access to this machine.** Run from the
+root of the checkout; this is copy-pasteable and was run to write it down:
 
 ```sh
-cat $(jq -r '.segments|sort_by(.start)|.[].path' manifest.json) | shasum -a 256
-# must equal .file_sha256; and segments must tile [0, EOF) with no hole and no overlap
+M=sessions/claude-code/s-403bcc5f6f7814d3/g00.json          # any manifest
+
+# 1. the bytes are the bytes
+jq -r '.segments|sort_by(.start)|.[].path' "$M" | tr '\n' '\0' | xargs -0 cat | shasum -a 256
+jq -r .file_sha256 "$M"                                      # the two must match
+
+# 2. the segments tile [0, size) with no hole and no overlap
+jq -e '. as $m
+       | ($m.segments|sort_by(.start)
+          | reduce .[] as $s (0; if $s.start == . then $s.end else null end)) == $m.size' "$M"
 ```
 
-Zero LLM calls, zero Python, zero host dependency. `gitmemory verify` does the same and exits
-non-zero on any hole.
+Zero LLM calls, zero Python, zero host dependency. `gitmemory verify` does the same over every
+manifest in the store and exits non-zero on any hole.
 
 **What it detects:** in-place mutation (someone `sed`s a leaked key to an equal-length string —
 offsets unchanged, but `hash(concat) != file_sha256`), truncation, rotation, inode reuse,
@@ -295,7 +321,9 @@ Not taken: every storage layer, every index, every pipeline. Those are where the
 | Key phrases | `KeyBERT` + Model2Vec backend, fixed seed | yes |
 | Timeline | fold over `Event` + `Turn` | yes |
 | Decision graph | structural → **graphify** (`build_from_json` → cluster → export) | yes, **gated** |
-| Titles/labels | optional local `qwen3.5:35b` (46 tok/s measured) at an **explicit gate only** | no — marked |
+| Titles/labels | optional local model at an **explicit gate only**, named in config | no — marked |
+
+**[E4, review: docs 10 — the row above used to name `qwen3.5:35b` and quote "46 tok/s measured". No such model exists; nothing in this repository measured it. A fabricated number in the table about *not trusting generated text* is the worst place in the document for one, so the model is now config and the number is gone. E5 names whatever is actually run and publishes what it actually measures.]**
 
 **No LLM anywhere automatic.** 4B-class models hallucinate rationale that was never in the
 transcript — the worst possible failure mode for a decision record.
@@ -479,7 +507,7 @@ Public + synthetic only. **Never this machine's history.**
 | E0 | ~~Honesty gate~~ **PASSED 2026-09-20** — four tools read at code level, 3-lens panel | 2 BUILD / 1 PR_TO_fable. Dissent recorded in §6. |
 | E1 | ~~**(riskiest)** Canonical records + CC adapter + conformance suite~~ **PASSED 2026-09-20, on the second attempt** | Every §2.2 trap is a passing test; determinism test green. First attempt was signed off wrongly — see below. |
 | E2 | ~~Segment store + contiguity proof + `verify` + redaction gate~~ **PASSED 2026-09-20** | 11 mutation classes + 150 seeded fuzz rounds, zero undetected; `push` refuses with no config |
-| E3 | Index + retrieval + CLI | Benchmark arms scored on mutated LongMemEval-S |
+| E3 | ~~Index + retrieval + CLI~~ **PASSED 2026-09-20** | Benchmark arms scored on mutated LongMemEval-S — 470 instances, [gate report](benchmarks/E3-longmemeval.md) |
 | E4 | Hook shim + watcher + git daemon | p50/p99 published; `kill -9` mid-write loses nothing; concurrent spool proven |
 | E5 | Derivation (+ decision graph behind its gate) | Every node has a `source_ref`; build twice = identical bytes |
 | E6 | Dashboard | Runs offline from one command |

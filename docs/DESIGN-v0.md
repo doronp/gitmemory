@@ -1,6 +1,8 @@
 # gitmemory — design v0 (for adversarial review)
 
-**Status:** proposal. Nothing built. Every decision below is contestable.
+**Status:** SUPERSEDED by [`DESIGN.md`](DESIGN.md). Kept verbatim as the audit trail of the adversarial review, so nothing here is corrected — several decisions below were overturned, and reading it as current will mislead you. **[E4, review: docs]**
+
+**Status when written:** proposal. Nothing built. Every decision below is contestable.
 **Reviewers:** Claude Opus 5 (author of this draft), Gemini 3.1 Pro (adversarial reviewer + co-author).
 
 ---

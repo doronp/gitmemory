@@ -216,6 +216,17 @@ def load_watches(home: str, log=None) -> list[Watch]:
             if os.path.exists(resolved) and not os.path.isdir(resolved):
                 say(f"{where}: root {r} is a file, not a directory; skipped")
                 continue
+            if resolved == os.sep:
+                # Before the store check, not after it. `_inside(root, home)`
+                # asks whether `home` is at or below `root`, and everything is
+                # at or below `/` — so a root of `/` was refused for *containing
+                # the store*, which is true and is not the reason, and this
+                # branch was unreachable. `docs/watching.md` documents the
+                # message that never printed. `discover` would walk the whole
+                # filesystem every poll, which is the thing worth saying.
+                # [E4, review: docs 8]
+                say(f"{where}: root / is the whole filesystem; skipped")
+                continue
             if _inside(resolved, home) or _inside(home, resolved):
                 # The store's raw segments are `*.jsonl` and `discover` globs
                 # `<root>/**/*.jsonl`, so a store under a watch root reads its
@@ -227,11 +238,6 @@ def load_watches(home: str, log=None) -> list[Watch]:
                 # `~/.gitmemory` is safe only by the accident that `glob` skips
                 # dotted components. [E4, review: CLI 3]
                 say(f"{where}: root {r} contains the store itself; skipped")
-                continue
-            if resolved == os.sep:
-                # `/` is never a considered choice, and `discover` would walk
-                # the whole filesystem every `poll` seconds to find out.
-                say(f"{where}: root / is the whole filesystem; skipped")
                 continue
             kept.append(resolved)
         if kept:

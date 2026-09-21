@@ -12,6 +12,13 @@ or names the hole.
 Everything derived — indexes, decision graphs, key ideas — is rebuilt from
 those bytes, so a derivation is never the only copy of anything.
 
+**Contiguous, not complete.** The proof is that the captured bytes tile
+`[0, size)` with no hole and no overlap and hash to a recorded digest. It is
+*not* a proof that the agent wrote everything it generated: a process killed
+before its flush leaves a stream that is contiguous and short, and nothing on
+disk can tell you about bytes that never reached the disk. The design document
+has said this limitation is stated here since v0; until E4 it was not.
+
 ```
 gitmemory watch                 # tail the configured roots, capture, commit
 gitmemory capture <transcript>  # or copy out one file's new bytes, by hand
@@ -45,7 +52,7 @@ asserted.
 
 ## Status
 
-Under construction, epoch by epoch. 732 tests, plus one gated on the
+Under construction, epoch by epoch. 779 tests, plus one gated on the
 LongMemEval download (`-m corpus`).
 
 | | | |
