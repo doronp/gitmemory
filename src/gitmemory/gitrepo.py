@@ -258,7 +258,14 @@ def init(home: str | None = None) -> str:
     try:
         with open(path, encoding="utf-8") as fh:
             current = fh.read()
-    except OSError:
+    except (OSError, ValueError):
+        # `ValueError` for the `UnicodeDecodeError` a non-UTF-8 byte raises.
+        # This read is only ever asking "is the file already what we write?", so
+        # a file we cannot decode answers no — and the branch below rewrites it,
+        # which is what the comment above already says we do with this file.
+        # Unguarded, the exception escaped `init`, escaped `run`'s
+        # `(GitError, OSError, SubprocessError)`, and exited 2 on every restart,
+        # because the byte is still in the file. [E4, review: daemon 2]
         current = None
     if current != GITIGNORE:
         with open(path, "w", encoding="utf-8") as fh:

@@ -45,6 +45,12 @@ from .adapters import get as get_adapter
 
 SPOOL = "spool"
 INTERVAL = 3600.0  # seconds between idle captures of one session (DESIGN.md §2.4)
+# How often a standing error is repeated to the log. Its own constant, not
+# `interval`: those two defaulted to the same number and were therefore the same
+# knob, so `--interval 0` — which is a documented, parser-blessed setting meaning
+# "capture every pass" — also set the error log's repeat rate to zero and put
+# back the 2.06 M lines a day the limit exists to stop. [E4, review: daemon 9]
+ERROR_REPEAT = 3600.0
 POLL = 5.0  # seconds between ticks
 STALE_TMP = 3600.0  # a `.tmp-` this old is a killed hook, not a live one
 
@@ -135,6 +141,17 @@ def load_watches(home: str, log=None) -> list[Watch]:
         # watcher silent. It used to read as "you never configured anything".
         say(f"{path} is not valid TOML ({exc}); watching nothing")
         return []
+    except ValueError as exc:
+        # `tomllib.load` decodes as UTF-8 and raises `UnicodeDecodeError` — a
+        # `ValueError`, not a `TOMLDecodeError` — on the first bad byte. It
+        # escaped the function whose docstring promises absent, unreadable and
+        # malformed all mean the empty list, and `run`'s floor then logged it as
+        # `{exc!r}`. `repr` of a `UnicodeDecodeError` carries the object it
+        # failed on, so the entire config file went to stderr, once per pass,
+        # for ever. Caught after `TOMLDecodeError` because that is a subclass of
+        # this and the specific message is the better one. [E4, review: daemon 3]
+        say(f"{path} is not readable as text ({exc.__class__.__name__}); watching nothing")
+        return []
     out = []
     for n, entry in enumerate(cfg.get("watch") or []):
         where = f"{path} [[watch]] #{n + 1}"
@@ -185,7 +202,17 @@ def load_watches(home: str, log=None) -> list[Watch]:
             if not (isinstance(r, str) and r):
                 say(f"{where}: root {r!r} is not a path; skipped")
                 continue
-            resolved = os.path.realpath(os.path.expanduser(r))
+            try:
+                resolved = os.path.realpath(os.path.expanduser(r))
+            except ValueError as exc:
+                # An embedded NUL. `realpath` reaches `os.lstat` and raises
+                # `ValueError`, which is not an `OSError` and had nothing above
+                # it: one bad root took the whole config with it — every *other*
+                # watch in the file included — and did it again on every pass.
+                # The entry it belongs to is the only thing that should suffer.
+                # [E4, review: daemon 3]
+                say(f"{where}: root is not a usable path ({exc.__class__.__name__}); skipped")
+                continue
             if os.path.exists(resolved) and not os.path.isdir(resolved):
                 say(f"{where}: root {r} is a file, not a directory; skipped")
                 continue
@@ -208,15 +235,34 @@ def load_watches(home: str, log=None) -> list[Watch]:
                 continue
             kept.append(resolved)
         if kept:
-            pattern = entry.get("pattern")
             out.append(
-                Watch(
-                    agent=agent,
-                    roots=tuple(kept),
-                    pattern=pattern if isinstance(pattern, str) else PATTERN,
-                )
+                Watch(agent=agent, roots=tuple(kept), pattern=_pattern(entry.get("pattern"), say))
             )
     return out
+
+
+def _pattern(value: object, say) -> str:
+    """The watch's glob, or the default if it is not one a root can contain.
+
+    `discover` does `os.path.join(root, pattern)`, and `join` *discards* the
+    root when the second argument is absolute. So `pattern = "/**/*.jsonl"`
+    silently reconfigured the watch to glob the entire filesystem every poll —
+    0.743 s of walking a pass, measured — and `_covers` then threw every result
+    away, because the floor is the root check and the floor held. Nothing
+    escaped; what leaked was the cost and the silence.
+
+    `..` for the same reason one rung down: it climbs out of the root, and the
+    only reason it is not an escape is that the same `_covers` catches it. A
+    pattern that cannot match anything the watch will accept is a
+    misconfiguration, and this module's rule for those is loud, not quiet.
+    [E4, review: daemon 10]
+    """
+    if not isinstance(value, str) or not value:
+        return PATTERN
+    if os.path.isabs(value) or os.pardir in value.split(os.sep):
+        say(f"pattern {value!r} leaves the watch root; using {PATTERN!r}")
+        return PATTERN
+    return value
 
 
 def _inside(outer: str, inner: str) -> bool:
@@ -457,19 +503,35 @@ def discover(watches: list[Watch]) -> list[tuple[Watch, str]]:
     """
     seen: set[tuple[int, int]] = set()
     out = []
-    for watch in watches:
-        for root in watch.roots:
-            for path in sorted(glob(os.path.join(root, watch.pattern), recursive=True)):
-                real = os.path.realpath(path)
-                key = _file_key(real)
-                if key is None or key in seen or not os.path.isfile(real):
-                    continue
-                # A glob can climb out through a symlinked leaf even though it
-                # will not descend one.
-                if _covers([watch], real) is None:
-                    continue
-                seen.add(key)
-                out.append((watch, real))
+    # Deepest root first, so a transcript goes to the watch that names the most
+    # of its path. `seen` is shared across watches — it has to be, or a nested
+    # root captures the same bytes a second time under a second agent — and the
+    # order it was filled in was the order of the config file. So
+    #
+    #     [[watch]] agent = "claude-code"  roots = ["~/agents"]
+    #     [[watch]] agent = "hermes"       roots = ["~/agents/hermes"]
+    #
+    # filed every hermes transcript under `claude-code`, which is the wrong
+    # adapter, which is no compaction boundaries — and `capture_one` degrades to
+    # bytes without them in silence, so the store looked healthy and `verify`
+    # agreed. Swapping the two tables fixed it, which is not a property a config
+    # format should have. Most-specific-wins is the rule every other nested
+    # matcher uses and the only one that does not depend on file order.
+    # [E4, review: daemon 6]
+    pairs = [(watch, root) for watch in watches for root in watch.roots]
+    pairs.sort(key=lambda wr: wr[1].count(os.sep), reverse=True)
+    for watch, root in pairs:
+        for path in sorted(glob(os.path.join(root, watch.pattern), recursive=True)):
+            real = os.path.realpath(path)
+            key = _file_key(real)
+            if key is None or key in seen or not os.path.isfile(real):
+                continue
+            # A glob can climb out through a symlinked leaf even though it will
+            # not descend one.
+            if _covers([watch], real) is None:
+                continue
+            seen.add(key)
+            out.append((watch, real))
     return out
 
 
@@ -659,12 +721,42 @@ def tick(
             continue
         try:
             cap = capture_one(home, source, watch.agent, parse=parse)
-        except (OSError, RuntimeError, ValueError) as exc:
+        except Exception as exc:  # noqa: BLE001 - one session cannot suspend the rest
+            # `except Exception`, for the reason `capture_one` gives one level
+            # down: naming types makes the guarantee depend on getting every
+            # future failure taxonomy exactly right. This list was
+            # `(OSError, RuntimeError, ValueError)`, and a `KeyError` out of a
+            # damaged manifest went straight past it — out of `tick`, into
+            # `run`'s floor, which reports `pass failed` and abandons the
+            # *whole* pass. One unreadable session therefore stopped capture for
+            # every session on the machine, on every pass, for ever, with
+            # `verify` clean throughout. Per-session here, so the blast radius
+            # is the session the fault belongs to.
+            #
+            # The negative control is worth recording: the two extra types were
+            # not load-bearing — the suite is green with `except OSError` alone.
+            # They were guesses. [E4, review: daemon 1]
             result.errors.append(f"{source}: {exc}")
             continue
         if cap.appended or cap.diverged:
             result.captured.append(f"{key[0]}/{key[1]}/g{cap.generation:02d}")
             result.appended += cap.appended
+        else:
+            # A capture that appended nothing has just proved the manifest and
+            # the source agree, so the manifest's mtime is told what it now
+            # knows. Without this it is frozen at the last append, `changed`
+            # above stays true for ever on the strength of a source mtime that
+            # is merely *ahead* of it — a restore, a `touch`, a pruner — and
+            # `now - mtime` only grows, so every pass re-read and re-hashed the
+            # whole transcript to discover nothing again. Measured on a 21 MB
+            # file: 2766 ms a pass, 55% of a core, and not one line of log.
+            #
+            # `utime` and not a write: mtime is bookkeeping here, git does not
+            # record it and `verify` does not read it, so a no-op capture still
+            # leaves the store byte-identical and still produces no commit.
+            # [E4, review: daemon 4]
+            with contextlib.suppress(OSError):
+                os.utime(cap.manifest_path, (now, now))
         result.boundaries_dropped += cap.dropped_boundaries
         # Adoption changes the store without appending a byte, so it has to be
         # asked about separately or the repair never reaches git. Kept out of
@@ -726,6 +818,7 @@ def run(
     started = False
     last_errors: list[str] = []
     last_notes: list[str] | None = None
+    last_dropped = 0
     last_said = 0.0
     while True:
         # Inside the loop, because `init` is four `git config` calls and each
@@ -749,11 +842,19 @@ def run(
                 gitrepo.init(home)
                 started = True
             except (gitrepo.GitError, OSError, subprocess.SubprocessError) as exc:
+                # Reported, and then the pass runs anyway. This used to
+                # `continue`, which threw away the capture along with the
+                # commit — against the rule `tick` states twenty lines below and
+                # keeps: *a git failure is reported, never raised*, because the
+                # bytes are the part no later pass can recover and the commit is
+                # the part every later pass can. Two watchers racing `init`'s
+                # four `git config` calls is the ordinary way to reach this, and
+                # the loser was skipping transcripts over it.
+                #
+                # `started` stays False, so the next pass tries again; if the
+                # repository really is unusable, `tick`'s own commit fails and
+                # says so, once, through the rate limit below. [E4, review: daemon 7]
                 log(f"error: git init: {exc}")
-                if once:
-                    return 1
-                time.sleep(poll)
-                continue
         try:
             # Collected rather than logged directly, because `run` re-reads the
             # config every pass and a config fault that is still there is not
@@ -781,14 +882,29 @@ def run(
         # stuck session per pass. Measured at 100 unwritable sessions and the
         # default five-second poll: 2.06 M lines and 239 MB of stderr a day, all
         # of it the same hundred sentences. So: say it when it changes, then say
-        # nothing until it changes again or `interval` has passed — which is the
-        # rate the code comment above already claimed and the code did not keep,
-        # by a factor of 720. [E4, review: CLI 4]
+        # nothing until it changes again or `ERROR_REPEAT` has passed — which is
+        # the rate the code comment above already claimed and the code did not
+        # keep, by a factor of 720. [E4, review: CLI 4]
         now = time.time()
-        if result.errors != last_errors or (result.errors and now - last_said >= interval):
+        if result.errors != last_errors or (result.errors and now - last_said >= ERROR_REPEAT):
             for err in result.errors:
                 log(f"error: {err}")
             last_errors, last_said = list(result.errors), now
+        # A doorbell naming a path no watch covers is the one signal that says
+        # the hook and the config disagree about where transcripts live — a hook
+        # installed for `~/.claude/projects` against a config that names
+        # `~/agents`, say. It was counted into the `Tick` and then thrown away,
+        # so that machine was indistinguishable from a quiet one: captures still
+        # happened, at the interval instead of at the compaction, and nothing
+        # anywhere said why. Change-detected rather than rate-limited, because
+        # this is a configuration fact and not an event. [E4, review: daemon 8]
+        if result.spool_dropped != last_dropped:
+            if result.spool_dropped:
+                log(
+                    f"config: {result.spool_dropped} of {result.spool_consumed} hook record(s) "
+                    "named a path no watch covers"
+                )
+            last_dropped = result.spool_dropped
         if result.captured:
             dropped = (
                 f" ({result.boundaries_dropped} boundaries outside the bytes, dropped)"

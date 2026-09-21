@@ -1194,7 +1194,14 @@ def test_the_error_rate_limiter_is_the_interval_not_the_poll(tmp_path, monkeypat
 def test_a_git_that_is_briefly_unavailable_is_retried_rather_than_fatal(tmp_path, monkeypatch):
     """Two watchers starting within a few milliseconds collided and one died
     outright, six times out of six measured: `init` is four `git config` calls
-    and each takes `.git/config`'s lock. [E4, review: concurrency 7]"""
+    and each takes `.git/config`'s lock. [E4, review: concurrency 7]
+
+    The retry is only visible across two passes, so `tick` stops the loop on its
+    *second* call rather than its first. It used to stop on the first, which was
+    enough only because a failed `init` skipped the pass entirely — the very
+    thing daemon 7 fixed. Now both are asserted here: the pass whose `init`
+    failed still ran, and the one after it re-tried the `init`.
+    """
     home = str(tmp_path / "home")
     _config(home, [tmp_path / "proj"])
     calls = {"n": 0}
@@ -1213,12 +1220,15 @@ def test_a_git_that_is_briefly_unavailable_is_retried_rather_than_fatal(tmp_path
 
     def counting_tick(*a, **kw):
         passes["n"] += 1
-        raise KeyboardInterrupt
+        if passes["n"] >= 2:
+            raise KeyboardInterrupt
+        return daemon.Tick()
 
     monkeypatch.setattr(daemon, "tick", counting_tick)
     with pytest.raises(KeyboardInterrupt):
         daemon.run(home, poll=0, log=lines.append)
-    assert calls["n"] == 2 and passes["n"] == 1
+    assert calls["n"] == 2, "a transient init failure was not retried"
+    assert passes["n"] == 2, "the pass whose init failed did no work"
     assert [line for line in lines if "git init" in line], lines
 
 
@@ -1296,3 +1306,276 @@ def test_two_names_for_one_file_are_discovered_once(tmp_path):
     found = daemon.discover([daemon.Watch(agent="claude-code", roots=(str(root),))])
 
     assert [os.path.basename(p) for _, p in found] == ["a.jsonl"], "one file, one entry"
+
+
+# --- E4 review round: the ten watcher findings --------------------------------
+
+
+def test_one_unreadable_session_does_not_suspend_every_other_one(tmp_path, monkeypatch):
+    """The capture guarantee cannot be conditional on an exception taxonomy.
+
+    `capture_one`'s own docstring makes this argument and then `tick` caught
+    `(OSError, RuntimeError, ValueError)` around the call to it — a type
+    denylist. A `KeyError` from one session's manifest escapes `tick` into
+    `run`'s floor, which reports `pass failed` and abandons the *whole* pass. So
+    one damaged session stops capture for every session on the machine, on every
+    pass, for ever, while `verify` stays clean. [E4, review: daemon 1]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    bad = _write(str(root / "bad.jsonl"), TURN)
+    good = _write(str(root / "good.jsonl"), TURN)
+    _config(home, [root])
+
+    real = daemon.capture_one
+
+    def one_bad(h, source, agent, **kw):
+        if source == os.path.realpath(bad):
+            raise KeyError("diverged_from")
+        return real(h, source, agent, **kw)
+
+    monkeypatch.setattr(daemon, "capture_one", one_bad)
+    result = daemon.tick(home, daemon.load_watches(home), interval=0)
+
+    assert [k for k in result.captured if "good" in k], result
+    assert any("diverged_from" in e for e in result.errors), result.errors
+    assert store.sessions(home), "nothing was captured at all"
+    assert os.path.realpath(good)  # the source is still there either way
+
+
+def test_a_gitignore_that_is_not_utf8_does_not_make_the_watcher_unstartable(tmp_path):
+    """`init` rewrites `.gitignore` because it is ours; it has to be able to read it.
+
+    The read is `encoding="utf-8"` under `except OSError`, and a
+    `UnicodeDecodeError` is a `ValueError`. It escaped `init`, escaped `run`'s
+    `(GitError, OSError, SubprocessError)`, and exited 2 — on every restart,
+    because the byte is still in the file. [E4, review: daemon 2]
+    """
+    home = str(tmp_path / "home")
+    os.makedirs(home)
+    with open(os.path.join(home, ".gitignore"), "wb") as fh:
+        fh.write(b"raw/\n\xff\xfe not text\n")
+
+    gitrepo.init(home)
+
+    with open(os.path.join(home, ".gitignore"), encoding="utf-8") as fh:
+        assert fh.read() == gitrepo.GITIGNORE
+
+
+def test_a_config_that_is_not_utf8_is_reported_without_being_printed(tmp_path):
+    """`load_watches` promises absent, unreadable and malformed all mean `[]`.
+
+    `tomllib.load` raises `UnicodeDecodeError` on a non-UTF-8 byte, which is a
+    `ValueError` and not a `TOMLDecodeError`, so it escaped the function that
+    documents itself as total. `run`'s floor caught it and logged `{exc!r}` —
+    and `repr(UnicodeDecodeError)` carries the offending object, so the whole
+    config file went to stderr once per pass. [E4, review: daemon 3]
+    """
+    home = str(tmp_path / "home")
+    os.makedirs(home)
+    with open(os.path.join(home, "config.toml"), "wb") as fh:
+        fh.write(b'[[watch]]\nagent = "claude-code"\nroots = ["/tmp/SECRETMARKER"]\n\xff\n')
+
+    said: list[str] = []
+    assert daemon.load_watches(home, log=said.append) == []
+    assert said, "a config that cannot be read must be reported"
+    assert not any("SECRETMARKER" in m for m in said), said
+
+
+def test_a_root_that_cannot_be_resolved_skips_only_itself(tmp_path):
+    """`os.path.realpath` raises `ValueError` on an embedded NUL. [E4, review: daemon 3]"""
+    home = str(tmp_path / "home")
+    good = tmp_path / "proj"
+    good.mkdir()
+    _write(
+        os.path.join(home, "config.toml"),
+        f'[[watch]]\nagent = "claude-code"\nroots = ["/tmp/a\\u0000b", {json.dumps(str(good))}]\n',
+    )
+
+    said: list[str] = []
+    got = daemon.load_watches(home, log=said.append)
+
+    assert [w.roots for w in got] == [(os.path.realpath(str(good)),)]
+    assert any("a\x00b" not in m and "skipped" in m for m in said), said
+
+
+def test_an_unchanged_transcript_is_not_rehashed_on_every_pass(tmp_path, monkeypatch):
+    """A source mtime ahead of its manifest re-read the whole file for ever.
+
+    `changed` is `size differs or source mtime > manifest mtime`, and a capture
+    that appends nothing leaves the manifest byte-identical *and* untouched — so
+    the manifest's mtime never catches up, `now - mtime` only grows, and every
+    pass after the first interval re-hashes the entire transcript. Measured on a
+    21 MB file: 2766 ms per pass, 55% of a core, nothing logged.
+    [E4, review: daemon 4]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    watches = daemon.load_watches(home)
+    daemon.tick(home, watches, interval=0)
+
+    # The condition: the source looks newer than the manifest, with the same
+    # bytes. A `touch` is the ordinary way to reach it; a restore is the common
+    # one.
+    ahead = time.time() + 60
+    os.utime(src, (ahead, ahead))
+
+    calls = {"n": 0}
+    real = daemon.capture_one
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(daemon, "capture_one", counting)
+    for i in range(3):
+        daemon.tick(home, watches, interval=0, now=ahead + 120 + i)
+
+    assert calls["n"] == 1, "the store re-read a transcript it had already captured"
+
+
+def test_an_empty_transcript_does_not_bypass_the_interval_gate(tmp_path, monkeypatch):
+    """A zero-byte transcript is a session, and the gate has to know it.
+
+    `size < 0` means "never captured" and bypasses the interval, so a session
+    the store does not list runs at full poll rate for ever — which is what an
+    empty transcript did, because `store.sessions` dropped a generation with no
+    segments. A pin rather than a fix: the store's own review round closed this
+    from the other side, and its negative control is here — restore
+    `if not run: continue` in `sessions()` and this test fails.
+    [E4, review: daemon 5, closed by store 6]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    _write(str(root / "empty.jsonl"), "")
+    _config(home, [root])
+    watches = daemon.load_watches(home)
+    daemon.tick(home, watches, interval=0)
+
+    calls = {"n": 0}
+    real = daemon.capture_one
+
+    def counting(*a, **kw):
+        calls["n"] += 1
+        return real(*a, **kw)
+
+    monkeypatch.setattr(daemon, "capture_one", counting)
+    for _ in range(3):
+        daemon.tick(home, watches, interval=1e9)
+
+    assert calls["n"] == 0, "an empty transcript was captured on every pass"
+
+
+def test_the_most_specific_watch_claims_a_transcript(tmp_path):
+    """Nested roots are resolved by depth, not by the order they were written in.
+
+    `discover` shared one `seen` set across watches and took the first one to
+    reach a file. So a general root listed above a nested, more specific one
+    claimed that one's transcripts and filed them under the wrong agent — which
+    means the wrong adapter, which means no boundaries, silently.
+    [E4, review: daemon 6]
+    """
+    outer = tmp_path / "agents"
+    inner = outer / "hermes"
+    src = _write(str(inner / "s.jsonl"), TURN)
+
+    found = daemon.discover(
+        [
+            daemon.Watch(agent="claude-code", roots=(str(outer),)),
+            daemon.Watch(agent="hermes", roots=(str(inner),)),
+        ]
+    )
+
+    assert [(w.agent, p) for w, p in found] == [("hermes", os.path.realpath(src))]
+
+
+def test_a_git_init_failure_does_not_cost_the_pass_its_bytes(tmp_path, monkeypatch):
+    """ "A git failure is reported, never raised" — `tick` keeps that rule; `run` did not.
+
+    A transient `init` failure made `run` `continue`, skipping the capture as
+    well as the commit. The bytes are the part that cannot be recovered later; a
+    commit can always be made by the next pass. [E4, review: daemon 7]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    monkeypatch.setattr(
+        daemon.gitrepo, "init", lambda h=None: (_ for _ in ()).throw(gitrepo.GitError("locked"))
+    )
+
+    lines: list[str] = []
+    daemon.run(home, once=True, interval=0, log=lines.append)
+
+    assert store.sessions(home), f"the bytes were lost to a git failure: {lines}"
+    assert any("git init" in line for line in lines), lines
+
+
+def test_a_hook_record_no_watch_covers_is_reported(tmp_path, monkeypatch):
+    """`spool_dropped` is the only signal that the hook and the config disagree.
+
+    It was counted and thrown away, so a hook installed against one path and a
+    watcher configured for another looked exactly like a quiet machine.
+    [E4, review: daemon 8]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    _spool(home, "1-PreCompact.json", {"transcript_path": str(tmp_path / "elsewhere.jsonl")})
+
+    lines: list[str] = []
+    _on_pass(monkeypatch, lambda: (_ for _ in ()).throw(KeyboardInterrupt))
+    daemon.run(home, once=True, interval=0, log=lines.append)
+
+    assert any("no watch covers" in line for line in lines), lines
+
+
+def test_the_error_rate_limit_survives_interval_zero(tmp_path, monkeypatch):
+    """`--interval 0` is a documented, parser-blessed capture setting.
+
+    It was also the error-log rate limit, so choosing it re-enabled the flood
+    the limit exists to stop — measured at 2.06 M lines a day. Two knobs, one
+    name. [E4, review: daemon 9]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    bad = _write(str(root / "bad.jsonl"), TURN)
+    os.chmod(bad, 0o000)
+    _config(home, [root])
+    lines: list[str] = []
+    passes = {"n": 0}
+
+    def stop_after_five():
+        passes["n"] += 1
+        if passes["n"] >= 5:
+            raise KeyboardInterrupt
+
+    _on_pass(monkeypatch, stop_after_five)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            daemon.run(home, poll=0, interval=0, log=lines.append)
+    finally:
+        os.chmod(bad, 0o600)
+    assert len([line for line in lines if "error:" in line]) == 1, lines
+
+
+def test_an_absolute_pattern_is_refused_rather_than_walked(tmp_path):
+    """`os.path.join(root, pattern)` discards the root when the pattern is absolute.
+
+    The watch then globs from `/` every poll — 0.743 s a pass, measured — and
+    `_covers` throws every result away, so it is pure cost in silence. Nothing
+    escapes; what leaks is the walk and the quiet. [E4, review: daemon 10]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    root.mkdir()
+    _config(home, [root], pattern="/**/*.jsonl")
+
+    said: list[str] = []
+    got = daemon.load_watches(home, log=said.append)
+
+    assert [w.pattern for w in got] == [daemon.PATTERN]
+    assert any("pattern" in m for m in said), said
