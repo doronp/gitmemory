@@ -383,11 +383,26 @@ Verified before deciding, not assumed:
 | Question | Answer |
 |---|---|
 | Licence | Apache-2.0 (`LICENSE`, `license = "Apache-2.0"`), inbound-compatible with ours |
-| Distribution | PyPI `graphifyy` 0.9.53 |
-| Runtime deps | `networkx`, `numpy`, `rapidfuzz`, tree-sitter grammars — no service, no key |
+| Distribution | PyPI `graphifyy` 0.9.53 at E2; **0.9.65 installed and re-checked at E5**, which is what the `derive` extra pins |
+| Runtime deps | `networkx`, `numpy`, `rapidfuzz`, tree-sitter grammars — no service, no key. `openai`/`anthropic`/`boto3` exist only as extras we do not take |
 | LLM needed? | No, for the path we use. Structural extraction is tree-sitter AST |
 | Deterministic? | Yes. `cluster.py` pins `seed=42` / `random_seed=42` / `randomness=0.001` and explicitly stabilises for Louvain's order-sensitivity (`cluster.py:117`) |
 | Input seam | `build_from_json(extraction, *, directed, root)` takes a plain nodes/edges dict |
+
+The seam's field names were read off the installed `validate.py` rather than inferred, because
+the emitter has to satisfy them exactly: a node is `{id, label, file_type, source_file}` and an
+edge is `{source, target, relation, confidence, source_file}`. Two of those vocabularies happen
+to be the ones we needed anyway, which is the second reason this fits:
+
+- `file_type` admits **`rationale`** alongside the file-ish kinds, so a decision node does not
+  have to masquerade as a document.
+- `confidence` is **`EXTRACTED` | `INFERRED` | `AMBIGUOUS`**, which is the distinction this
+  project already refuses to blur. A node lifted verbatim from a block is `EXTRACTED`; an edge
+  asserting that one decision supersedes an earlier one is `INFERRED`, because nothing in the
+  bytes says so and the reader is entitled to know which is which.
+
+`source_file` is where the `source_ref` travels, so the provenance rule above survives the
+hand-off instead of stopping at our boundary. **[E5]**
 
 That last row is what makes it fit rather than merely adjacent. graphify's own corpus model
 is *files*; ours is *decisions inside transcripts*. We do not point it at a directory. We
