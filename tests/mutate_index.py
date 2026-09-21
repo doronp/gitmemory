@@ -717,26 +717,16 @@ MUTANTS = [
     (
         "an idea cites something that is not a block id",
         "derive.py",
-        "        owners.extend([block.block_id] * len(sentences))",
-        "        owners.extend([block.kind] * len(sentences))",
+        "        owners.extend([block.block_id] * len(kept))",
+        "        owners.extend([block.kind] * len(kept))",
         "test_every_idea_names_a_block_that_exists_in_the_session",
     ),
     (
         "attribution by first occurrence instead of a cursor walk",
         "derive.py",
-        """        cursor = 0
-        for chosen in summarizer(document, count):
-            text = str(chosen)
-            while cursor < len(texts) and texts[cursor] != text:
-                cursor += 1
-            if cursor >= len(texts):  # pragma: no cover - not a subsequence
-                break
-            picked.append({"text": text, "source_ref": owners[cursor], "rank": len(picked)})
-            cursor += 1""",
-        """        for chosen in summarizer(document, count):
-            text = str(chosen)
-            cursor = texts.index(text)
-            picked.append({"text": text, "source_ref": owners[cursor], "rank": len(picked)})""",
+        """            while cursor < len(texts) and texts[cursor] != text:
+                cursor += 1""",
+        """            cursor = texts.index(text)""",
         "test_an_idea_is_attributed_to_the_block_it_was_read_out_of",
     ),
     (
@@ -806,8 +796,8 @@ MUTANTS = [
     (
         "the sentence cap stops being cumulative, so it never binds",
         "derive.py",
-        "        room = MAX_SENTENCES - len(owners)",
-        "        room = MAX_SENTENCES",
+        "            if len(owners) + len(kept) >= MAX_SENTENCES:",
+        "            if len(kept) >= MAX_SENTENCES:",
         "test_a_session_past_the_sentence_cap_says_so",
     ),
     (
@@ -1017,6 +1007,235 @@ MUTANTS = [
         """B="$H/spool/${P}_${E}\"""",
         "test_a_compaction_fired_through_the_real_shim_lands_in_a_real_commit",
     ),
+    # ======================================================================= #
+    # E5 standalone review: the derive fix list.
+    #
+    # Fourteen behaviours in derive.py could be deleted with the whole suite
+    # green, including two of the module's three self-declared rules. Every row
+    # below is one of those, or one of the nine defects found beside them. The
+    # numbers in brackets are findings in docs/reviews/E5-derive-standalone-review.md.
+    # ======================================================================= #
+    (
+        "ideas returns the number it was asked for",
+        "derive.py",
+        """            with numpy.errstate(invalid="raise", divide="raise"):
+                chosen_sentences = summarizer(document, count)""",
+        """            with numpy.errstate(invalid="raise", divide="raise"):
+                chosen_sentences = summarizer(document, DEFAULT_IDEAS)""",
+        "test_ideas_returns_the_number_asked_for",
+    ),
+    (
+        "the --ideas flag reaches the summariser",
+        "derive.py",
+        """            payload_ideas = ideas(session, count=count)""",
+        """            payload_ideas = ideas(session)""",
+        "test_the_ideas_flag_reaches_the_artifact",
+    ),
+    (
+        # Rule 3 of the module docstring — "rebuildable and diffable" — had
+        # nothing holding it: swapping the serializer for pretty-printed,
+        # insertion-ordered JSON left 800 tests green, so `derived/` could start
+        # churning on every rebuild and only a human reading a diff would know.
+        # The property is exact bytes, so one extra byte is the whole mutant.
+        "derived bytes are canonical_json's bytes and nothing else",
+        "derive.py",
+        """    data = canonical_json(payload)""",
+        """    data = canonical_json(payload) + b'\\n'""",
+        "test_artifacts_are_canonical_json_on_disk",
+    ),
+    (
+        "every generation is derived, not only the newest",
+        "derive.py",
+        """    for stored in store.sessions(resolved):""",
+        """    for stored in store.sessions(resolved)[-1:]:""",
+        "test_every_generation_is_derived_not_only_the_newest",
+    ),
+    (
+        "the counts the CLI prints are the counts on disk",
+        "derive.py",
+        """        stats.ideas += len(payload_ideas["ideas"])""",
+        """        stats.ideas += 0""",
+        "test_the_counts_stats_reports_are_the_counts_on_disk",
+    ),
+    (
+        "a mark carries the byte offset of its event",
+        "derive.py",
+        """                "byte_offset": event.byte_offset,""",
+        """                "byte_offset": 0,""",
+        "test_a_mark_carries_the_offset_and_the_id_of_the_event_it_stands_for",
+    ),
+    (
+        "a mark carries the id of its event",
+        "derive.py",
+        """                "event_id": event.event_id,""",
+        """                "event_id": "",""",
+        "test_a_mark_carries_the_offset_and_the_id_of_the_event_it_stands_for",
+    ),
+    (
+        # No adapter hands `timeline` unsorted input today, which is exactly why
+        # deleting both sorts changed nothing. The test builds a Session by hand.
+        "the timeline sorts its marks by bytes",
+        "derive.py",
+        """    marks = sorted(session.events, key=lambda e: (e.byte_offset, e.seq, e.event_id))""",
+        """    marks = session.events""",
+        "test_the_timeline_sorts_its_own_inputs_by_bytes",
+    ),
+    (
+        "the timeline sorts its turns by bytes",
+        "derive.py",
+        """    turns = sorted(session.turns, key=lambda t: (t.byte_offset, t.seq))""",
+        """    turns = session.turns""",
+        "test_the_timeline_sorts_its_own_inputs_by_bytes",
+    ),
+    (
+        # The tail is what makes summing `turns_since` equal `turns`; omitting it
+        # when it is empty is the plausible bug, and it was unpinned.
+        "the tail mark is emitted even when it is empty",
+        "derive.py",
+        """    out.append(
+        {
+            "kind": "tail",""",
+        """    if len(turns) - i:
+        out.append(
+            {
+            "kind": "tail",""",
+        "test_the_tail_is_emitted_even_when_there_is_nothing_after_the_last_event",
+    ),
+    (
+        "thinking stays out of the prose stream",
+        "derive.py",
+        """            if block.kind == "text" and block.text.strip():""",
+        """            if block.kind in ("text", "thinking") and block.text.strip():""",
+        "test_thinking_is_not_admitted_to_the_prose_stream",
+    ),
+    (
+        "an artifact is published by rename, never written in place",
+        "derive.py",
+        """    fd, tmp = tempfile.mkstemp(dir=parent, prefix=".deriving-", suffix=".json")""",
+        """    fd, tmp = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC), path""",
+        "test_a_failed_publish_leaves_neither_a_partial_artifact_nor_a_temp",
+    ),
+    (
+        "a failed publish unlinks its own temp",
+        "derive.py",
+        """            os.unlink(tmp)""",
+        """            pass""",
+        "test_a_failed_publish_leaves_neither_a_partial_artifact_nor_a_temp",
+    ),
+    (
+        # The comment at the cursor walk exists to justify this line. The
+        # committed attribution test separates its duplicate sentences by three
+        # others, so the cursor was always already past the first copy.
+        "the cursor advances past a sentence it has matched",
+        "derive.py",
+        # The leading newline disambiguates: the copy inside the `while` scan is
+        # indented four further spaces, so a bare match would hit both.
+        "\n            cursor += 1\n",
+        "\n",
+        "test_an_adjacent_duplicate_sentence_is_attributed_to_its_own_block",
+    ),
+    # --- E5:3 redaction at the boundary DESIGN.md says is redacted ---
+    (
+        "a sentence carrying a key is not ranked",
+        "derive.py",
+        """            if _leaks(text.encode("utf-8", "surrogatepass")):""",
+        """            if False:""",
+        "test_a_key_quoted_in_prose_never_reaches_derived",
+    ),
+    (
+        "the single door into derived/ is gated",
+        "derive.py",
+        """    leaks = _leaks(data, os.path.basename(path))""",
+        """    leaks = []""",
+        "test_the_write_door_refuses_a_secret_no_matter_who_built_the_payload",
+    ),
+    # --- E5:4 an environment fault is not N pieces of bad data ---
+    (
+        "a missing extra fails the build instead of skipping every generation",
+        "derive.py",
+        """    # Before the loop, not inside it: see `_sumy`. [E5:4]
+    _sumy()
+    _sweep_temps(resolved)""",
+        """    _sweep_temps(resolved)""",
+        "test_a_missing_derive_extra_fails_the_build_instead_of_skipping_everything",
+    ),
+    # --- E5:5 the cap that binds on the axis that costs ---
+    (
+        "the word budget binds",
+        "derive.py",
+        """            if words_ranked + len(words) > MAX_WORDS:""",
+        """            if False:""",
+        "test_a_terminator_free_block_is_capped_by_words_not_by_sentences",
+    ),
+    (
+        # Both cap tests monkeypatch their constant, so without this row
+        # `MAX_WORDS = 1_000_000_000` passes every test in the file — the same
+        # self-defeating shape the E4 elision-cap test had before L2.
+        "the caps are the numbers their ceiling was measured against",
+        "derive.py",
+        """MAX_WORDS = 50_000""",
+        """MAX_WORDS = 1_000_000_000""",
+        "test_the_caps_are_the_values_their_comment_was_measured_against",
+    ),
+    # --- E5:6 the same clamp index.search has ---
+    (
+        "a negative idea count means none, not almost all",
+        "derive.py",
+        """    count = max(count, 0)""",
+        """    count = int(count)""",
+        "test_a_negative_ideas_count_yields_no_ideas_rather_than_almost_all",
+    ),
+    # --- E5:2 and E5:7 a failure costs its own generation and nothing else ---
+    (
+        "a write failure is caught per generation",
+        "derive.py",
+        """        except Exception as exc:  # noqa: BLE001 - a segment run is untrusted data""",
+        """        except ValueError as exc:  # noqa: BLE001 - a segment run is untrusted data""",
+        "test_a_write_failure_costs_one_generation_and_leaves_nothing_torn",
+    ),
+    (
+        "a skipped generation loses its stale artifacts",
+        "derive.py",
+        """            shutil.rmtree(out, ignore_errors=True)""",
+        """            pass""",
+        "test_a_generation_that_stops_parsing_loses_its_stale_artifacts",
+    ),
+    # --- E5:8 the third temp shape, swept and ignored ---
+    (
+        "a killed write's temp is swept by the next build",
+        "derive.py",
+        """            os.unlink(stray)""",
+        """            pass""",
+        "test_a_half_written_artifact_is_swept_by_the_next_build",
+    ),
+    (
+        "a killed write's temp cannot be committed",
+        "gitrepo.py",
+        """derived/*/*/*/.deriving-*
+""",
+        """""",
+        "test_derived_is_committed_rather_than_ignored",
+    ),
+    # --- E5:9 derived/ inherits the store's permission stance ---
+    (
+        "derived/ directories are owner-only",
+        "derive.py",
+        """    store._mkdir(parent)""",
+        """    os.makedirs(parent, exist_ok=True)""",
+        "test_derived_directories_are_owner_only",
+    ),
+    # --- E5:10 prose LexRank finds no signal in ---
+    (
+        # The first fix for this guessed the condition was "no content words"
+        # and was wrong: two sentences sharing no vocabulary have every idf at
+        # exactly log(1), which is the same zero matrix with content words in
+        # every sentence. Asking numpy is what makes the guard exact.
+        "a degenerate ranking is detected rather than written as NaN",
+        "derive.py",
+        """            with numpy.errstate(invalid="raise", divide="raise"):""",
+        """            with contextlib.nullcontext():""",
+        "test_prose_with_no_rankable_word_ranks_nothing_and_warns_about_nothing",
+    ),
 ]
 
 
@@ -1037,8 +1256,19 @@ def run(args: list[str]) -> bool:
 
 
 def main() -> int:
+    """Run every mutant, or only those whose name contains an argument.
+
+    The filter exists because a full pass is 146 mutants x two suite runs, which
+    is an hour — long enough that adding one row and checking it used to mean
+    either waiting for the other 145 or trusting the new one untested.
+    """
+    wanted = sys.argv[1:]
+    selected = [m for m in MUTANTS if not wanted or any(w.lower() in m[0].lower() for w in wanted)]
+    if wanted and not selected:
+        print(f"no mutant matches {wanted!r}")
+        return 2
     bad = []
-    for name, filename, find, replace, test in MUTANTS:
+    for name, filename, find, replace, test in selected:
         # A bare name is a file in the package; a path is relative to the repo,
         # which is how the `bench/` mutants below address the harness itself.
         path = ROOT / filename if "/" in filename else SRC / filename
@@ -1061,7 +1291,7 @@ def main() -> int:
             bad.append(name)
         else:
             print(f"CAUGHT    {name}  <- {test}")
-    print(f"\n{len(MUTANTS) - len(bad)}/{len(MUTANTS)} caught by their intended test")
+    print(f"\n{len(selected) - len(bad)}/{len(selected)} caught by their intended test")
     return 1 if bad else 0
 
 

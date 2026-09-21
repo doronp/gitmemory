@@ -311,11 +311,31 @@ def test_derived_is_committed_rather_than_ignored(home):
     The determinism test above is worth nothing if the directory it diffs is not
     in the repository, and `GITIGNORE` is a string that has grown a line in
     every epoch so far.
+
+    It grew one for `derived/` at E5:8 — the `.deriving-*` temp — so "the word
+    `derived` does not appear in .gitignore" stopped being the right question
+    and was replaced by asking git itself, one path at a time. That is the
+    stronger check anyway: a pattern can mention `derived` and ignore nothing,
+    or mention nothing and ignore everything.
     """
     gitrepo.init(home)
-    ignore = Path(home, ".gitignore").read_text()
-    assert "/index/" in ignore, "the fixture is checking the wrong file"
-    assert "derived" not in ignore
+    assert "/index/" in Path(home, ".gitignore").read_text(), "checking the wrong file"
+
+    def ignored(rel: str) -> bool:
+        return (
+            subprocess.run(
+                ["git", "-C", home, "check-ignore", "-q", "--no-index", rel],
+                check=False,
+            ).returncode
+            == 0
+        )
+
+    gen = "derived/claude-code/sess/g00"
+    assert not ignored(f"{gen}/ideas.json"), "derived/ is the diffable layer"
+    assert not ignored(f"{gen}/timeline.json"), "derived/ is the diffable layer"
+    assert not ignored("derived/"), "the whole tree must reach a commit"
+    assert ignored(f"{gen}/.deriving-abc123.json"), "a half-written artifact was committable"
+    assert ignored("index/bm25.sqlite3"), "the control: index/ is the ignored layer"
 
 
 # --------------------------------------------------------------------------- #
@@ -477,3 +497,455 @@ def test_derived_mirrors_the_manifest_path_not_the_manifest_contents(home, src):
         home
     )
     assert out.endswith(os.path.join("derived", "claude-code", "sess", "g00"))
+
+
+# --------------------------------------------------------------------------- #
+# E5 standalone review: the fix list, each fix pinned by its own mutant
+#
+# Everything below answers a numbered finding in
+# docs/reviews/E5-derive-standalone-review.md. Finding 1 is the reason the rest
+# of this section exists at all: fourteen behaviours could be deleted from
+# derive.py with the whole suite still green, including two of the module's
+# three self-declared rules.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_caps_are_the_values_their_comment_was_measured_against(home, src):
+    """The cap tests monkeypatch the constants, so nothing else pins the numbers.
+
+    Without this, `MAX_WORDS = 1_000_000_000` passes every test in the file —
+    the same self-defeating shape the E4 elision-cap test had, where deriving
+    the fixture size from the constant made the test move with the mutant.
+    """
+    assert derive.MAX_SENTENCES == 2000, "the O(n^2) matrix ceiling was measured at 2000"
+    assert derive.MAX_WORDS == 50_000, "the O(U*n*L) idf ceiling was measured against 50k words"
+
+
+# --- finding 1: `count` reaches the summariser, and reaches it from the CLI --- #
+
+
+def test_ideas_returns_the_number_asked_for(home, src):
+    gen = stored(home, src, conversation())
+    session = index.parse_generation(gen)
+    assert len(derive.ideas(session, count=2)["ideas"]) == 2
+    assert len(derive.ideas(session, count=5)["ideas"]) == 5
+    assert derive.DEFAULT_IDEAS != 2, "the fixture has to differ from the default to prove it"
+
+
+def test_the_ideas_flag_reaches_the_artifact(home, src):
+    write(src, conversation())
+    store.capture(src, "claude-code", "sess", home=home)
+    assert main(["--home", home, "derive", "--ideas", "2"]) == 0
+    assert len(loaded(home, "ideas.json")["ideas"]) == 2
+
+
+def test_a_negative_ideas_count_yields_no_ideas_rather_than_almost_all(home, src):
+    """sumy's `ItemsCount` is `sequence[:count]`, so `--ideas -1` meant "every
+    sentence but the last" — 8 of 9 sentences instead of the 8 best. [E5:6]
+    """
+    gen = stored(home, src, conversation())
+    session = index.parse_generation(gen)
+    assert derive.ideas(session, count=0)["ideas"] == []
+    assert derive.ideas(session, count=-1)["ideas"] == []
+    assert derive.ideas(session, count=-3)["ideas"] == []
+    assert derive.ideas(session, count=1)["ideas"], "the fixture ranks nothing; test is vacuous"
+
+
+# --- finding 1: rule 3, rebuildable and diffable --- #
+
+
+def test_artifacts_are_canonical_json_on_disk(home, src):
+    """Rule 3 of the module docstring, which nothing pinned: swap the serializer
+    for `json.dumps(indent=2, sort_keys=False)` and 800 tests stayed green.
+    """
+    from gitmemory.records import canonical_json
+
+    stored(home, src, compacted())
+    for name in ("ideas.json", "timeline.json"):
+        hit = list(Path(home, "derived").rglob(name))
+        raw = hit[0].read_bytes()
+        assert raw == canonical_json(json.loads(raw)), f"{name} is not canonical bytes"
+        assert b"\n" not in raw, "pretty-printed: a rebuild would churn the diff"
+        raw.decode("ascii")  # ensure_ascii, or the bytes are locale-dependent
+
+
+def test_every_generation_is_derived_not_only_the_newest(home, src):
+    write(src, conversation())
+    store.capture(src, "claude-code", "sess", home=home)
+    # A rewrite, not an append: an append extends g00, a divergence opens g01.
+    write(src, [user("u9", PROSE[1]), assistant("a9", [text(PROSE[2])])], mode="wb")
+    store.capture(src, "claude-code", "sess", home=home)
+
+    stats = derive.build(home)
+    assert stats.generations == 2, "a second capture made a second generation"
+    gens = sorted(p.name for p in Path(home, "derived", "claude-code", "sess").iterdir())
+    assert gens == ["g00", "g01"]
+    for g in gens:
+        assert Path(home, "derived", "claude-code", "sess", g, "ideas.json").exists()
+
+
+def test_the_counts_stats_reports_are_the_counts_on_disk(home, src):
+    write(src, compacted())
+    store.capture(src, "claude-code", "sess", home=home)
+    stats = derive.build(home)
+    assert stats.ideas == len(loaded(home, "ideas.json")["ideas"]) > 0
+    assert stats.marks == len(loaded(home, "timeline.json")["marks"]) > 1
+
+
+# --- finding 1: what a mark is made of --- #
+
+
+def test_a_mark_carries_the_offset_and_the_id_of_the_event_it_stands_for(home, src):
+    gen = stored(home, src, compacted())
+    session = index.parse_generation(gen)
+    marks = derive.timeline(session)["marks"]
+    real = [m for m in marks if m["kind"] != "tail"]
+    assert len(real) == len(session.events) == 2, "the fixture lost its events"
+    for mark, event in zip(real, sorted(session.events, key=lambda e: e.byte_offset), strict=True):
+        assert mark["byte_offset"] == event.byte_offset > 0, "offset zeroed or unset"
+        assert mark["event_id"] == event.event_id != "", "the mark cannot be traced back"
+
+
+def _turn(seq: int, offset: int, blocks: int = 1):
+    from gitmemory.records import Block, Turn
+
+    t = Turn(session_id="s1", seq=seq, role="user", byte_offset=offset, byte_len=10)
+    t.blocks = [Block(turn_id="t", seq=i, kind="text", text="x") for i in range(blocks)]
+    return t
+
+
+def _event(seq: int, offset: int):
+    from gitmemory.records import Event
+
+    return Event(session_id="s1", seq=seq, kind="compaction", byte_offset=offset, anchor="a")
+
+
+def test_the_timeline_sorts_its_own_inputs_by_bytes(home):
+    """Handed turns and events in the wrong order — which no adapter does today,
+    which is exactly why nothing caught `sorted(...)` being deleted.
+    """
+    from gitmemory.records import Session
+
+    s = Session(session_id="s1", agent="x", source_path="/dev/null")
+    s.turns = [_turn(2, 200), _turn(0, 0), _turn(1, 100)]
+    s.events = [_event(1, 250), _event(0, 150)]
+
+    marks = derive.timeline(s)["marks"]
+    assert [m["byte_offset"] for m in marks] == [150, 250, -1], "marks not in byte order"
+    assert [m["turns_since"] for m in marks] == [2, 1, 0], "turns not in byte order"
+    assert sum(m["turns_since"] for m in marks) == 3, "the fold lost a turn"
+
+
+def test_the_tail_is_emitted_even_when_there_is_nothing_after_the_last_event(home):
+    from gitmemory.records import Session
+
+    s = Session(session_id="s1", agent="x", source_path="/dev/null")
+    s.turns = [_turn(0, 0)]
+    s.events = [_event(0, 100)]
+    marks = derive.timeline(s)["marks"]
+    assert marks[-1]["kind"] == "tail", "summing turns_since stops equalling turns"
+    assert marks[-1]["turns_since"] == 0 and marks[-1]["blocks_since"] == 0
+
+
+# --- finding 1: what becomes an idea, and who it is attributed to --- #
+
+
+def test_thinking_is_not_admitted_to_the_prose_stream(home, src):
+    """`_prose`'s ponytail comment says thinking is excluded on purpose. Deleting
+    the exclusion changed no test, so the comment was the only thing enforcing it.
+    """
+    secret = (
+        "Zebra mandolin quarantine parsnip. "
+        "Obelisk trombone kumquat harpsichord. "
+        "Marzipan xylophone tessellate wombat."
+    )
+    gen = stored(
+        home,
+        src,
+        [
+            user("u1", PROSE[0]),
+            assistant("a1", [{"type": "thinking", "thinking": secret}, text(PROSE[1])]),
+        ],
+    )
+    session = index.parse_generation(gen)
+    assert any(b.kind == "thinking" for t in session.turns for b in t.blocks), "no thinking block"
+    payload = derive.ideas(session, count=20)
+    assert "Zebra" not in json.dumps(payload), "a thinking block reached the artifact"
+
+
+def test_an_adjacent_duplicate_sentence_is_attributed_to_its_own_block(home, src):
+    """The `cursor += 1` at derive.py's match, which nothing pinned.
+
+    The committed attribution test separates its two copies by three sentences,
+    so the cursor is already past the first by the time the second matches. The
+    shape that needs it is the *adjacent* duplicate across a block boundary:
+    without the advance both copies are attributed to the earlier block, which
+    is an idea naming a block it did not come from — a rule-2 violation.
+    """
+    echo = "The manifest is the only writeable file in the store."
+    gen = stored(
+        home,
+        src,
+        [
+            user("u1", "Segments tile the transcript with no hole and no overlap. " + echo),
+            assistant("a1", [text(echo + " Retrieval is BM25 over the raw bytes.")]),
+        ],
+    )
+    session = index.parse_generation(gen)
+    blocks = [b for t in session.turns for b in t.blocks if b.kind == "text"]
+    assert len(blocks) == 2, "the fixture is not two blocks"
+
+    picked = derive.ideas(session, count=4)["ideas"]
+    owners = [i["source_ref"] for i in picked if i["text"] == echo]
+    assert len(owners) == 2, f"both copies must be ranked for this to mean anything: {picked}"
+    assert owners == [blocks[0].block_id, blocks[1].block_id], "both copies blamed on one block"
+
+
+# --- finding 3: redaction at the derived boundary --- #
+
+
+def test_a_key_quoted_in_prose_never_reaches_derived(home, src):
+    """DESIGN.md names `derived/` as a redaction boundary; `derive` did not
+    import `redact` at all, so a key in prose was ranked, written, and committed
+    a second time. [E5:3]
+    """
+    key = "AKIAZZZZQQQQWWWW1234"  # synthetic, right shape
+    gen = stored(
+        home,
+        src,
+        [
+            user("u1", PROSE[0]),
+            assistant("a1", [text(f"The deploy failed because the key {key} was rejected.")]),
+        ],
+    )
+    session = index.parse_generation(gen)
+    payload = derive.ideas(session, count=20)
+    assert payload["sentences_redacted"] == 1, "the sentence under test was never scanned"
+    assert key not in json.dumps(payload), "the key was ranked as an idea"
+
+    blob = b"".join(p.read_bytes() for p in Path(home, "derived").rglob("*.json"))
+    assert key.encode() not in blob, "the key reached the committed artifact tree"
+    raw = b"".join(p.read_bytes() for p in Path(home, "raw").rglob("*.jsonl"))
+    assert key.encode() in raw, "raw/ is the unredacted copy; the push gate is what holds it"
+
+
+def test_the_write_door_refuses_a_secret_no_matter_who_built_the_payload(home):
+    """The gate is at `_write`, not only in `ideas()`, because every artifact
+    this module grows later goes through the same door.
+    """
+    target = os.path.join(home, "derived", "claude-code", "sess", "g00", "ideas.json")
+    with pytest.raises(ValueError, match="refusing to write a secret"):
+        derive._write(target, {"ideas": [{"text": "ghp_" + "A" * 36}]})
+    assert not os.path.exists(target)
+    derive._write(target, {"ideas": []})  # the control: a clean payload still writes
+    assert os.path.exists(target)
+
+
+# --- finding 4: a missing extra is an environment fault, not per-generation --- #
+
+
+def test_a_missing_derive_extra_fails_the_build_instead_of_skipping_everything(
+    home, src, monkeypatch
+):
+    """Raised inside the per-generation `try`, "this install cannot derive
+    anything" became N skip lines and an exit code of 0. [E5:4]
+    """
+    write(src, conversation())
+    store.capture(src, "claude-code", "sess", home=home)
+
+    def no_extra():
+        raise RuntimeError("derivation needs the `derive` extra: pip install -e '.[derive]'")
+
+    monkeypatch.setattr(derive, "_sumy", no_extra)
+    with pytest.raises(RuntimeError, match="derive. extra"):
+        derive.build(home)
+
+
+# --- finding 5: the cap that binds on the axis that costs --- #
+
+
+def test_a_terminator_free_block_is_capped_by_words_not_by_sentences(home, src, monkeypatch):
+    """A block with no `.`/`!`/`?` is one sentence however long it is, so the
+    sentence cap never fired on the input that drives `_compute_idf` superlinear:
+    256 000 words in one sentence measured 133 s with `sentences_seen == 1`.
+    """
+    monkeypatch.setattr(derive, "MAX_WORDS", 20)
+    gen = stored(home, src, [user("u1", " ".join(f"w{i}" for i in range(100)))])
+    session = index.parse_generation(gen)
+    payload = derive.ideas(session, count=5)
+    assert payload["sentences_seen"] == 1, "the fixture grew a terminator"
+    assert payload["sentences_ranked"] == 0, "the word cap did not bind"
+    assert payload["words_ranked"] <= 20
+
+
+def test_the_word_cap_binds_part_way_through_a_document(home, src, monkeypatch):
+    monkeypatch.setattr(derive, "MAX_WORDS", 12)
+    body = " ".join(f"alpha{i} beta{i} gamma{i} delta{i} epsilon{i}." for i in range(4))
+    gen = stored(home, src, [user("u1", body)])
+    payload = derive.ideas(index.parse_generation(gen), count=5)
+    assert payload["sentences_seen"] == 4, "the fixture is not four sentences"
+    assert payload["sentences_ranked"] == 2, "the cap let through the wrong number"
+    assert payload["words_ranked"] == 10
+
+
+# --- finding 7 and 2: a failure costs its own generation and nothing else --- #
+
+
+def test_a_write_failure_costs_one_generation_and_leaves_nothing_torn(
+    home, src, tmp_path, monkeypatch
+):
+    """Both `_write` calls sat outside the `try`: a failure on the second aborted
+    the whole build with no skip entry, and left a fresh ideas.json beside a
+    stale timeline.json. [E5:7]
+    """
+    other = tmp_path / "src" / "other.jsonl"
+    write(src, conversation())
+    write(str(other), conversation())
+    store.capture(src, "claude-code", "sess-a", home=home)
+    store.capture(str(other), "claude-code", "sess-b", home=home)
+
+    real = derive._write
+
+    def fail_on_the_second_write(path, payload):
+        if "sess-a" in path and path.endswith("timeline.json"):
+            raise OSError(28, "No space left on device")
+        return real(path, payload)
+
+    monkeypatch.setattr(derive, "_write", fail_on_the_second_write)
+    stats = derive.build(home)
+
+    assert stats.generations == 1, "the failure took the other generation down with it"
+    assert len(stats.skipped) == 1 and "sess-a" in stats.skipped[0], stats.skipped
+    torn = Path(home, "derived", "claude-code", "sess-a", "g00")
+    assert not torn.exists(), (
+        f"torn generation left behind: {sorted(p.name for p in torn.iterdir())}"
+    )
+    assert Path(home, "derived", "claude-code", "sess-b", "g00", "timeline.json").exists()
+
+
+def test_a_generation_that_stops_parsing_loses_its_stale_artifacts(home, src):
+    """`derived/` stopped being a function of the committed bytes: the skip line
+    went to stderr and the old artifacts stayed on disk asserting facts about a
+    generation `derive` had just said it could not read. [E5:2]
+    """
+    gen = stored(home, src, conversation())
+    out = Path(derive.derived_dir(home, gen))
+    assert (out / "ideas.json").exists(), "nothing was derived, so nothing can go stale"
+
+    man = json.loads(Path(gen.manifest).read_bytes())
+    man["agent"] = "no-such-agent"
+    Path(gen.manifest).write_bytes(json.dumps(man).encode())
+
+    stats = derive.build(home)
+    assert stats.generations == 0 and len(stats.skipped) == 1, stats
+    assert not out.exists(), "stale artifacts survived a run that could not read the generation"
+
+
+# --- finding 8: the temp file, swept and ignored --- #
+
+
+def test_a_half_written_artifact_is_swept_by_the_next_build(home, src):
+    stored(home, src, conversation())
+    out = Path(home, "derived", "claude-code", "sess", "g00")
+    litter = out / ".deriving-killed.json"
+    litter.write_text("{")
+    derive.build(home)
+    assert not litter.exists(), "a SIGKILL'd write stays until someone commits it"
+    assert (out / "ideas.json").exists(), "the sweep took the artifacts with it"
+
+
+def test_a_failed_publish_leaves_neither_a_partial_artifact_nor_a_temp(home, monkeypatch):
+    """Pins both halves of `_write`: publish by rename, and unlink on failure.
+
+    The first version asserted `not target.exists()` against a fresh directory,
+    and the mutation index reported it MISSED: writing straight to the target
+    and then unlinking on failure leaves exactly the empty directory a clean
+    rename-publish leaves, so the assertion passed under both. It was the unlink
+    half wearing the rename half's name.
+
+    What only rename buys is that an artifact already published survives a
+    rebuild that dies part way: `O_TRUNC` destroys it before the first byte of
+    the replacement is written, and the failure path then unlinks what is left.
+    So publish once, fail the second publish, and read the first one back.
+    """
+    target = Path(home, "derived", "claude-code", "sess", "g00", "ideas.json")
+    derive._write(str(target), {"ideas": [{"text": "the published one"}]})
+    published = target.read_bytes()
+
+    def boom(src_path, dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(os, "replace", boom)
+    with pytest.raises(OSError):
+        derive._write(str(target), {"ideas": [{"text": "the replacement"}]})
+    assert target.exists(), "written in place: the published artifact was destroyed"
+    assert target.read_bytes() == published, "a reader can see a half-built artifact"
+    assert not list(target.parent.glob(".deriving-*")), "the temp outlived its failure"
+
+
+# --- finding 9: derived/ inherits the store's permission stance --- #
+
+
+def test_derived_directories_are_owner_only(home, src):
+    """0755 under the default umask, 0777 under `umask 0` — and a world-writable
+    directory lets a local user swap `ideas.json` for their own, which is then
+    committed. `store._mkdir` has said 0700 since E3. [E5:9]
+    """
+    stored(home, src, conversation())
+    made = Path(home, "derived", "claude-code", "sess", "g00")
+    for d in (made, made.parent, made.parent.parent, made.parent.parent.parent):
+        assert d.stat().st_mode & 0o777 == 0o700, f"{d.name} is {oct(d.stat().st_mode & 0o777)}"
+    assert (made / "ideas.json").stat().st_mode & 0o777 == 0o600
+
+
+# --- finding 10: prose with nothing to rank --- #
+
+
+def test_prose_with_no_rankable_word_ranks_nothing_and_warns_about_nothing(home, src):
+    """LexRank divides by a zero norm when every sentence is content-free, so a
+    turn of `... !!! ???` printed `RuntimeWarning: invalid value encountered in
+    divide` and wrote NaN-ranked selections. Under `PYTHONWARNINGS=error` the
+    same store reported the generation as skipped instead. [E5:10]
+    """
+    import warnings
+
+    gen = stored(home, src, [user("u1", "... !!! ??? ... !!!")])
+    session = index.parse_generation(gen)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        payload = derive.ideas(session, count=5)
+    assert [str(w.message) for w in caught] == [], "the warning still escapes"
+    assert payload["ideas"] == [], "NaN ratings were ranked and written"
+    assert payload["sentences_seen"] == 5, "the fixture never reached the summariser"
+
+
+def test_one_content_word_is_enough_to_rank_the_rest(home, src):
+    """The guard is per document, not per sentence: a mixed document must still
+    rank its content-free sentences rather than quietly dropping them.
+    """
+    gen = stored(home, src, [user("u1", "!!! The append-only store never writes back. ???")])
+    payload = derive.ideas(index.parse_generation(gen), count=3)
+    assert payload["sentences_ranked"] == 3, "content-free sentences were dropped, not ranked"
+    assert len(payload["ideas"]) == 3
+
+
+def test_two_sentences_sharing_no_vocabulary_rank_nothing_and_warn_about_nothing(home, src):
+    """The degenerate case is wider than "no content words", which is how the
+    first fix for finding 10 was caught being wrong by its own sibling test.
+
+    sumy's idf is `log(n / (1 + df))`, so with two sentences and no shared term
+    every idf is exactly `log(1) == 0`: every tf-idf vector is zero, every
+    cosine is zero, the matrix is zero, and `power_method` divides by a zero
+    norm — with a content word in every sentence. The condition is arithmetic,
+    not vocabulary, which is why the guard asks numpy instead of guessing.
+    """
+    import warnings
+
+    gen = stored(home, src, [user("u1", "Segments tile the transcript. Retrieval ranks bytes.")])
+    session = index.parse_generation(gen)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        payload = derive.ideas(session, count=2)
+    assert [str(w.message) for w in caught] == [], "the warning still escapes"
+    assert payload["sentences_ranked"] == 2, "the fixture never reached the summariser"
+    assert payload["ideas"] == [], "NaN-ranked selections were written as ideas"

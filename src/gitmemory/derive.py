@@ -22,12 +22,14 @@ reach it. See docs/tasks/E5-dependency-verification.md.
 from __future__ import annotations
 
 import contextlib
+import glob as _glob
 import os
 import re
+import shutil
 import tempfile
 from dataclasses import dataclass, field
 
-from . import store
+from . import redact, store
 from .index import parse_generation
 from .records import Session, canonical_json
 
@@ -35,12 +37,24 @@ __all__ = ["Stats", "build", "derived_dir", "ideas", "timeline"]
 
 DEFAULT_IDEAS = 8
 
-# LexRank is O(n^2) in sentences: 2 000 sentences is a 32 MB float64 matrix and
-# 10 000 is 800 MB, which is a session turning into an OOM.
-# ponytail: hard cap, and the shortfall is reported rather than hidden. Raise it
-# by ranking per compaction span instead of per generation if a real session
-# ever exceeds it — the spans are already in the manifest.
+# Two caps, because there are two costs and the obvious one is the smaller.
+#
+# LexRank's similarity matrix is O(n^2) in sentences: 2 000 sentences is a 32 MB
+# float64 matrix and 10 000 is 800 MB. That is what MAX_SENTENCES bounds.
+#
+# The cost that actually bites is `_compute_idf`, O(U*n*L) in distinct words,
+# and a block with no `.`/`!`/`?` in it is *one* sentence however long it is —
+# so the sentence cap never fires on the input that needs it. Measured on one
+# terminator-free block: 64 000 words 8.5 s, 128 000 words 33 s, 256 000 words
+# 133 s — clean x4 per doubling, so ~9 hours at 48 MB, which one agent
+# transcript can reach. MAX_WORDS is the cap on that axis. [E5:5]
+#
+# ponytail: two hard caps, and the shortfall is reported rather than hidden
+# (`sentences_seen` vs `sentences_ranked`, `words_ranked`). Raise them by
+# ranking per compaction span instead of per generation if a real session ever
+# exceeds them — the spans are already in the manifest.
 MAX_SENTENCES = 2000
+MAX_WORDS = 50_000
 
 # Sentence split and word split, both deliberately dumb. The alternative is
 # nltk's punkt, which is a download.
@@ -61,6 +75,48 @@ class _Tok:
 
     def to_words(self, sentence: str) -> tuple[str, ...]:
         return tuple(_WORD_RE.findall(sentence.lower()))
+
+
+def _sumy():
+    """The `sumy` pieces, imported lazily and in exactly one place.
+
+    Lazy because `capture`, `verify` and `recall` must stay dependency-free. One
+    place because `build` calls it up front: a missing extra is an environment
+    fault identical for every generation, and raising it *inside* the
+    per-generation `try` laundered "this install cannot derive anything" into N
+    skip lines and an exit code of 0. [E5:4]
+    """
+    try:
+        import numpy
+        from sumy.models.dom import ObjectDocumentModel, Paragraph, Sentence
+        from sumy.summarizers.lex_rank import LexRankSummarizer
+        from sumy.utils import get_stop_words
+    except ImportError as exc:  # pragma: no cover - exercised by hand, not in CI
+        raise RuntimeError(
+            "derivation needs the `derive` extra: pip install -e '.[derive]'"
+        ) from exc
+    return (
+        ObjectDocumentModel,
+        Paragraph,
+        Sentence,
+        LexRankSummarizer,
+        get_stop_words("english"),
+        numpy,
+    )
+
+
+def _leaks(data: bytes, path: str = "-") -> list[redact.Finding]:
+    """High-confidence secret shapes, the only tier this boundary acts on.
+
+    DESIGN.md names two places redaction applies, and one of them is anything
+    written to `derived/` — `derive` did not do it, so a key quoted in prose was
+    ranked as an idea and committed a second time. [E5:3]
+
+    HIGH only, deliberately. The SUSPECT tier is `password: "..."`-shaped and
+    fires on prose *about* configuration; dropping those would gut legitimate
+    content to catch a shape the raw copy already carries anyway.
+    """
+    return [f for f in redact.scan_bytes(data, path) if f.tier == "high"]
 
 
 @dataclass(slots=True)
@@ -109,45 +165,66 @@ def ideas(session: Session, *, count: int = DEFAULT_IDEAS) -> dict:
     Returns the ranked sentences *in document order*, which is how they read,
     plus the two counts that make a truncated run visible.
     """
-    try:
-        from sumy.models.dom import ObjectDocumentModel, Paragraph, Sentence
-        from sumy.summarizers.lex_rank import LexRankSummarizer
-        from sumy.utils import get_stop_words
-    except ImportError as exc:  # pragma: no cover - exercised by hand, not in CI
-        raise RuntimeError(
-            "derivation needs the `derive` extra: pip install -e '.[derive]'"
-        ) from exc
+    ObjectDocumentModel, Paragraph, Sentence, LexRankSummarizer, stop_words, numpy = _sumy()
+
+    # sumy's `ItemsCount` is `sequence[:count]`, so a negative count means "all
+    # but the last |count|" — `--ideas -1` wrote 8 of 9 sentences instead of the
+    # 8 best. Same clamp and same reason as `index.search`'s `max(k, 0)`. [E5:6]
+    count = max(count, 0)
 
     tok = _Tok()
     paragraphs, owners, texts = [], [], []
-    seen = 0
+    seen = redacted = words_ranked = 0
     for block in _prose(session):
-        sentences = [Sentence(s, tok) for s in tok.to_sentences(block.text)]
-        seen += len(sentences)
-        room = MAX_SENTENCES - len(owners)
-        if room <= 0:
+        kept = []
+        for text in tok.to_sentences(block.text):
+            seen += 1
+            if _leaks(text.encode("utf-8", "surrogatepass")):
+                redacted += 1
+                continue
+            words = tok.to_words(text)
+            if len(owners) + len(kept) >= MAX_SENTENCES:
+                continue
+            if words_ranked + len(words) > MAX_WORDS:
+                continue
+            words_ranked += len(words)
+            kept.append(Sentence(text, tok))
+        if not kept:
             continue
-        sentences = sentences[:room]
-        if not sentences:
-            continue
-        paragraphs.append(Paragraph(sentences))
-        owners.extend([block.block_id] * len(sentences))
-        texts.extend(str(s) for s in sentences)
+        paragraphs.append(Paragraph(kept))
+        owners.extend([block.block_id] * len(kept))
+        texts.extend(str(s) for s in kept)
 
     picked: list[dict] = []
-    # Speed, not safety: LexRank returns an empty tuple for an empty document,
-    # so this only skips loading 580 stop words for a tool-only generation.
     if owners:
         summarizer = LexRankSummarizer()
-        summarizer.stop_words = get_stop_words("english")
+        summarizer.stop_words = stop_words
         document = ObjectDocumentModel(paragraphs)
         # `_get_best_sentences` sorts by rating with a stable sort and then back
         # into document order, so ties keep document order and the result is a
         # subsequence of `texts`. Match it with a cursor rather than `.index()`:
         # sumy's `Sentence` compares by text, so a repeated sentence would
         # otherwise always be attributed to its first occurrence.
+        #
+        # A document LexRank finds no signal in — every term's idf is exactly
+        # zero, which happens for "... !!! ???", for nothing but stop words, and
+        # for two sentences sharing no vocabulary — makes the whole similarity
+        # matrix zero, and `power_method` then normalises by a zero norm. The
+        # ratings come back NaN, sumy's sort over them silently degrades to
+        # input order, and a `RuntimeWarning: invalid value encountered in
+        # divide` reaches the terminal. Ranking nothing is the honest answer:
+        # `sentences_ranked > 0` with an empty `ideas` says "there was prose and
+        # it had no signal", which is exactly what happened. Asking numpy is how
+        # we detect it — the condition is a property of sumy's arithmetic, and
+        # any reimplementation of it here would be a second thing to get wrong.
+        # [E5:10]
         cursor = 0
-        for chosen in summarizer(document, count):
+        try:
+            with numpy.errstate(invalid="raise", divide="raise"):
+                chosen_sentences = summarizer(document, count)
+        except FloatingPointError:
+            chosen_sentences = ()
+        for chosen in chosen_sentences:
             text = str(chosen)
             while cursor < len(texts) and texts[cursor] != text:
                 cursor += 1
@@ -160,6 +237,8 @@ def ideas(session: Session, *, count: int = DEFAULT_IDEAS) -> dict:
         "ideas": picked,
         "sentences_seen": seen,
         "sentences_ranked": len(owners),
+        "sentences_redacted": redacted,
+        "words_ranked": words_ranked,
     }
 
 
@@ -222,10 +301,21 @@ def _write(path: str, payload: object) -> None:
     No fsync. `derived/` is rebuildable by definition, so the durability the
     store pays for here would buy nothing: a torn file loses a rebuild, and the
     rebuild is the command that just ran.
+
+    The redaction gate is here rather than only in `ideas()` because this is the
+    single door into `derived/`: every artifact this module grows later goes
+    through it too, and an artifact that reaches this point carrying a key is a
+    bug upstream, not a sentence to quietly drop. [E5:3]
     """
     data = canonical_json(payload)
+    leaks = _leaks(data, os.path.basename(path))
+    if leaks:
+        raise ValueError(f"refusing to write a secret into derived/: {leaks[0]}")
     parent = os.path.dirname(path)
-    os.makedirs(parent, exist_ok=True)
+    # Not `os.makedirs`: it applies its mode to the leaf only. `derived/` holds
+    # the same transcript text the store does, so it gets the store's stance —
+    # 0700, and never a mode a caller's umask chose. [E5:9]
+    store._mkdir(parent)
     fd, tmp = tempfile.mkstemp(dir=parent, prefix=".deriving-", suffix=".json")
     try:
         with os.fdopen(fd, "wb") as fh:
@@ -237,6 +327,21 @@ def _write(path: str, payload: object) -> None:
         raise
 
 
+def _sweep_temps(home: str) -> None:
+    """Remove half-written artifacts a killed `derive` left behind.
+
+    `_write` unlinks its own temp when the write fails, but not when the process
+    is killed between `mkstemp` and `os.replace`. The leftover is a dotfile in
+    the target directory, `gitrepo.commit` stages dotfiles, and a rebuild never
+    touched it — so it was committed for ever. `.gitignore` stops the commit and
+    this stops the litter, the same two-part answer the store already gives its
+    own temps. [E5:8]
+    """
+    for stray in _glob.glob(os.path.join(home, "derived", "*", "*", "*", ".deriving-*")):
+        with contextlib.suppress(OSError):
+            os.unlink(stray)
+
+
 def build(home: str | None = None, *, count: int = DEFAULT_IDEAS) -> Stats:
     """Rebuild `derived/` from the store. Full rebuild, every generation.
 
@@ -246,18 +351,31 @@ def build(home: str | None = None, *, count: int = DEFAULT_IDEAS) -> Stats:
     tree when it met one would make that preservation worthless.
     """
     resolved = store.resolve_home(home)
+    # Before the loop, not inside it: see `_sumy`. [E5:4]
+    _sumy()
+    _sweep_temps(resolved)
     stats = Stats()
     for stored in store.sessions(resolved):
+        out = derived_dir(resolved, stored)
         try:
             session = parse_generation(stored)
             payload_ideas = ideas(session, count=count)
             payload_timeline = timeline(session)
+            # Inside the try, both of them. Outside, a failure on the second
+            # write aborted the whole build with no skip entry and left the
+            # generation torn: a fresh ideas.json beside a stale timeline.json.
+            # [E5:7]
+            _write(os.path.join(out, "ideas.json"), payload_ideas)
+            _write(os.path.join(out, "timeline.json"), payload_timeline)
         except Exception as exc:  # noqa: BLE001 - a segment run is untrusted data
+            # Leave nothing behind that still asserts facts about a generation
+            # this run could not read or could not finish writing. A stale
+            # artifact beside a skip line is a `derived/` tree that has quietly
+            # stopped being a function of the committed bytes, and `git diff`
+            # shows clean while it happens. [E5:2, E5:7]
+            shutil.rmtree(out, ignore_errors=True)
             stats.skipped.append(f"{stored.key}: {exc!r}")
             continue
-        out = derived_dir(resolved, stored)
-        _write(os.path.join(out, "ideas.json"), payload_ideas)
-        _write(os.path.join(out, "timeline.json"), payload_timeline)
         stats.generations += 1
         stats.ideas += len(payload_ideas["ideas"])
         stats.marks += len(payload_timeline["marks"])

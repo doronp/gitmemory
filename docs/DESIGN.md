@@ -213,8 +213,20 @@ opt-in per remote and refuses unless the redaction gate passed.** Default config
 A startup assertion refuses to run if `$GITMEMORY_HOME` is inside another work tree, and every
 git call is explicit `git -C $GITMEMORY_HOME` — never cwd-inherited **[R1]**.
 
+The `derived/` boundary acts on the **HIGH tier only** — the nine issuer-anchored shapes, not the
+three SUSPECT ones. A sentence carrying a high-confidence key is dropped before ranking and
+counted in `sentences_redacted`; `derive._write` then refuses outright to publish a payload that
+still contains one, because an artifact reaching that door with a key in it is a bug upstream, not
+a sentence to quietly lose. SUSPECT is excluded deliberately: it is `password: "..."`-shaped and
+fires on prose *about* configuration, so acting on it would gut legitimate content to suppress a
+shape the raw copy carries anyway. **`raw/` stays unredacted by design; the push gate is what
+holds it** **[E5:3]**.
+
 `gc.auto` is configured and the daemon periodically runs `git gc --auto`: `raw/` scales O(N),
-but `derived/` is rewritten on every rebuild and orphans blobs **[R2]**.
+but `derived/` is rewritten on every rebuild and orphans blobs **[R2]**. A generation that fails
+mid-rebuild is *removed*, not left behind: a stale artifact beside a skip line is a `derived/`
+tree that has quietly stopped being a function of the committed bytes, and `git diff` shows clean
+while it happens **[E5:2, E5:7]**.
 
 ### 2.5 The contiguity proof
 

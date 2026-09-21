@@ -52,7 +52,7 @@ asserted.
 
 ## Status
 
-Under construction, epoch by epoch. 803 tests, plus one gated on the
+Under construction, epoch by epoch. 828 tests, plus one gated on the
 LongMemEval download (`-m corpus`).
 
 | | | |

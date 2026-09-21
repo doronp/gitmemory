@@ -65,6 +65,10 @@ GITIGNORE = """\
 # (`g<NN>.json`) can spell the partial's name. [E4, review: gitrepo 2]
 raw/*/*/*/.incoming.*
 sessions/*/*/*.tmp.*
+# The third one: `derive._write` publishes by rename too, and its temp is a
+# dotfile in the artifact directory. Swept by `derive._sweep_temps`; anchored
+# here for the same reason as the two above. [E5:8]
+derived/*/*/*/.deriving-*
 """
 
 # Repository-local. The reading half of that is enforced in `_env`, not here.
