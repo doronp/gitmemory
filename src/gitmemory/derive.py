@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import contextlib
 import glob as _glob
+import json
 import os
 import re
 import shutil
@@ -983,7 +984,19 @@ def _write(path: str, payload: object) -> None:
     bug upstream, not a sentence to quietly drop. [E5:3]
     """
     data = canonical_json(payload)
-    leaks = _leaks(data, os.path.basename(path))
+    # Scanned twice, and the second scan is the one that catches things. The
+    # bytes written have to be canonical, and canonical means `ensure_ascii`,
+    # and `ensure_ascii` turns every non-ASCII character into a `\uXXXX` escape
+    # that ends in a hex digit. A hex digit is a `\w`, so an `e` immediately
+    # before a token annihilates the leading `\b` that every high-tier rule
+    # anchors on: `token éghp_AAAA…` scans clean as canonical bytes and dirty as
+    # UTF-8. The upstream gates at `ideas()` and `graph._label` scan raw, which
+    # is why nothing leaks today — but this function's docstring promises to be
+    # the single door, and a door that opens for `é` is not one. [E7 carry-in]
+    leaks = _leaks(data, os.path.basename(path)) or _leaks(
+        json.dumps(payload, ensure_ascii=False).encode("utf-8", "surrogatepass"),
+        os.path.basename(path),
+    )
     if leaks:
         raise ValueError(f"refusing to write a secret into derived/: {leaks[0]}")
     parent = os.path.dirname(path)

@@ -315,7 +315,14 @@ def main(argv: list[str] | None = None) -> int:
         # amount of widening the clause below would have caught it.
         # 130 is the shell's convention for SIGINT. [E4, review: CLI 7]
         return 130
-    except (OSError, RecursionError, RuntimeError, ValueError, sqlite3.Error) as exc:
+    except (
+        OSError,
+        OverflowError,  # `recall -k 99999999999999999999`: SQLite's int is 64-bit
+        RecursionError,
+        RuntimeError,
+        ValueError,
+        sqlite3.Error,
+    ) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

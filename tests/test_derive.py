@@ -741,6 +741,32 @@ def test_the_write_door_refuses_a_secret_no_matter_who_built_the_payload(home):
     assert os.path.exists(target)
 
 
+@pytest.mark.parametrize("before", ["é", "漢", "🙂"], ids=["latin1", "cjk", "astral"])
+def test_the_write_door_does_not_open_for_a_non_ascii_character(home, before):
+    """One `é` used to be enough to walk a token past the last gate.
+
+    The bytes written must be canonical, canonical means `ensure_ascii`, and
+    `ensure_ascii` renders every non-ASCII character as `\\uXXXX` — which ends
+    in a hex digit. A hex digit is a `\\w`, so it annihilates the leading `\\b`
+    that every high-tier rule anchors on, and `token éghp_AAAA…` scanned clean
+    as canonical bytes while scanning dirty as UTF-8.
+
+    Nothing leaked, because `ideas()` and `graph._label` scan raw text upstream.
+    But this function's docstring promises to be *the single door* that any
+    artifact added later can rely on, and a door that opens for `é` is not one.
+    The ASCII case passing is not evidence: it passed throughout. [E7 carry-in]
+    """
+    from gitmemory.records import canonical_json
+
+    target = os.path.join(home, "derived", "claude-code", "sess", "g00", "ideas.json")
+    payload = {"ideas": [{"text": f"token {before}ghp_" + "A" * 36}]}
+    # The precondition is the whole finding: the canonical bytes are clean.
+    assert not derive._leaks(canonical_json(payload)), "precondition: the escape hides it"
+    with pytest.raises(ValueError, match="refusing to write a secret"):
+        derive._write(target, payload)
+    assert not os.path.exists(target)
+
+
 # --- finding 4: a missing extra is an environment fault, not per-generation --- #
 
 

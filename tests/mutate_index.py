@@ -845,9 +845,20 @@ MUTANTS = [
     (
         "main stops handling sqlite3.Error, so a query that reaches the database tracebacks",
         "__main__.py",
-        "    except (OSError, RecursionError, RuntimeError, ValueError, sqlite3.Error) as exc:",
-        "    except (OSError, RecursionError, RuntimeError, ValueError) as exc:",
+        "        sqlite3.Error,\n    ) as exc:",
+        "    ) as exc:",
         "test_search_rejects_nothing_it_can_reach_the_database_with",
+    ),
+    (
+        # `-k` is `type=int` and a Python int has no width; SQLite's is 64-bit.
+        # `OverflowError` is not an `OSError`, a `ValueError` or a
+        # `sqlite3.Error`, so a typo printed a traceback carrying absolute
+        # install paths. [E7 carry-in]
+        "an int too big for sqlite tracebacks out of the CLI",
+        "__main__.py",
+        "        OverflowError,  # `recall -k 99999999999999999999`: SQLite's int is 64-bit\n",
+        "",
+        "test_a_k_too_big_for_sqlite_is_an_error_message_not_a_traceback",
     ),
     # --- E5: derivation ---
     #
@@ -1310,9 +1321,27 @@ MUTANTS = [
     (
         "the single door into derived/ is gated",
         "derive.py",
-        """    leaks = _leaks(data, os.path.basename(path))""",
+        """    leaks = _leaks(data, os.path.basename(path)) or _leaks(
+        json.dumps(payload, ensure_ascii=False).encode("utf-8", "surrogatepass"),
+        os.path.basename(path),
+    )""",
         """    leaks = []""",
         "test_the_write_door_refuses_a_secret_no_matter_who_built_the_payload",
+    ),
+    (
+        # Only the second scan is deleted, and the first one is a real gate, so
+        # this mutant still refuses every ASCII secret. What it lets through is
+        # the one shape the escape hides: a non-ASCII character immediately
+        # before the token, which `ensure_ascii` turns into a `\\uXXXX` ending in
+        # a hex digit and so eats the `\\b` the rule anchors on. [E7 carry-in]
+        "the door scans only the escaped bytes, so one accent walks a token past it",
+        "derive.py",
+        """ or _leaks(
+        json.dumps(payload, ensure_ascii=False).encode("utf-8", "surrogatepass"),
+        os.path.basename(path),
+    )""",
+        "",
+        "test_the_write_door_does_not_open_for_a_non_ascii_character",
     ),
     # --- E5:4 an environment fault is not N pieces of bad data ---
     (

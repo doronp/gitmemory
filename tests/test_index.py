@@ -644,7 +644,14 @@ def test_a_separator_free_megabyte_does_not_hang_the_build(home, src):
     store.capture(src, "claude-code", "sess", home=home)
     started = time.monotonic()
     assert index.build(home).blocks == 1
-    assert time.monotonic() - started < 10, "the path regex went quadratic again"
+    # 1.5 s, not 10. The whole build is 0.15 s here, so 10 would have let a 60x
+    # regression through green — a guard against a quadratic blow-up that only
+    # fires once the blow-up is already catastrophic is not a guard. 1.5 s is
+    # 10x the measured cost, which leaves room for a loaded machine and still
+    # fails on anything super-linear: the unbounded regex took 1.34 s on 20 KB
+    # and 5.27 s on 40 KB, so at this input it is minutes. [E7 carry-in]
+    elapsed = time.monotonic() - started
+    assert elapsed < 1.5, f"the path regex went quadratic again: {elapsed:.2f}s"
 
 
 def test_two_sessions_holding_the_same_turn_both_come_back(home, src, tmp_path):
@@ -874,6 +881,21 @@ def test_cli_index_then_recall(home, src, capsys):
 def test_cli_recall_without_an_index_says_so(home, capsys):
     assert main(["--home", home, "recall", "marmoset"]) == 2
     assert "run `gitmemory index`" in capsys.readouterr().err
+
+
+def test_a_k_too_big_for_sqlite_is_an_error_message_not_a_traceback(home, src, capsys):
+    """`-k` is `type=int`, and a Python int has no width. SQLite's does.
+
+    `OverflowError` is not an `OSError`, a `ValueError` or a `sqlite3.Error`, so
+    it went straight past `main`'s handler and printed a traceback — which
+    carries absolute install paths, i.e. the CLI names directories on the
+    machine as its response to a typo. [E7 carry-in]"""
+    write(src, [user("u1", "marmoset")])
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "marmoset", "-k", "9" * 20]) == 2
+    assert "error: " in capsys.readouterr().err
 
 
 def test_cli_verify_and_index_refuse_a_path_that_is_not_a_store(tmp_path, capsys):
