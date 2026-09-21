@@ -3212,7 +3212,7 @@ MUTANTS = [
     (
         "the session id enters every turn at whatever length the file chose",
         "src/gitmemory/adapters/claude_code.py",
-        "    if len(value) <= _MAX_SESSION_ID:\n        return value",
+        "    if len(value) <= _MAX_ID:\n        return value",
         "    if True:\n        return value",
         "test_a_long_session_id_is_bounded_before_it_reaches_every_turn",
     ),
@@ -3221,8 +3221,8 @@ MUTANTS = [
         # merges two sessions that share a head.
         "the bound keeps a prefix and drops the digest, so two ids can collide",
         "src/gitmemory/adapters/claude_code.py",
-        '    return f"{value[: _MAX_SESSION_ID - 17]}-{sha256_text(value)[:16]}"',
-        "    return value[:_MAX_SESSION_ID]",
+        '    return f"{value[: _MAX_ID - 17]}-{sha256_text(value)[:16]}"',
+        "    return value[:_MAX_ID]",
         "test_two_long_session_ids_stay_two_sessions",
     ),
     (
@@ -3230,7 +3230,7 @@ MUTANTS = [
         # every real transcript carries, which churns every turn_id in the store.
         "every session id is rewritten, including the ones that were fine",
         "src/gitmemory/adapters/claude_code.py",
-        "    if len(value) <= _MAX_SESSION_ID:\n        return value",
+        "    if len(value) <= _MAX_ID:\n        return value",
         "    if False:\n        return value",
         "test_a_short_session_id_is_passed_through_untouched",
     ),
@@ -3316,6 +3316,35 @@ MUTANTS = [
         "    assert s.records_seen >= lines, (",
         "    assert True, (",
         "test_the_line_floor_is_counted_without_the_reader",
+    ),
+    # --- E7 parsing-F7 + F11 ---
+    (
+        "a token count is multiplied at whatever size the line chose",
+        "src/gitmemory/adapters/claude_code.py",
+        "        return min(max(v, 0), 2**53)",
+        "        return v",
+        "test_a_token_count_too_big_for_a_float_does_not_crash_the_cost_column",
+    ),
+    (
+        "a negative token count bills a refund",
+        "src/gitmemory/adapters/claude_code.py",
+        "        return min(max(v, 0), 2**53)",
+        "        return min(v, 2**53)",
+        "test_a_token_count_too_big_for_a_float_does_not_crash_the_cost_column",
+    ),
+    (
+        "model, request_id and ts are typed but not bounded",
+        "src/gitmemory/adapters/claude_code.py",
+        '            model=_bounded_id(message.get("model")),',
+        '            model=_str_or_none(message.get("model")),',
+        "test_the_other_identifiers_are_bounded_too_including_the_usage_keys",
+    ),
+    (
+        "a usage key is whatever length the line chose",
+        "src/gitmemory/adapters/claude_code.py",
+        "        return {_bounded_id(k) or k: _scrub(v, depth + 1) for k, v in value.items()}",
+        "        return {k: _scrub(v, depth + 1) for k, v in value.items()}",
+        "test_the_other_identifiers_are_bounded_too_including_the_usage_keys",
     ),
 ]
 

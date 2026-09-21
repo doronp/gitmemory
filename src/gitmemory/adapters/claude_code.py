@@ -72,12 +72,17 @@ _MAX_REASONS = 64
 # dotfiles, and the charset bans every glob metacharacter and separator.
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
-# A session id is re-hashed once per turn, because it is part of every
-# `turn_id`, and written once per turn by `to_canonical`. Both are therefore
-# O(turns x len(session_id)) for an input that is O(turns + len(session_id)).
-# Real ones are 36-character uuids; the file can say anything. Same 128 the
-# path rule above uses, so the two bounds cannot drift apart.
-_MAX_SESSION_ID = 128
+# Every short identifier a line supplies: `sessionId`, `model`, `requestId`,
+# `timestamp`, and the keys of `usage`. All of them are re-hashed or rewritten
+# once per turn, so an unbounded one turns a linear parse quadratic, and all of
+# them reach canonical JSON and the index — that is, git.
+#
+# Measured over claude-code-log's 162 fixtures, 4,571 records: the longest
+# `model` is 26 characters, `requestId` 28, `timestamp` 27, `usage` key 27,
+# `uuid` 36. 128 is 3.5x the longest real value of any of them, and is the same
+# 128 the path rule above uses, so the bounds cannot drift apart. One constant
+# rather than five, for the same reason. [E7 parsing-F5 + F11]
+_MAX_ID = 128
 
 
 def _get(obj: dict, *names: str, default=None):
@@ -108,8 +113,8 @@ def _safe_type(line_type) -> str:
     return line_type if isinstance(line_type, str) and _TYPE_RE.match(line_type) else "other"
 
 
-def _session_id(value) -> str | None:
-    """A `sessionId` from the file, bounded so hashing it stays O(1) per turn.
+def _bounded_id(value) -> str | None:
+    """A short identifier from the file, bounded so handling it stays O(1).
 
     `Turn.__post_init__` feeds the session id into a fresh SHA-256 for every
     turn, so a long one turns a linear parse quadratic. Measured on two
@@ -117,21 +122,29 @@ def _session_id(value) -> str | None:
     parses in 0.13 s CPU, a 1,000,000-character id in 6.75 s — 52x the work
     for 1.6x the bytes. `to_canonical` has the same shape in space.
 
-    Truncated with a digest rather than rejected, so two long ids stay two
-    ids. Rejecting would fall back to the filename stem, which two transcripts
-    in different directories can share — trading a cost bug for a correctness
-    one. The verbatim value is still in every line's `native`.
+    `model`, `requestId`, `timestamp` and the keys of `usage` are the same
+    shape of problem one layer along: each is written once per turn into
+    canonical JSON and once per turn into the index, and none of them was
+    bounded. Measured before this: a single line carrying 200,000-character
+    values for all three, and a 100,000-character usage key, put every one of
+    them into the record verbatim. [E7 parsing-F11]
 
-    Charset is deliberately not policed here. This id is not a path component
+    Truncated with a digest rather than rejected, so two long values stay two
+    values — a `model` collapsed to a constant would merge two models' spend,
+    and a rejected session id falls back to the filename stem, which two
+    transcripts in different directories can share. Rejecting trades a cost bug
+    for a correctness one. The verbatim value is still in every line's `native`.
+
+    Charset is deliberately not policed here. None of these is a path component
     — `store.session_id_for` computes that separately and `_safe` guards it —
     and every render boundary already scrubs: the CLI prints through
     `safe_text` and `derive` scrubs every string it writes. [E7 parsing-F5]
     """
     if not isinstance(value, str) or not value:
         return None
-    if len(value) <= _MAX_SESSION_ID:
+    if len(value) <= _MAX_ID:
         return value
-    return f"{value[: _MAX_SESSION_ID - 17]}-{sha256_text(value)[:16]}"
+    return f"{value[: _MAX_ID - 17]}-{sha256_text(value)[:16]}"
 
 
 def _scrub(value, depth: int = 0):
@@ -148,7 +161,12 @@ def _scrub(value, depth: int = 0):
     if depth >= _MAX_DEPTH:
         return "[nesting too deep]"
     if isinstance(value, dict):
-        return {k: _scrub(v, depth + 1) for k, v in value.items()}
+        # Keys are canonical-JSON output too, and were the one string here that
+        # nothing bounded — a 100,000-character `usage` key reached the record
+        # verbatim. Bounded with a digest rather than elided like a value,
+        # because two long keys eliding to one marker would merge two entries.
+        # [E7 parsing-F11]
+        return {_bounded_id(k) or k: _scrub(v, depth + 1) for k, v in value.items()}
     if isinstance(value, list):
         return [_scrub(v, depth + 1) for v in value]
     return value
@@ -297,7 +315,7 @@ def parse(path: str) -> Session:
             bump(f"skip:{_safe_type(line_type)}")
             continue
 
-        sid = _session_id(_get(obj, "sessionId", "session_id"))
+        sid = _bounded_id(_get(obj, "sessionId", "session_id"))
         if sid and not session.session_id:
             session.session_id = sid
         session.agent_version = session.agent_version or _str_or_none(obj.get("version"))
@@ -385,9 +403,11 @@ def parse(path: str) -> Session:
             role=role,
             byte_offset=rec.offset,
             byte_len=rec.length,
-            model=_str_or_none(message.get("model")),
-            ts=_str_or_none(obj.get("timestamp")),
-            request_id=_str_or_none(_get(obj, "requestId", "request_id")),
+            # Bounded, not merely typed: each is written once per turn into
+            # canonical JSON and once per turn into the index. [E7 parsing-F11]
+            model=_bounded_id(message.get("model")),
+            ts=_bounded_id(obj.get("timestamp")),
+            request_id=_bounded_id(_get(obj, "requestId", "request_id")),
             uuid=uuid,
             # null at every compaction boundary; logicalParentUuid survives it.
             parent_uuid=_str_or_none(_get(obj, "parentUuid", "logicalParentUuid")),
@@ -573,8 +593,24 @@ def estimate_cost(model: str | None, usage: dict) -> dict | None:
     rate_in, rate_out = PRICES_USD_PER_MTOK[match]
 
     def tok(key: str) -> int:
+        """One token count, clamped into the range arithmetic survives.
+
+        JSON integers are arbitrary precision and Python's are too, so a
+        transcript saying `"input_tokens": 1e400` as an integer literal used to
+        raise `OverflowError: int too large to convert to float` here — the
+        dashboard's cost column crashing on a number a line chose. Negatives
+        are the same input the other way round: unclamped, a line could bill
+        itself a refund.
+
+        `2**53` is where float stops counting integers exactly, so past it the
+        multiplication was already fiction; clamping there keeps the estimate
+        monotonic in the input instead of resetting an absurd count to zero,
+        which would read as "free". [E7 parsing-F7]
+        """
         v = usage.get(key)
-        return v if isinstance(v, int) and not isinstance(v, bool) else 0
+        if not isinstance(v, int) or isinstance(v, bool):
+            return 0
+        return min(max(v, 0), 2**53)
 
     usd = (
         tok("input_tokens") * rate_in

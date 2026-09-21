@@ -1447,7 +1447,7 @@ def test_a_long_session_id_is_bounded_before_it_reaches_every_turn(tmp_path):
         {"type": "user", "uuid": "u1", "message": {"content": "x"}},
     ]
     session = cc.parse(write(tmp_path, "a.jsonl", inherited))
-    assert len(session.session_id) <= cc._MAX_SESSION_ID
+    assert len(session.session_id) <= cc._MAX_ID
     assert {len(t.session_id) for t in session.turns} == {len(session.session_id)}
 
     per_line = [
@@ -1456,7 +1456,7 @@ def test_a_long_session_id_is_bounded_before_it_reaches_every_turn(tmp_path):
     ]
     session = cc.parse(write(tmp_path, "b.jsonl", per_line))
     assert len(session.turns) == 3, "the fixture lost a line; it proves less"
-    assert max(len(t.session_id) for t in session.turns) <= cc._MAX_SESSION_ID
+    assert max(len(t.session_id) for t in session.turns) <= cc._MAX_ID
 
 
 def test_two_long_session_ids_stay_two_sessions(tmp_path):
@@ -1567,3 +1567,77 @@ def test_a_line_that_fails_at_its_first_byte_is_still_an_ordinary_bad_line(tmp_p
 
     assert [t.uuid for t in s.turns] == ["u1"]
     assert s.skipped == {"json_decode_error": 1}
+
+
+# --- E7 parsing-F7 + F11: numbers and names a line chose the size of ---
+
+
+def test_a_token_count_too_big_for_a_float_does_not_crash_the_cost_column(tmp_path):
+    """JSON integers are arbitrary precision. So are Python's. Floats are not.
+
+    `"input_tokens": <10**400>` is a valid JSON integer and a valid Python
+    one, and multiplying it by a price raised `OverflowError: int too large to
+    convert to float` — the dashboard's cost column crashing on a number a
+    transcript chose. Negative counts are the same input mirrored: a line
+    billing itself a refund.
+
+    Clamped rather than zeroed, so the estimate stays monotonic in the input.
+    An absurd count reading as $0.00 would say "free", which is the one thing
+    this column must never say by accident. [E7 parsing-F7]
+    """
+    huge = cc.estimate_cost("claude-sonnet-4-5", {"input_tokens": 10**400})
+    assert huge is not None and huge["usd"] > 0
+
+    refund = cc.estimate_cost("claude-sonnet-4-5", {"input_tokens": -(10**9)})
+    assert refund is not None and refund["usd"] == 0.0
+
+    ordinary = cc.estimate_cost("claude-sonnet-4-5", {"input_tokens": 1_000_000})
+    assert 0 < ordinary["usd"] < huge["usd"], "the clamp must not invert the order"
+
+
+def test_the_other_identifiers_are_bounded_too_including_the_usage_keys(tmp_path):
+    """`sessionId` was bounded by F5 and the rest of its family was not.
+
+    `model`, `requestId`, `timestamp` and the keys of `usage` each get written
+    once per turn into canonical JSON and once per turn into the index, so each
+    is the same cost and the same git bloat one layer along. Measured before
+    this: one line carrying 200,000-character values for all three, plus a
+    100,000-character usage key, put every one of them into the record
+    verbatim.
+
+    Longest real values over the 162-fixture corpus: model 26, requestId 28,
+    timestamp 27, usage key 27. The bound is 128. [E7 parsing-F11]
+    """
+    lines = [
+        {
+            "type": "assistant",
+            "uuid": "a1",
+            "sessionId": "s1",
+            "requestId": "R" * 200_000,
+            "timestamp": "T" * 200_000,
+            "message": {
+                "model": "M" * 200_000,
+                "content": [{"type": "text", "text": "hi"}],
+                "usage": {"K" * 100_000: 1, "input_tokens": 5},
+            },
+        }
+    ]
+    t = check_adapter(cc, write(tmp_path, "s.jsonl", lines)).turns[0]
+
+    assert len(t.model) == cc._MAX_ID
+    assert len(t.request_id) == cc._MAX_ID
+    assert len(t.ts) == cc._MAX_ID
+    assert sorted(len(k) for k in t.usage) == [12, cc._MAX_ID]
+    assert t.usage["input_tokens"] == 5, "bounding the keys must not lose the real one"
+
+
+def test_two_long_model_names_stay_two_models(tmp_path):
+    """A `model` collapsed to a constant merges two models' spend into one row.
+
+    This is why the bound truncates with a digest rather than eliding to a
+    marker the way `_scrub` treats an over-long *value*: a spend table keyed on
+    a name that two different models share is a bill nobody can read.
+    [E7 parsing-F11]
+    """
+    assert cc._bounded_id("A" * 5000) != cc._bounded_id("A" * 4999 + "B")
+    assert cc._bounded_id("claude-sonnet-4-5") == "claude-sonnet-4-5"
