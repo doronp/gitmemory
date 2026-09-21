@@ -15,7 +15,7 @@ import re
 import sqlite3
 import sys
 
-from . import daemon, index, redact, store
+from . import daemon, derive, index, redact, store
 from .adapters import get as get_adapter
 
 # Everything this module prints is bytes an attacker may have chosen: a recall
@@ -198,6 +198,18 @@ def _index(args) -> int:
     return 0
 
 
+def _derive(args) -> int:
+    if (code := _not_a_store(args.home)) is not None:
+        return code
+    stats = derive.build(args.home, count=args.ideas)
+    for line in stats.skipped:
+        print(f"skipped {line}", file=sys.stderr)
+    print(f"{stats.generations} generation(s)  {stats.ideas} idea(s)  {stats.marks} mark(s)")
+    # Same rule as `index`: derived artifacts are rebuildable, so a generation
+    # nothing can parse is reported and is not a failure of the store.
+    return 0
+
+
 def _recall(args) -> int:
     path = args.db or index.db_path(args.home)
     if not os.path.exists(path):
@@ -257,6 +269,12 @@ def main(argv: list[str] | None = None) -> int:
     idx = sub.add_parser("index", help="rebuild the retrieval index from the store")
     idx.add_argument("--db", default=None, help="database path (default $GITMEMORY_HOME/index/)")
     idx.set_defaults(fn=_index)
+
+    der = sub.add_parser("derive", help="rebuild derived/ — key ideas and a timeline")
+    der.add_argument(
+        "--ideas", type=int, default=derive.DEFAULT_IDEAS, help="key sentences per generation"
+    )
+    der.set_defaults(fn=_derive)
 
     rec = sub.add_parser("recall", help="search the index; one line per turn, best first")
     rec.add_argument("query")

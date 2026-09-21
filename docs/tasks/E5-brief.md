@@ -101,8 +101,9 @@ the other's source:
 # src/gitmemory/derive.py — Claude
 @dataclass(frozen=True, slots=True)
 class Decision:
-    kind: str        # "directive" | "reversal"
+    kind: str  # "directive" | "reversal"
     source_ref: str  # a Block.block_id belonging to this session
+
 
 def decisions(session: Session) -> list[Decision]: ...
 ```

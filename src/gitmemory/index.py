@@ -278,7 +278,7 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
         # exact failure this guard says it prevents. All-or-nothing per
         # generation also keeps a half-written generation out of the digest. [E3]
         try:
-            session = _parse(stored)
+            session = parse_generation(stored)
             rows = [_row(stored, turn, block) for turn in session.turns for block in turn.blocks]
         except Exception as exc:  # noqa: BLE001 - a segment run is untrusted data
             # One unparseable generation must not cost the index every other
@@ -302,8 +302,13 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
     return Stats(generations, turns, blocks, tuple(skipped), digest.hexdigest())
 
 
-def _parse(stored: store.Stored) -> Session:
+def parse_generation(stored: store.Stored) -> Session:
     """Parse a generation's bytes as one transcript.
+
+    Public because `derive` needs exactly this and a second copy of it would be
+    a second place for the concatenation rule below to be got wrong. It lives
+    here rather than in `store` because the store does not parse — it moves
+    bytes and proves they tile — and that separation is worth an odd import.
 
     The concatenation is the transcript — a segment is a copy window, not a
     unit of meaning, and a record can straddle the cut. Parsing segments

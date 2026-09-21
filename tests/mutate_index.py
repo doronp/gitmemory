@@ -697,6 +697,168 @@ MUTANTS = [
         "    except (OSError, RecursionError, RuntimeError, ValueError) as exc:",
         "test_search_rejects_nothing_it_can_reach_the_database_with",
     ),
+    # --- E5: derivation ---
+    #
+    # These were run as negative controls *before* the module was committed, one
+    # per test in `tests/test_derive.py`, and two of them came back VACUOUS on
+    # the first attempt:
+    #
+    #   - "a timeline mark stops naming its turn" changed nothing, because the
+    #     fixture was `conversation()`, which produces no events at all. The test
+    #     iterated an empty list and asserted nothing. Fixed by giving it a
+    #     fixture with a compaction in it and a count assertion on the marks.
+    #   - "the empty-document guard goes" changed nothing either, because sumy
+    #     returns an empty tuple for an empty document — so the guard is speed,
+    #     not safety, and the test was renamed to pin what it actually holds up:
+    #     an empty generation gets its artifacts written rather than skipped.
+    #
+    # Both are the shape the E4 vacuity audit exists to find, caught before the
+    # commit rather than two epochs later.
+    (
+        "an idea cites something that is not a block id",
+        "derive.py",
+        "        owners.extend([block.block_id] * len(sentences))",
+        "        owners.extend([block.kind] * len(sentences))",
+        "test_every_idea_names_a_block_that_exists_in_the_session",
+    ),
+    (
+        "attribution by first occurrence instead of a cursor walk",
+        "derive.py",
+        """        cursor = 0
+        for chosen in summarizer(document, count):
+            text = str(chosen)
+            while cursor < len(texts) and texts[cursor] != text:
+                cursor += 1
+            if cursor >= len(texts):  # pragma: no cover - not a subsequence
+                break
+            picked.append({"text": text, "source_ref": owners[cursor], "rank": len(picked)})
+            cursor += 1""",
+        """        for chosen in summarizer(document, count):
+            text = str(chosen)
+            cursor = texts.index(text)
+            picked.append({"text": text, "source_ref": owners[cursor], "rank": len(picked)})""",
+        "test_an_idea_is_attributed_to_the_block_it_was_read_out_of",
+    ),
+    (
+        "a timeline mark stops naming its turn",
+        "derive.py",
+        '                "source_ref": event.anchor,',
+        '                "source_ref": "",',
+        "test_every_timeline_mark_names_the_turn_that_caused_it",
+    ),
+    (
+        "the tail claims no turns, so the fold stops accounting for them",
+        "derive.py",
+        '            "turns_since": len(turns) - i,',
+        '            "turns_since": 0,',
+        "test_the_timeline_accounts_for_every_turn",
+    ),
+    (
+        "the span boundary is inclusive, so a mark eats the turn it sits on",
+        "derive.py",
+        "        while i < len(turns) and turns[i].byte_offset < event.byte_offset:",
+        "        while i < len(turns) and turns[i].byte_offset <= event.byte_offset:",
+        "test_a_compaction_splits_the_timeline_where_the_boundary_is",
+    ),
+    (
+        "the payload grows a build timestamp",
+        "derive.py",
+        "        out = derived_dir(resolved, stored)",
+        '        payload_timeline["built_at"] = __import__("time").monotonic()\n'
+        "        out = derived_dir(resolved, stored)",
+        "test_deriving_twice_changes_nothing_in_git",
+    ),
+    (
+        "prose order comes out of a set, so it varies with the hash seed",
+        "derive.py",
+        """    for turn in session.turns:
+        for block in turn.blocks:
+            if block.kind == "text" and block.text.strip():
+                yield block""",
+        """    by_text = {
+        b.text: b for t in session.turns for b in t.blocks if b.kind == "text" and b.text.strip()
+    }
+    for body in set(by_text):
+        yield by_text[body]""",
+        "test_derived_bytes_are_identical_in_a_fresh_interpreter",
+    ),
+    (
+        "derived/ joins index/ in the store's .gitignore",
+        "gitrepo.py",
+        "/index/\n# Hook drop-box",
+        "/index/\n/derived/\n# Hook drop-box",
+        "test_derived_is_committed_rather_than_ignored",
+    ),
+    (
+        "prose stops meaning text, so tool payloads are ranked",
+        "derive.py",
+        '            if block.kind == "text" and block.text.strip():',
+        "            if block.text.strip():",
+        "test_a_tool_payload_never_becomes_a_key_idea",
+    ),
+    (
+        "ideas are presented in some order other than the one they were said in",
+        "derive.py",
+        '        "ideas": picked,',
+        '        "ideas": picked[::-1],',
+        "test_ideas_come_back_in_the_order_they_were_said",
+    ),
+    (
+        "the sentence cap stops being cumulative, so it never binds",
+        "derive.py",
+        "        room = MAX_SENTENCES - len(owners)",
+        "        room = MAX_SENTENCES",
+        "test_a_session_past_the_sentence_cap_says_so",
+    ),
+    (
+        "a generation with nothing to say is skipped instead of written",
+        "derive.py",
+        "        out = derived_dir(resolved, stored)",
+        '        if not payload_ideas["ideas"]:\n            continue\n'
+        "        out = derived_dir(resolved, stored)",
+        "test_a_session_with_no_prose_still_gets_its_artifacts_written",
+    ),
+    (
+        "one unparseable generation takes the whole build down",
+        "derive.py",
+        """            stats.skipped.append(f"{stored.key}: {exc!r}")
+            continue""",
+        "            raise",
+        "test_one_unparseable_generation_does_not_cost_the_others",
+    ),
+    (
+        "a skipped generation stops being reported",
+        "__main__.py",
+        """    for line in stats.skipped:
+        print(f"skipped {line}", file=sys.stderr)
+    print(f"{stats.generations} generation(s)  {stats.ideas} idea(s)  {stats.marks} mark(s)")""",
+        '    print(f"{stats.generations} generation(s)  '
+        '{stats.ideas} idea(s)  {stats.marks} mark(s)")',
+        "test_a_skipped_generation_is_reported_on_stderr",
+    ),
+    (
+        "`derive` stops checking that it was pointed at a store",
+        "__main__.py",
+        """def _derive(args) -> int:
+    if (code := _not_a_store(args.home)) is not None:
+        return code
+""",
+        "def _derive(args) -> int:\n",
+        "test_cli_derive_refuses_a_path_that_is_not_a_store",
+    ),
+    (
+        "the derived path is built from the manifest's fields, not its location",
+        "derive.py",
+        """    session_dir, gen_file = os.path.split(stored.manifest)
+    agent_dir, session = os.path.split(session_dir)
+    agent = os.path.basename(agent_dir)
+    return os.path.join(home, "derived", agent, session, os.path.splitext(gen_file)[0])""",
+        """    _, gen_file = os.path.split(stored.manifest)
+    return os.path.join(
+        home, "derived", stored.agent, stored.session_id, os.path.splitext(gen_file)[0]
+    )""",
+        "test_derived_mirrors_the_manifest_path_not_the_manifest_contents",
+    ),
 ]
 
 

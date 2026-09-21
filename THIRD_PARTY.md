@@ -71,6 +71,27 @@ code, not merely the copyright line.** Verbatim upstream texts:
   `ingest/harness/claude_code.py:classify_claude_code` informed this project's
   line classification. No code copied; the approach is credited.
 
+## Depended on, not vendored
+
+Not redistributed here, so no licence text travels with this repository — but
+the project's rule is that attribution lands when the first line of code
+depends on something, and `src/gitmemory/derive.py` now does.
+
+| Package | Version verified | Licence | Used for |
+|---|---|---|---|
+| `sumy` | 0.13.0 | Apache-2.0 | LexRank over prose blocks (`derive.ideas`) |
+| `numpy` | ≥2.0 | BSD-3-Clause | LexRank's matrix; sumy does not declare it |
+
+`sumy`'s default tokenizer downloads an `nltk` `punkt` model on first use.
+gitmemory never reaches it: `derive._Tok` supplies the two methods sumy's
+`Sentence` actually calls, so the derivation path stays offline. That is a
+property, not an accident — see `docs/tasks/E5-dependency-verification.md`.
+
+`graphifyy` 0.9.65 (Apache-2.0 by `License-Expression` in the wheel; PyPI's
+JSON licence field is empty, which is a packaging gap and not a licence gap)
+is declared in the `derive` extra and gets its row here when the decision graph
+clears its gate and the first line of code imports it.
+
 ## Not taken
 
 Storage layers, indexes and ingest pipelines were read and deliberately not

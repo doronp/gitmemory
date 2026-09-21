@@ -326,13 +326,20 @@ Not taken: every storage layer, every index, every pipeline. Those are where the
 
 ### 2.6 Derivation — deterministic, no LLM in the automatic path
 
-| Artifact | Method | Deterministic |
-|---|---|---|
-| Key ideas | `sumy` LexRank/TextRank over prose blocks | yes |
-| Key phrases | `KeyBERT` + Model2Vec backend, fixed seed | yes |
-| Timeline | fold over `Event` + `Turn` | yes |
-| Decision graph | structural → **graphify** (`build_from_json` → cluster → export) | yes, **gated** |
-| Titles/labels | optional local model at an **explicit gate only**, named in config | no — marked |
+| Artifact | Method | Deterministic | State |
+|---|---|---|---|
+| Key ideas | `sumy` LexRank over prose blocks, each with its `block_id` | yes | shipped, E5 |
+| Timeline | fold over `Event` + `Turn`, with a tail so every turn is in a span | yes | shipped, E5 |
+| Decision graph | structural → **graphify** (`build_from_json` → cluster → export) | yes, **gated** | E5, gated |
+| Titles/labels | optional local model at an **explicit gate only**, named in config | no — marked | not built |
+
+**[E5 — the `Key phrases` row is gone.** It named `KeyBERT` + a Model2Vec backend. KeyBERT
+pulls torch and transformers whatever backend it is handed: 42 packages, five of them heavy,
+for a keyphrase list nothing downstream reads. Deleted rather than deferred, because a row in
+this table is a promise. `docs/tasks/E5-dependency-verification.md` has the closure counts.
+The declared extra is `sumy>=0.13, numpy>=2.0, graphifyy>=0.9.65` — `numpy` because LexRank
+hard-requires it and the old table did not say so, and `networkx` is graphify's to pin, not
+ours.**]**
 
 **[E4, review: docs 10 — the row above used to name `qwen3.5:35b` and quote "46 tok/s measured". No such model exists; nothing in this repository measured it. A fabricated number in the table about *not trusting generated text* is the worst place in the document for one, so the model is now config and the number is gone. E5 names whatever is actually run and publishes what it actually measures.]**
 
