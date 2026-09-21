@@ -28,7 +28,12 @@ from .longmemeval import Instance
 from .synth import to_transcript
 
 Retrieve = Callable[[str, int], list[int]]
-Factory = Callable[[Instance, bytes], Retrieve]
+# A session id and the transcript, and nothing else. An arm handed the whole
+# `Instance` is handed `answer` and `answer_session_ids` at index-build time,
+# which is a channel for ranking the evidence first without retrieving it.
+# `bench/test_bench.py` pins the narrowing with the question and the answer as
+# sentinels. [E5]
+Factory = Callable[[str, bytes], Retrieve]
 
 # Four numbers the gate is built out of. They are policy, not measurement, so
 # they live here named rather than inline, where a reader can disagree with one
@@ -374,8 +379,10 @@ def score(
             answer_sessions = set(inst.answer_session_ids)
             boundaries = [e.byte_offset for e in parsed.events if e.kind == "compaction"]
 
-            candidate = retrieve_factory(inst, transcript.bytes_data)
-            built = {name: fn(inst, transcript.bytes_data) for name, fn in extra.items()}
+            candidate = retrieve_factory(inst.question_id, transcript.bytes_data)
+            built = {
+                name: fn(inst.question_id, transcript.bytes_data) for name, fn in extra.items()
+            }
             try:
                 ranked: dict[str, list[int]] = {
                     "candidate": candidate(inst.question, k),

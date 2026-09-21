@@ -289,7 +289,7 @@ def test_the_question_is_never_written_into_the_haystack():
     transcript = synth.to_transcript(inst, seed=5, compaction=None)
     assert inst.question.encode() not in transcript.bytes_data
 
-    retriever = gitmemory_factory(inst, transcript.bytes_data)
+    retriever = gitmemory_factory(inst.question_id, transcript.bytes_data)
     try:
         ranked = retriever(inst.question, 10)
     finally:
@@ -478,7 +478,7 @@ def test_an_overwhelming_difference_still_reports_a_nonzero_p():
 # --------------------------------------------------------------------------
 
 
-def dead_factory(instance, transcript_bytes):
+def dead_factory(session_id, transcript_bytes):
     return lambda query, k: []
 
 
@@ -560,9 +560,9 @@ def test_the_shuffled_arm_is_asked_another_instances_question():
     """
     seen: dict[str, list[str]] = {}
 
-    def recording(instance, transcript_bytes):
+    def recording(session_id, transcript_bytes):
         def retrieve(query, k):
-            seen.setdefault(instance.question_id, []).append(query)
+            seen.setdefault(session_id, []).append(query)
             return []
 
         return retrieve
@@ -578,6 +578,51 @@ def test_the_shuffled_arm_is_asked_another_instances_question():
         others = [q for q in queries if q != by_id[qid]]
         assert len(others) == 1
         assert others[0] in questions
+
+
+def test_an_arm_is_handed_a_session_id_and_bytes_and_nothing_else():
+    """The cheat channel a wider signature left open.
+
+    `Factory` used to take the whole `Instance`, and the only thing any arm
+    wanted from it was `question_id` to capture under. The rest came along:
+    `answer`, and `answer_session_ids`, which names the very session the metric
+    scores you for ranking first. An arm could have returned that session's
+    offsets without reading a word of the transcript and scored a perfect MRR.
+    None did — this is about what the contract permits, not about a bug.
+
+    So assert the contract itself rather than the absence of a symptom: two
+    positional arguments, the id and the bytes, no `Instance` anywhere, and no
+    keyword smuggling a third. The question and the answer are checked against
+    both arguments as well, which is cheap and catches the obvious re-widening.
+    What is *not* claimed: the transcript contains the evidence turn, so an arm
+    is still handed the answer's content — it just is not told which session it
+    is in, and finding out is the task. [E5]
+    """
+    seen: list[tuple[tuple, dict]] = []
+
+    def recording(*args, **kwargs):
+        seen.append((args, kwargs))
+        return lambda query, k: []
+
+    instances = corpus()
+    score.score(instances, recording, k=10, compaction_modes=[None])
+
+    assert len(seen) == len(instances), "one build per instance"
+    ids = {i.question_id for i in instances}
+    for args, kwargs in seen:
+        assert not kwargs, f"a third channel opened as a keyword: {kwargs}"
+        assert len(args) == 2, f"the contract is (session_id, transcript_bytes): {args}"
+        session_id, raw = args
+        assert isinstance(session_id, str) and session_id in ids, session_id
+        assert isinstance(raw, bytes)
+        assert not isinstance(session_id, lm.Instance)
+    by_id = {i.question_id: i for i in instances}
+    for (session_id, raw), _ in seen:
+        inst = by_id[session_id]
+        text = raw.decode("utf-8", "replace")
+        assert inst.question not in text, "the question reached the index builder"
+        assert inst.answer not in text, "the answer reached the index builder"
+        assert inst.answer not in session_id
 
 
 def test_abstention_instances_are_excluded():
@@ -749,7 +794,7 @@ def test_the_store_the_arm_builds_is_cleaned_up():
     """One temp store per instance per mode; `__del__` was not going to do it."""
     inst = make_instance(0)
     raw = synth.to_transcript(inst, seed=1, compaction=None).bytes_data
-    retriever = gitmemory_factory(inst, raw)
+    retriever = gitmemory_factory(inst.question_id, raw)
     home = retriever.temp_home
     assert Path(home).is_dir()
     retriever.close()

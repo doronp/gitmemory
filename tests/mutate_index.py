@@ -375,6 +375,13 @@ MUTANTS = [
     # candidate arm — so the harness that was supposed to gate E3 could not
     # notice being broken. [E3]
     (
+        "an arm is handed the whole Instance, answer and evidence label included",
+        "bench/score.py",
+        "            candidate = retrieve_factory(inst.question_id, transcript.bytes_data)",
+        "            candidate = retrieve_factory(inst, transcript.bytes_data)",
+        "test_an_arm_is_handed_a_session_id_and_bytes_and_nothing_else",
+    ),
+    (
         "a zero-variance difference gets a fabricated p of 0",
         "bench/score.py",
         "    if sumsq == 0.0:\n        return mean_diff, 1.0",

@@ -41,7 +41,7 @@ class GitMemoryRetriever:
 
 
 def gitmemory_factory(
-    instance,
+    session_id: str,
     transcript_bytes: bytes,
     *,
     weights: index.Weights = index.DEFAULT_WEIGHTS,
@@ -52,13 +52,20 @@ def gitmemory_factory(
     starting point, not a result: `bench/` is what replaces them with measured
     ones", and a sweep that can only ever run `DEFAULT_WEIGHTS` cannot do that
     job. `python -m bench --weights` is the caller. [E3]
+
+    The first parameter is a session id, not the `Instance` it comes from. An
+    arm builds an index; the only thing it needed from the instance was a name
+    to capture under, and handing it the whole record handed it `answer` and
+    `answer_session_ids` as well — a channel through which an arm could rank the
+    evidence first without retrieving anything. Nothing did. The contract is
+    narrowed so nothing can. [E5]
     """
     temp_home = tempfile.mkdtemp()
     src_file = os.path.join(temp_home, "source.jsonl")
     with open(src_file, "wb") as f:
         f.write(transcript_bytes)
 
-    store.capture(src_file, "claude-code", instance.question_id, home=temp_home)
+    store.capture(src_file, "claude-code", session_id, home=temp_home)
     index.build(temp_home)
     db = index.open_db(index.db_path(temp_home))
     return GitMemoryRetriever(temp_home, db, index.retriever(db, weights=weights))
@@ -84,7 +91,7 @@ def get_ranker():
     return _RANKER
 
 
-def dense_factory(instance, transcript_bytes: bytes):
+def dense_factory(session_id: str, transcript_bytes: bytes):
     """Exposes the dense retriever arm using model2vec."""
     try:
         import numpy as np
@@ -154,7 +161,7 @@ class RerankRetriever:
         self.first_stage.close()
 
 
-def rerank_factory(instance, transcript_bytes: bytes, *, depth: int = FIRST_STAGE_DEPTH):
+def rerank_factory(session_id: str, transcript_bytes: bytes, *, depth: int = FIRST_STAGE_DEPTH):
     """Exposes the reranking retriever arm using flashrank."""
     try:
         from flashrank import Ranker, RerankRequest  # noqa: F401
@@ -162,7 +169,7 @@ def rerank_factory(instance, transcript_bytes: bytes, *, depth: int = FIRST_STAG
         raise ImportError(f"Rerank arm dependencies not installed: {e}") from e
 
     # rerank relies on first-stage candidate retrieval and flashrank
-    first_stage = gitmemory_factory(instance, transcript_bytes)
+    first_stage = gitmemory_factory(session_id, transcript_bytes)
 
     with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
         tmp.write(transcript_bytes)
