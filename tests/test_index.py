@@ -905,6 +905,58 @@ def test_a_bare_filename_is_a_usable_db_path(home, src, tmp_path, monkeypatch, c
     assert index.search(index.open_db(str(tmp_path / "out.db")), "marmoset")
 
 
+def test_the_index_directory_is_owner_only(home, src):
+    """`index/` was 0755 where `raw/` and `sessions/` beside it are 0700.
+
+    Nothing *in* it was exposed — the database and its journal are 0600 — so
+    what group and world could read was the listing: that a store is here, how
+    big its index is, and when it last built. [E7 index-F9]
+    """
+    built(home, src, [user("u1", "the peculiar marmoset")]).close()
+    dirs = ("index", "raw", "sessions")
+    made = {d: os.lstat(os.path.join(home, d)).st_mode & 0o777 for d in dirs}
+    assert made == dict.fromkeys(made, 0o700), made
+
+
+def test_a_db_path_creates_its_parents_owner_only(home, src, tmp_path):
+    """Every directory on the way, which is the half `os.makedirs(mode=...)`
+    does not do: it applies the mode to the leaf and leaves the rest at
+    0777 & ~umask. [E7 index-F9]"""
+    built(home, src, [user("u1", "the peculiar marmoset")]).close()
+    assert main(["--home", home, "index", "--db", str(tmp_path / "a" / "b" / "out.db")]) == 0
+    for d in (tmp_path / "a", tmp_path / "a" / "b"):
+        assert os.lstat(d).st_mode & 0o777 == 0o700, d
+
+
+def test_a_db_path_through_a_symlinked_directory_is_still_allowed(home, src, tmp_path):
+    """`--db` is the one write path whose directory the *caller* chose, and
+    `/tmp` is a symlink on macOS — so the refusal that index-F1 put in `_mkdir`
+    was refusing `gitmemory index --db /tmp/x.db`, from `_lockfile`, one line
+    past the `makedirs` that had just succeeded. Refusing a symlink gitmemory
+    invented the name of is the point; refusing one the caller typed is not.
+    [E7 index-F9]"""
+    real = tmp_path / "real"
+    real.mkdir()
+    (tmp_path / "link").symlink_to(real)
+    built(home, src, [user("u1", "the peculiar marmoset")]).close()
+    assert main(["--home", home, "index", "--db", str(tmp_path / "link" / "out.db")]) == 0
+    assert index.search(index.open_db(str(real / "out.db")), "marmoset")
+
+
+def test_a_symlink_planted_at_the_index_directory_is_refused(home, src, tmp_path):
+    """The other half of the same branch. `<home>/index` is a name gitmemory
+    invents and nothing else creates, so it is there to be planted, and the
+    index is a second full copy of the transcript text. [E7 index-F9]"""
+    away = tmp_path / "away"
+    away.mkdir()
+    os.symlink(away, os.path.join(home, "index"))
+    write(src, [user("u1", "the peculiar marmoset")])
+    store.capture(src, "claude-code", "sess", home=home)
+    with pytest.raises(NotADirectoryError, match="symbolic link"):
+        index.build(home)
+    assert not sorted(p.name for p in away.iterdir())
+
+
 def test_a_failed_build_never_replaces_a_working_index(home, src, monkeypatch):
     db = built(home, src, [user("u1", "the peculiar marmoset")])
     db.close()

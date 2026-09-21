@@ -2951,6 +2951,32 @@ MUTANTS = [
         '    try:\n        _git(home, "add", "--all")',
         "test_the_commit_refuses_the_same_git_dir_init_refused",
     ),
+    # --- E7 index-F9: index/ inherits the store's permission stance --------- #
+    (
+        "index/ and the parents a --db path needs are owner-only",
+        "index.py",
+        "    store._mkdir(parent)\n    with store._lockfile(",
+        "    os.makedirs(parent, exist_ok=True)\n    with store._lockfile(",
+        "test_the_index_directory_is_owner_only or test_a_db_path_creates_its_parents_owner_only",
+    ),
+    (
+        # The other half of the same branch, and they pull in opposite
+        # directions: resolving too little refuses the caller's own `/tmp`,
+        # resolving too much follows a symlink planted at a name only
+        # gitmemory ever writes.
+        "a --db path is resolved before the symlink refusal sees it",
+        "index.py",
+        "        parent = os.path.realpath(parent)",
+        "        parent = parent",
+        "test_a_db_path_through_a_symlinked_directory_is_still_allowed",
+    ),
+    (
+        "the symlink refusal is skipped for <home>/index too",
+        "index.py",
+        "    if path:\n        parent = os.path.realpath(parent)",
+        "    if True:\n        parent = os.path.realpath(parent)",
+        "test_a_symlink_planted_at_the_index_directory_is_refused",
+    ),
 ]
 
 

@@ -14,7 +14,7 @@ behaviour, the named test required to fail.
 
 ## Status
 
-**Ten findings; seven closed so far.** This document grows as the round does.
+**Ten findings; eight closed so far.** This document grows as the round does.
 
 | | Finding | Outcome |
 |---|---|---|
@@ -26,7 +26,7 @@ behaviour, the named test required to fail.
 | F6 | One oversized block aborts the whole build | **fixed** — the guard now covers the writes, under a savepoint |
 | F7 | Control characters and bidi overrides reach `graph.json` labels | **fixed** — same transform, and it was not only `graph.json` |
 | F8 | `derive.ideas` costs ~32 s of CPU for 284 KB of crafted text | open |
-| F9 | `index/` is created 0755 where the store is 0700 | open |
+| F9 | `index/` is created 0755 where the store is 0700 | **fixed** — `_mkdir` here too, and it unbroke `--db /tmp/x.db` |
 | F10 | The truncation warning is announced once per process | open |
 
 ---
@@ -270,9 +270,64 @@ not run here either. The trigger at the default limit remains PLAUSIBLE. It
 does not change the fix: the guard was wrong about its own scope regardless of
 which error reaches it.
 
+## F9 — the one directory the store did not make itself
+
+`build` called `os.makedirs(parent, exist_ok=True)`. Every other directory in
+the store goes through `store._mkdir`, which creates one level at a time at
+0700 precisely because `os.makedirs(mode=...)` applies its mode to the leaf and
+leaves everything it had to create on the way at `0777 & ~umask`. Measured
+before the change, on a fresh store and then on `--db <tmp>/a/b/out.db`:
+
+```
+index/     0o755        raw/  0o700        sessions/  0o700
+a/  0o755  a/b/  0o755
+```
+
+The contents were never exposed — the database and its journal are 0600, which
+the reviewer checked and said so. What group and world could read is the
+listing: that a gitmemory store exists at this path, how large its index is,
+and when it last built. On a shared host that is the answer to "is this person
+running one", which is a question the rest of the design takes some trouble not
+to answer.
+
+After: `0o700` for all five.
+
+**The reproduction found a live regression, and the fix is the same line.**
+`--db /tmp/x.db` — the most ordinary scratch invocation there is — has been
+*refused* on macOS ever since [F1](#f1--a-symlink-was-already-a-directory-everywhere)
+landed, because `/tmp` is a symlink to `private/tmp` and `_mkdir` refuses
+symlinks:
+
+```
+NotADirectoryError: /tmp is a symbolic link, so it is not somewhere gitmemory
+will write; the store writes only into directories it made itself
+```
+
+Thrown not by the `makedirs` on line 557, which had just succeeded, but by
+`store._lockfile`'s own `_mkdir` one line below — so the directory the build
+had already created at 0755 was then declared unusable. The `makedirs` call was
+doing nothing except getting the mode wrong.
+
+The two halves pull in opposite directions, and the branch is the distinction
+between them. `<home>/index` is a name **gitmemory invents**: nothing else ever
+creates it, which is exactly what makes it plantable, and a symlink there sends
+a second full copy of the transcript text outside the store. A `--db` path is a
+directory the **caller chose**, and their symlinks are theirs to follow. So the
+caller's parent is resolved with `realpath` before `_mkdir` sees it, and the
+default one is not. The leaf name is kept as given either way, so the rename at
+the end of a build still replaces a symlink sitting at the target rather than
+writing through it.
+
+**What this does not fix.** `_mkdir` is still check-then-create, so a fast
+enough swap between the `lstat` and the `mkdir` still wins; that ceiling is
+named in `store._mkdir` and unchanged here. And a `--db` path is now resolved,
+which means a caller who points one through a symlink they did not plant
+themselves gets no warning — the trade is deliberate and the alternative was
+refusing `/tmp`.
+
 ## Negative controls added this round
 
-Fifteen rows, all run, **15/15 CAUGHT by their intended test**.
+Nineteen rows, all run, **19/19 CAUGHT by their intended test**.
 
 | Mutant | Verdict |
 |---|---|
@@ -292,6 +347,9 @@ Fifteen rows, all run, **15/15 CAUGHT by their intended test**.
 | the inserts are outside the per-generation guard again | CAUGHT |
 | a generation that failed halfway leaves its rows behind | CAUGHT |
 | a failed generation still reaches the digest | CAUGHT |
+| index/ and the parents a `--db` path needs are owner-only | CAUGHT |
+| a `--db` path is resolved before the symlink refusal sees it | CAUGHT |
+| the symlink refusal is skipped for `<home>/index` too | CAUGHT |
 
 Five existing rows had their anchors re-pointed at rewritten lines and were
 re-run — "an index from a superseded schema is left on disk forever", "a

@@ -554,7 +554,27 @@ def build(home: str | None = None, *, path: str | None = None) -> Stats:
     # ENOENT on the most obvious value for a flag documented as "database path".
     target = os.path.abspath(path or db_path(home))
     parent = os.path.dirname(target)
-    os.makedirs(parent, exist_ok=True)
+    # `_mkdir`, not `os.makedirs`: the index is a second full copy of the
+    # transcript text, and `makedirs` left it in a 0755 directory while `raw/`
+    # and `sessions/` next to it were 0700. Measured on this tree before the
+    # change: `index/` 0755, and `--db a/b/out.db` created both `a` and `b` at
+    # 0755. The contents were never exposed — the db and its journal are 0600 —
+    # so what leaked was the directory listing: that a store exists here, how
+    # big its index is, when it last built. [E7 index-F9]
+    #
+    # `realpath` on a caller-supplied parent, because `_mkdir` refuses symlinks
+    # and the caller's are theirs to follow: `/tmp` is a symlink on macOS, so
+    # `--db /tmp/x.db` — the most ordinary scratch invocation there is — was
+    # being refused, by `_lockfile`'s own `_mkdir` one line below, ever since
+    # index-F1 landed. The leaf name is kept as given, so the rename at the end
+    # of a build still replaces a symlink sitting at the target rather than
+    # writing through it. `<home>/index` gets no such courtesy: nothing but
+    # gitmemory ever creates that name, which is exactly what makes it
+    # plantable.
+    if path:
+        parent = os.path.realpath(parent)
+        target = os.path.join(parent, os.path.basename(target))
+    store._mkdir(parent)
     with store._lockfile(os.path.join(parent, LOCK_NAME)):
         _sweep_partials(parent, keep=target)
 
