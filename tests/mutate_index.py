@@ -381,6 +381,39 @@ MUTANTS = [
         "            candidate = retrieve_factory(inst, transcript.bytes_data)",
         "test_an_arm_is_handed_a_session_id_and_bytes_and_nothing_else",
     ),
+    # The E5 fixture is what keeps the extractor's author away from the corpus
+    # generator. Four ways that could quietly stop being true. [E5]
+    (
+        "the dumped labels come from a different generation than the dumped bytes",
+        "bench/fixture.py",
+        "        gold[stem] = [[d.kind, d.source_ref] for d in resolve_gold_for_case(case)]",
+        "        gold[stem] = [[d.kind, d.source_ref] for d in resolve_gold_for_case(\n"
+        "            generate(seed=seed + 1, n=n, split=split)[i]\n"
+        "        )]",
+        "test_a_dumped_gold_ref_names_a_block_that_is_in_the_dumped_bytes",
+    ),
+    (
+        "the fixture labels carry the session index back to the author",
+        "bench/fixture.py",
+        "        gold[stem] = [[d.kind, d.source_ref] for d in resolve_gold_for_case(case)]",
+        "        gold[stem] = [[d.kind, d.source_ref, stem] for d in resolve_gold_for_case(case)]",
+        "test_the_gold_labels_carry_no_hint_of_how_the_corpus_was_made",
+    ),
+    (
+        "the fixture scorer matches nothing",
+        "bench/gate.py",
+        "        if gold_counts[key] > 0:",
+        "        if False:",
+        "test_a_perfect_extractor_scores_one_and_an_empty_one_scores_zero",
+    ),
+    (
+        "the scorer reaches back into the corpus generator",
+        "bench/gate.py",
+        '    gold_by_stem = json.loads((fixture_dir / "gold.json").read_text())',
+        "    from bench.decisions import generate  # noqa: F401\n\n"
+        '    gold_by_stem = json.loads((fixture_dir / "gold.json").read_text())',
+        "test_the_scorer_runs_with_the_corpus_generator_unimportable",
+    ),
     (
         "a zero-variance difference gets a fabricated p of 0",
         "bench/score.py",

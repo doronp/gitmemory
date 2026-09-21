@@ -9,6 +9,11 @@ build/
 .hypothesis/
 .DS_Store
 graphify-out/
+# The dev split dumped to disk by `bench/fixture.py`, so the extractor can be
+# written without the corpus generator. Regenerated from the committed seed,
+# and the committed checksum is what says it has not moved — committing the
+# dump as well would be a second copy of the corpus that could disagree.
+bench/fixture-dev/
 # Review agents are given a git worktree of their own, which lands here. A
 # worktree is a checkout, so git offers to commit it as a gitlink — and did,
 # once. Their scratch is theirs; it is not this repository's history.

@@ -1,7 +1,10 @@
-"""Synthetic transcript generator, gold resolver, scorer, and baselines for the E5 decision gate.
+"""Synthetic transcript generator, gold resolver, and baselines for the E5 decision gate.
 
 Every session in the corpus is written from templates and a seeded RNG, satisfying
 the constraint that no real machine history or owner transcripts are read or adapted.
+
+The scorer lives in `bench/gate.py`, not here, so that an extractor author can be
+given the scoring without being given the templates. [E5]
 """
 
 from __future__ import annotations
@@ -16,8 +19,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from bench.gate import get_decision_slice, post_failure_blocks, score_predictions, score_with_slices
 from gitmemory import adapters
 from gitmemory.records import Session
+
+__all__ = [  # re-exported: the tests and the baselines import the scorer from here
+    "get_decision_slice",
+    "score_predictions",
+]
 
 # Disjoint vocabularies for dev and test splits to prevent data leakage and
 # ensure diverse surface forms.
@@ -1136,155 +1145,32 @@ def resolve_gold_for_case(case: Case) -> list[Decision]:
     return resolved
 
 
-def score_predictions(
-    predicted: list[Decision | tuple[str, str]], gold: list[Decision | tuple[str, str]]
-) -> dict[str, Any]:
-    """Strict one-to-one matched micro-averaged scorer."""
-    pred_tuples = []
-    for p in predicted:
-        if hasattr(p, "kind") and hasattr(p, "source_ref"):
-            pred_tuples.append((p.kind, p.source_ref))
-        else:
-            pred_tuples.append((p[0], p[1]))
-
-    gold_tuples = []
-    for g in gold:
-        if hasattr(g, "kind") and hasattr(g, "source_ref"):
-            gold_tuples.append((g.kind, g.source_ref))
-        else:
-            gold_tuples.append((g[0], g[1]))
-
-    from collections import Counter
-
-    gold_counts = Counter(gold_tuples)
-    matched_count = 0
-
-    for p in pred_tuples:
-        if gold_counts[p] > 0:
-            matched_count += 1
-            gold_counts[p] -= 1
-
-    n_pred = len(pred_tuples)
-    n_gold = len(gold_tuples)
-
-    precision = matched_count / n_pred if n_pred > 0 else 0.0
-    recall = matched_count / n_gold if n_gold > 0 else 0.0
-    passed = (precision >= 0.85) and (recall >= 0.60)
-
-    return {
-        "precision": precision,
-        "recall": recall,
-        "passed": passed,
-        "matched": matched_count,
-        "predicted": n_pred,
-        "gold": n_gold,
-    }
-
-
-def get_decision_slice(
-    d: Decision | tuple[str, str], block_is_post_failure: dict[str, bool]
-) -> str:
-    """Determine the evaluation slice category for a decision."""
-    if hasattr(d, "kind") and hasattr(d, "source_ref"):
-        kind = d.kind
-        source_ref = d.source_ref
-    else:
-        kind = d[0]
-        source_ref = d[1]
-
-    if kind == "directive":
-        return "directives"
-    elif kind == "reversal":
-        if block_is_post_failure.get(source_ref, False):
-            return "post_failure_reversals"
-        else:
-            return "other_reversals"
-    return "other"
-
-
 def run_gate(
     extractor: Callable[[Session], list[Decision]],
     seed: int,
     split: str,
     n: int,
 ) -> dict[str, Any]:
-    """Run a gate evaluation on a split using the provided extractor."""
-    cases = generate(seed=seed, n=n, split=split)
-    all_gold = []
-    all_preds = []
-    block_is_post_failure = {}
+    """Score an extractor over a whole split, overall and per slice."""
+    all_gold: list[Decision] = []
+    all_preds: list[Decision] = []
+    block_is_post_failure: dict[str, bool] = {}
 
-    for case in cases:
-        # Resolve gold
-        resolved_gold = resolve_gold_for_case(case)
-        all_gold.extend(resolved_gold)
+    for case in generate(seed=seed, n=n, split=split):
+        all_gold.extend(resolve_gold_for_case(case))
 
-        # Parse Session to pass to the extractor
         with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
             tmp.write(case.transcript_bytes)
             tmp_path = tmp.name
         try:
             session = adapters.get("claude-code").parse(tmp_path)
-
-            # Identify which turns are in a post-failure context
-            post_failure_turns = set()
-            for idx, turn in enumerate(session.turns):
-                if turn.role == "user":
-                    is_failed_tool = False
-                    for block in turn.blocks:
-                        if block.kind == "tool_result" and (
-                            "failed" in block.text or "Exit code 1" in block.text
-                        ):
-                            is_failed_tool = True
-                            break
-                    if is_failed_tool:
-                        for next_turn in session.turns[idx + 1 :]:
-                            if next_turn.role == "assistant":
-                                post_failure_turns.add(next_turn.uuid or next_turn.byte_offset)
-                                break
-
-            for turn in session.turns:
-                is_pf = (turn.uuid or turn.byte_offset) in post_failure_turns
-                for block in turn.blocks:
-                    block_is_post_failure[block.block_id] = is_pf
-
+            block_is_post_failure.update(post_failure_blocks(session))
             all_preds.extend(extractor(session))
         finally:
             with contextlib.suppress(OSError):
                 os.unlink(tmp_path)
 
-    overall_score = score_predictions(all_preds, all_gold)
-
-    # Slice categorization
-    slices = {
-        "directives": {"preds": [], "gold": []},
-        "post_failure_reversals": {"preds": [], "gold": []},
-        "other_reversals": {"preds": [], "gold": []},
-    }
-
-    for g in all_gold:
-        sl = get_decision_slice(g, block_is_post_failure)
-        if sl in slices:
-            slices[sl]["gold"].append(g)
-
-    for p in all_preds:
-        sl = get_decision_slice(p, block_is_post_failure)
-        if sl in slices:
-            slices[sl]["preds"].append(p)
-
-    slice_scores = {}
-    for sl_name, sl_data in slices.items():
-        slice_score = score_predictions(sl_data["preds"], sl_data["gold"])
-        slice_scores[sl_name] = {
-            "matched": slice_score["matched"],
-            "predicted": slice_score["predicted"],
-            "gold": slice_score["gold"],
-            "precision": slice_score["precision"],
-            "recall": slice_score["recall"],
-        }
-
-    overall_score["slices"] = slice_scores
-    return overall_score
+    return score_with_slices(all_preds, all_gold, block_is_post_failure)
 
 
 def baseline_nothing(session: Session) -> list[Decision]:

@@ -87,26 +87,33 @@ it on purpose before you move on.
 ## The harness you have
 
 ```
-.venv/bin/python -m bench.gate_dev        # score against the dev fixture
+.venv/bin/python -m bench.gate bench/fixture-dev
 ```
 
-It prints precision, recall, matched, predicted, gold, and a per-slice
-breakdown. Run it as often as you like. It imports `gitmemory.derive.decisions`
-directly, so there is nothing to wire up.
+It prints precision, recall, matched, predicted, gold, and the same figures per
+slice — directives, post-failure reversals, other reversals. Run it as often as
+you like. It imports `gitmemory.derive.decisions` directly, so there is nothing
+to wire up.
+
+Read the per-slice lines, not just the headline. The three populations are very
+different sizes and very different difficulties, and a micro-average lets a
+good slice carry a bad one.
 
 ## Why your worktree is missing things
 
-`bench/decisions.py` and `tests/test_decisions_bench.py` are not here. They are
-the corpus generator: they spell out every template and every vocabulary the
-fixture is built from, and an extractor written with them open is fitted to a
-generator rather than to the task. The dev fixture is a frozen dump instead —
-100 sessions as `.jsonl`, plus the gold labels — which is everything you need to
-iterate and nothing you need to cheat with.
+`bench/decisions.py`, `bench/fixture.py` and `tests/test_decisions_bench.py`
+are not here. They are the corpus generator: they spell out every template and
+every vocabulary the fixture is built from, and an extractor written with them
+open is fitted to a generator rather than to the task. `bench/fixture-dev/` is
+a frozen dump instead — 100 sessions as `.jsonl`, plus `gold.json`, which is
+`{stem: [[kind, source_ref], ...]}` and nothing more. Everything you need to
+iterate; nothing you need to cheat with.
 
-The held-out split is not in your worktree either, and `bench.gate_dev` cannot
-reach it. Do not reconstruct either one, do not look for them in git history,
-and do not read anything outside this worktree. If you think you need something
-that is missing, say so in your report and stop; do not work around it.
+The held-out split is not in your worktree either, and `bench/gate.py` cannot
+reach it — it reads a dump and has no idea a generator exists. Do not
+reconstruct either one, do not look for them in git history, and do not read
+anything outside this worktree. If you think you need something that is
+missing, say so in your report and stop; do not work around it.
 
 ## Report
 
