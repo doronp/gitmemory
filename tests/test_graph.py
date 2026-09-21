@@ -161,6 +161,26 @@ def test_a_label_with_no_space_in_range_is_still_cut():
     assert len(label) == graph.LABEL_CHARS + 1
 
 
+def test_a_block_with_no_visible_text_gets_a_caption_not_a_blank_node():
+    """A whitespace-only block is a real block naming real bytes, so it is not
+    an error — but an empty label draws as a blank node, which is the failure
+    the missing-ref check exists to prevent. [review: Gemini 2]"""
+    s = _session("s1", [("user", "\n \t ")])
+    out = graph.extraction([s], extract=_decide(_ids(s)[0]))
+    assert out["nodes"][0]["label"] == graph.NO_TEXT
+    assert validate_extraction(out) == []
+
+
+def test_a_graphify_option_reaches_graphify():
+    """`build` takes `extract` for us and passes the rest on. The first version
+    funnelled everything into `extraction`, so `directed=True` died on a
+    `TypeError` naming a function the caller never called. [review: Gemini 1]"""
+    a = _session("s1", [("user", "one"), ("user", "two")])
+    g = graph.build([a], extract=_decide(*_ids(a)), directed=True)
+    assert g.is_directed()
+    assert not graph.build([a], extract=_decide(*_ids(a))).is_directed()
+
+
 def test_graphify_assembles_the_emitted_dict_into_a_graph():
     """The seam, end to end. If `build_from_json` ever stops accepting what we
     emit, this is the test that says so rather than a broken dashboard."""

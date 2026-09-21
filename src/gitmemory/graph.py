@@ -31,12 +31,19 @@ from collections.abc import Callable, Iterable
 from gitmemory.derive import Decision, decisions
 from gitmemory.records import Session
 
-__all__ = ["LABEL_CHARS", "build", "extraction"]
+__all__ = ["LABEL_CHARS", "NO_TEXT", "build", "extraction"]
 
 # Long enough to read on a node, short enough that the diagram is not a wall of
 # text. The full block is one lookup away by `source_ref`, which is the point of
 # carrying it.
 LABEL_CHARS = 120
+
+# What a node wears when the block it names has no visible text. Parenthesised
+# so it cannot be read as the block's content, and a fixed string rather than
+# anything derived from the bytes, because the point is to describe the absence
+# rather than to invent something to show. A node with an empty label is a blank
+# node, which is the thing the missing-ref check above refuses. [review: Gemini 2]
+NO_TEXT = "(no visible text)"
 
 _WS = re.compile(r"\s+")
 
@@ -49,6 +56,8 @@ def _label(text: str) -> str:
     renders as a blank node three layers downstream with no clue why.
     """
     flat = _WS.sub(" ", text).strip()
+    if not flat:
+        return NO_TEXT
     if len(flat) <= LABEL_CHARS:
         return flat
     # Cut on a space so the label ends on a word, and fall back to a hard cut
@@ -142,8 +151,19 @@ def extraction(
     }
 
 
-def build(sessions: Iterable[Session], **kw):
+def build(
+    sessions: Iterable[Session],
+    *,
+    extract: Callable[[Session], list[Decision]] = decisions,
+    **kw,
+):
     """The extraction, assembled by graphify. Returns a `networkx.Graph`.
+
+    `extract` is ours; everything else in `**kw` is graphify's — `directed`,
+    `root`. The first version funnelled all of `**kw` into `extraction`, so
+    `build(sessions, directed=True)` died on a `TypeError` from a function the
+    caller had never heard of, which is the worst way to learn that an argument
+    went to the wrong place. [review: Gemini 1]
 
     Imported here rather than at module scope so `gitmemory.graph` is importable
     without the `derive` extra installed — the emitter above is pure stdlib and
@@ -151,4 +171,4 @@ def build(sessions: Iterable[Session], **kw):
     """
     from graphify.build import build_from_json
 
-    return build_from_json(extraction(sessions, **kw))
+    return build_from_json(extraction(sessions, extract=extract), **kw)
