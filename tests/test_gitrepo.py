@@ -454,6 +454,146 @@ def test_an_inherited_git_index_file_does_not_redirect_the_commit(tmp_path, monk
     assert not stray.exists()
 
 
+def _foreign_repo(tmp_path) -> str:
+    """A repository gitmemory does not own, of the shape an attacker supplies.
+
+    It has to exist already. The first attempt at this reproduction pointed
+    `.git` at a path with nothing behind it, and `git init` then failed
+    `fatal: not a git repository` — so the write never happened and the finding
+    looked unreproducible. `git init` does not create the far end; an
+    attacker-owned repository with a remote does. [E7]
+    """
+    other = tmp_path / "foreign"
+    other.mkdir()
+    subprocess.run(["git", "-C", str(other), "init", "--quiet"], check=True)
+    return str(other)
+
+
+def _leaked(foreign: str) -> list[str]:
+    """gitmemory's own four settings, if they were written somewhere else."""
+    listed = subprocess.run(
+        ["git", "-C", foreign, "config", "--local", "--list"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    keys = {k.lower() for k in gitrepo._CONFIG}
+    return sorted(line for line in listed.splitlines() if line.split("=")[0] in keys)
+
+
+@pytest.mark.parametrize("shape", ["gitfile", "symlink"])
+def test_a_git_dir_the_store_did_not_make_is_refused_before_anything_is_written(tmp_path, shape):
+    """[E7] `.git` pointing at somebody else's repository, two ways.
+
+    A **gitfile** — `.git` as a regular file holding `gitdir: /elsewhere/.git` —
+    is git's own worktree mechanism. `_assert_no_foreign_config` did refuse it,
+    but it refused *fourth*: `is_repo` said no, `git init` adopted the foreign
+    repository, and four `git config` calls wrote gitmemory's settings into it
+    before the assertion ran. Measured before the fix: 5 settings in the foreign
+    repo, and `commit` then succeeding into its history.
+
+    A **symlink** was worse and is in no report. `os.path.isdir` follows it, so
+    `is_repo` said yes and `git init` was skipped; the config writes landed in
+    the foreign repository; and `_assert_no_foreign_config` **passed**, because
+    it compares `realpath(home/.git/config)` with itself and a symlinked `.git`
+    resolves to the foreign config on both sides. `init` returned normally,
+    `.gitignore` was written, `commit` succeeded, and the transcript store went
+    into a repository gitmemory does not own — no error, no warning, nothing.
+
+    So both halves are asserted: refused, **and** nothing written before the
+    refusal. A guard that fires after the write is the gitfile case again.
+    """
+    foreign = _foreign_repo(tmp_path)
+    home = tmp_path / "store"
+    home.mkdir()
+    dot = home / ".git"
+    if shape == "gitfile":
+        dot.write_text(f"gitdir: {foreign}/.git\n")
+    else:
+        dot.symlink_to(os.path.join(foreign, ".git"))
+
+    with pytest.raises(gitrepo.GitError) as exc:
+        gitrepo.init(str(home))
+    assert "does not own" in str(exc.value), exc.value
+    assert _leaked(foreign) == [], "settings were written before the refusal"
+    assert not (home / ".gitignore").exists(), "the store wrote into someone else's tree"
+
+
+@pytest.mark.parametrize("shape", ["gitfile", "symlink"])
+def test_the_commit_refuses_the_same_git_dir_init_refused(tmp_path, shape):
+    """[E7] Because `run` carries on after a failed `init`, deliberately.
+
+    That decision is right and stays: two watchers racing `init`'s four `git
+    config` calls is an ordinary lock collision, and the bytes are the part no
+    later pass can recover. But "carry on" past an *ownership* refusal means the
+    next thing that happens is `add --all` and `commit` into the foreign
+    repository — which is exactly what was measured: `init` raised, and the
+    transcript landed in the other repo's history one call later.
+
+    The check therefore lives where the write does, not only where the refusal
+    reads well.
+    """
+    foreign = _foreign_repo(tmp_path)
+    home = tmp_path / "store"
+    home.mkdir()
+    dot = home / ".git"
+    if shape == "gitfile":
+        dot.write_text(f"gitdir: {foreign}/.git\n")
+    else:
+        dot.symlink_to(os.path.join(foreign, ".git"))
+    (home / "transcript.jsonl").write_text('{"role":"user"}\n')
+
+    with pytest.raises(gitrepo.GitError) as exc:
+        gitrepo.commit(str(home), "capture")
+    assert "does not own" in str(exc.value), exc.value
+    # `rev-list --count` and not `log`: git exits 128 on a repository with no
+    # commits, which is the state this test is asserting, so `log` cannot tell
+    # "nothing was committed" from "the command failed".
+    commits = subprocess.run(
+        ["git", "-C", foreign, "rev-list", "--all", "--count"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert commits == "0", f"the store committed {commits} into a foreign repository"
+
+
+def test_a_git_dir_symlinked_to_nothing_does_not_make_a_repository_somewhere_else(tmp_path):
+    """[E7] Why the guard uses `lexists` and not `exists`.
+
+    The two cases above need a repository already sitting at the far end. This
+    one needs nothing: `.git` symlinked to a path that does not exist yet. With
+    the guard removed, `git init` follows the link and **creates** a complete
+    repository — `HEAD`, `config`, `objects`, `refs` — at whatever path the link
+    named, outside the store entirely. Measured, not argued.
+
+    `os.path.exists` follows the link and answers False for this, which would
+    have walked the guard straight past the one shape that does not require the
+    attacker to have set anything up first.
+    """
+    elsewhere = tmp_path / "attacker-chosen"
+    elsewhere.mkdir()
+    home = tmp_path / "store"
+    home.mkdir()
+    (home / ".git").symlink_to(elsewhere / ".git")
+
+    with pytest.raises(gitrepo.GitError) as exc:
+        gitrepo.init(str(home))
+    assert "symbolic link" in str(exc.value), exc.value
+    assert not (elsewhere / ".git").exists(), "a repository was created outside the store"
+
+
+def test_a_store_the_daemon_really_made_is_not_caught_by_the_ownership_check(tmp_path):
+    """[E7] The over-refusal side. `init` is idempotent and the watcher calls it
+    on every start, so a guard that trips on an ordinary `.git` directory stops
+    the product rather than an attacker."""
+    home = gitrepo.init(str(tmp_path / "store"))
+    with open(os.path.join(home, "payload"), "w", encoding="utf-8") as fh:
+        fh.write("bytes")
+    assert gitrepo.commit(home, "first") is not None
+    assert gitrepo.init(home) == home
+
+
 def test_injected_config_cannot_outrank_the_repositorys_own(tmp_path, monkeypatch):
     """`GIT_CONFIG_COUNT` beats repository-local config, so it is scrubbed.
 

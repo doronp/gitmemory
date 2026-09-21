@@ -15,6 +15,7 @@ reporter did not use, before it is accepted.**
 | S4 | A FIFO planted in the store hangs `verify` and adoption, under the lock | fixed — `store._regular` before every segment `open` |
 | S12a | The gate opens what a tracked symlink points at, and blocks on a FIFO | fixed — `redact.contents`, used by the file scan and the seam scan |
 | S12b | The owner-data *test* scanner does the same | open |
+| F1 | `.git` pointing at a repository the store did not make | fixed — `_assert_own_git_dir`, in `init` **and** `commit` |
 | — | The mutation harness scored a mutant that does not parse as CAUGHT | fixed — `verdict` reads both runs; a compile check on every row |
 | — | Two tests proved "this does not block" by blocking, wedging the pass | fixed — `_deadline`, and the `WEDGED` verdict |
 
@@ -140,6 +141,47 @@ reached *through* one. `redact.contents()` reads link text for a symlink, `b""`
 for anything else irregular, and the file otherwise; `_edge` (the seam scan, a
 second reader with its own `open`) goes through it too.
 
+## F1 — `_assert_no_foreign_config` proves the wrong thing
+
+It proves no *setting* reaches this repository from outside. It cannot prove the
+repository is the store's, and there are three ways for it not to be. All three
+measured with the guard removed:
+
+| `.git` is | `init` | gitmemory settings written elsewhere | `commit` | result |
+|---|---|---|---|---|
+| a gitfile (`gitdir: …`) | refused | **5** | **succeeded** | transcript in the foreign repo's history |
+| a symlink to a foreign `.git` | **succeeded** | **5** | **succeeded** | same, with no error anywhere |
+| a symlink to nothing | **succeeded** | — | — | a complete repository **created** at the attacker's path |
+
+The reported finding is row one, and the reported fix — "`is_repo` should accept
+a `.git` file" — does not touch rows two and three. Row two is the bad one:
+`os.path.isdir` follows the link, so `is_repo` says yes and `git init` is skipped
+entirely, and then `_assert_no_foreign_config` **passes**, because it compares
+`realpath(home/.git/config)` against itself and a symlinked `.git` resolves to
+the foreign config on both sides. Nothing refuses, nothing warns.
+
+Row one's refusal was real but came *fourth*: `git init` adopted the foreign
+repository and four `git config` calls wrote into it before the assertion ran.
+
+`_assert_own_git_dir` is one `lstat` and covers all three, before the first
+`git` call. `lexists`, not `exists`, because row three's link resolves to
+nothing and `exists` answers False for it.
+
+**It is called from `commit` as well as `init`, and that is the part worth
+keeping.** `run` deliberately carries on after a failed `init` — two watchers
+racing `init`'s four `git config` calls is an ordinary lock collision, and the
+bytes are the part no later pass can recover — so a refusal in `init` alone is
+followed immediately by `add --all` and `commit` into the foreign repository,
+which is what row one actually did. Putting the check where the write is costs
+one `lstat` and covers every caller, rather than threading a flag from `run`
+through `tick` for the one caller that was reported.
+
+The first reproduction of row one **did not reproduce**: with `.git` pointing at
+a path that did not exist, `git init` failed `fatal: not a git repository`. The
+foreign repository has to already be there. That corrects the report — `git init`
+does not create the far end. Row three is the exception, and only because the
+*parent* directory exists.
+
 ## The mutation harness wedged, on exactly the defect it was testing
 
 The negative-control pass for the above stopped printing and sat there. `ps`
@@ -240,3 +282,18 @@ another wedge: removing the timer, lengthening it, or making the handler return
 all end with the FIFO blocking and the row hanging on it. A leaked timer still
 returns — and it is a real defect, because it fires inside whatever test runs
 next, which reads as that test being flaky.
+
+Four more for F1, 307 total. **4/4 CAUGHT.**
+
+| Row | Test |
+|---|---|
+| a symlinked git dir is treated as a git dir | `…refused_before_anything_is_written[symlink]` |
+| the ownership check follows the link before deciding | `test_a_git_dir_symlinked_to_nothing_does_not_make_a_repository_somewhere_else` |
+| init refuses a foreign git dir only after writing to it | `…refused_before_anything_is_written[gitfile]` |
+| the commit trusts that init already refused | `test_the_commit_refuses_the_same_git_dir_init_refused` |
+
+The third row is the one that shows why the ordering is a property and not
+tidiness: with the call removed from `init`, `_assert_no_foreign_config` still
+refuses the gitfile, so a test asserting only "it raises" stays green. What goes
+red is the assertion that the foreign repository has none of gitmemory's
+settings in it.

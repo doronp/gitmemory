@@ -2787,6 +2787,48 @@ MUTANTS = [
         "",
         "test_the_deadline_fires_on_something_that_really_blocks",
     ),
+    # ----------------------------------------------------------------- #
+    # a `.git` the store did not make [E7]
+    # ----------------------------------------------------------------- #
+    (
+        # The shape that never refused at all: `isdir` follows the link, so
+        # `is_repo` says yes, `init` is skipped, and `_assert_no_foreign_config`
+        # compares the foreign config against itself and passes.
+        "a symlinked git dir is treated as a git dir",
+        "gitrepo.py",
+        "    if stat.S_ISDIR(mode):\n        return\n",
+        "    if stat.S_ISDIR(mode) or stat.S_ISLNK(mode):\n        return\n",
+        "test_a_git_dir_the_store_did_not_make_is_refused_before_anything_is_written and symlink",
+    ),
+    (
+        # `exists` follows the link, so a `.git` pointing at nothing looks
+        # absent and `git init` creates a repository at the far end.
+        "the ownership check follows the link before deciding",
+        "gitrepo.py",
+        "    if not os.path.lexists(dot):",
+        "    if not os.path.exists(dot):",
+        "test_a_git_dir_symlinked_to_nothing_does_not_make_a_repository_somewhere_else",
+    ),
+    (
+        # Removing the call leaves `_assert_no_foreign_config`, which does refuse
+        # the gitfile — fourth, after four `git config` calls have already
+        # written into the foreign repository. The test asserts the absence of
+        # those writes, which is the half the ordering buys.
+        "init refuses a foreign git dir only after writing to it",
+        "gitrepo.py",
+        "    _assert_own_git_dir(home)\n    if not is_repo(home):",
+        "    if not is_repo(home):",
+        "test_a_git_dir_the_store_did_not_make_is_refused_before_anything_is_written and gitfile",
+    ),
+    (
+        # `run` carries on after a failed `init` on purpose, so the commit is
+        # where the transcript actually lands in someone else's history.
+        "the commit trusts that init already refused",
+        "gitrepo.py",
+        '    _assert_own_git_dir(home)\n    try:\n        _git(home, "add", "--all")',
+        '    try:\n        _git(home, "add", "--all")',
+        "test_the_commit_refuses_the_same_git_dir_init_refused",
+    ),
 ]
 
 

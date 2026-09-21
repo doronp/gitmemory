@@ -26,6 +26,7 @@ Three properties it has to hold, none of which git gives you by default:
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 import time
 from collections.abc import Iterator
@@ -210,6 +211,47 @@ def is_repo(home: str) -> bool:
     return os.path.isdir(os.path.join(home, ".git"))
 
 
+def _assert_own_git_dir(home: str) -> None:
+    """Refuse a `.git` that is not a real directory, before anything is written.
+
+    `_assert_no_foreign_config` proves that no *setting* reaches this repository
+    from outside. It cannot prove that the repository is this store's, and two
+    shapes of `.git` make it somebody else's:
+
+    - **A gitfile.** `.git` as a regular file holding `gitdir: /elsewhere/.git`
+      is git's own worktree mechanism. `is_repo` says no, `git init` is run, git
+      sees the pointer and adopts the foreign repository — and the four config
+      settings are written into it *before* the assertion below gets a chance to
+      refuse. The refusal was real but it came second.
+    - **A symlink.** This one never refused at all. `os.path.isdir` follows the
+      link, so `is_repo` says yes and `git init` is skipped entirely; the config
+      writes land in the foreign repository; and `_assert_no_foreign_config`
+      **passes**, because it compares `realpath(home/.git/config)` against
+      itself and a symlinked `.git` resolves to the foreign config on both
+      sides. `init` succeeds, `.gitignore` is written, `commit` succeeds, and
+      the whole transcript store lands in a repository gitmemory does not own,
+      with no error and no warning anywhere.
+
+    One `lstat` covers both, and it runs before the first `git` call rather than
+    after it. `lexists` so a dangling symlink is caught too — the foreign repo it
+    points at may not exist yet, and creating it later is the attacker's half of
+    the job. A store's `.git` is a directory; if it is anything else, gitmemory
+    did not make it. [E7]
+    """
+    dot = os.path.join(home, ".git")
+    if not os.path.lexists(dot):
+        return
+    mode = os.lstat(dot).st_mode
+    if stat.S_ISDIR(mode):
+        return
+    kind = "a symbolic link" if stat.S_ISLNK(mode) else "not a directory"
+    raise GitError(
+        f"{home}/.git is {kind}, so it is not a repository this store made. "
+        "gitmemory will not write a transcript store into a repository it does "
+        "not own. Move it aside, or point GITMEMORY_HOME somewhere else."
+    )
+
+
 def tracked(home: str) -> list[str]:
     """Paths git would ship from the working tree: tracked, plus unignored new.
 
@@ -322,6 +364,7 @@ def init(home: str | None = None) -> str:
     """
     home = resolve_home(home)
     os.makedirs(home, mode=0o700, exist_ok=True)
+    _assert_own_git_dir(home)
     if not is_repo(home):
         # `--template=` empty, so a global `init.templateDir` cannot install
         # hooks into a repository whose work tree holds model-written bytes.
@@ -394,7 +437,17 @@ def commit(home: str, message: str) -> Commit | None:
 
     Nothing-to-commit is the common case — the watcher wakes, finds no growth,
     and has nothing to say — so it is a return value, not an exception.
+
+    The ownership check runs here and not only in `init`, because this is where
+    the harm lands. `run` deliberately carries on after a failed `init` — a
+    transient `.git/config` lock collision between two watchers must not cost a
+    capture — and "carry on" past an *ownership* refusal means committing the
+    transcript store into a repository gitmemory does not own. One `lstat` on the
+    path about to be written is cheaper than threading a flag from `run` through
+    `tick`, and it covers every caller rather than the one that was reported.
+    [E7]
     """
+    _assert_own_git_dir(home)
     try:
         _git(home, "add", "--all")
     except GitError as exc:
