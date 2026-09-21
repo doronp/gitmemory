@@ -248,9 +248,56 @@ MUTANTS = [
     (
         "an index from a superseded schema is left on disk forever",
         "index.py",
-        "            stale = superseded and superseded.group(1) != str(SCHEMA)",
+        "            stale = superseded and int(superseded.group(1)) < SCHEMA",
         "            stale = False",
         "test_an_index_from_an_older_schema_is_swept",
+    ),
+    (
+        # The three rows above are the sweep doing its job. These two are the
+        # sweep doing it to things that are not its own. [E7]
+        "a newer schema's index is swept as a leftover",
+        "index.py",
+        "            stale = superseded and int(superseded.group(1)) < SCHEMA",
+        "            stale = superseded and superseded.group(1) != str(SCHEMA)",
+        "test_an_index_from_a_newer_schema_is_not_mistaken_for_a_leftover",
+    ),
+    (
+        "the sweep matches the prefix, not the name the build writes",
+        "index.py",
+        "            if (_PARTIAL_RE.match(entry.name) or stale) and entry.is_file():",
+        '            if (entry.name.startswith(".building-") or stale) and entry.is_file():',
+        "test_the_sweep_deletes_what_the_build_writes_and_not_what_it_finds",
+    ),
+    (
+        "every reader opens the index for writing, creating it if absent",
+        "index.py",
+        '        db = sqlite3.connect(f"file:{quote(os.path.abspath(path))}?mode=ro", uri=True)',
+        "        db = sqlite3.connect(path)",
+        "test_a_reader_cannot_create_or_scribble_on_an_index",
+    ),
+    (
+        "a hostile `meta` runs for as long as it likes",
+        "index.py",
+        "        with _step_budget(db):\n            row = db.execute",
+        "        if True:\n            row = db.execute",
+        "test_a_meta_that_is_not_a_table_cannot_run_forever",
+    ),
+    (
+        # `contextlib.nullcontext` and not deleting the `with`: the body stays
+        # indented, so the mutant is the same program minus the lock rather
+        # than a re-indentation the harness would have to score as BROKEN.
+        "two builds in one directory sweep each other's temp away",
+        "index.py",
+        "    with store._lockfile(os.path.join(parent, LOCK_NAME)):",
+        "    with contextlib.nullcontext():",
+        "test_a_second_build_waits_instead_of_sweeping_the_first_one_away",
+    ),
+    (
+        "the journals beside a partial index are left behind",
+        "index.py",
+        r'_PARTIAL_RE = re.compile(r"\A\.building-.+\.db(-journal|-wal|-shm)?\Z")',
+        r'_PARTIAL_RE = re.compile(r"\A\.building-.+\.db\Z")',
+        "test_a_partial_index_left_by_a_kill_is_swept",
     ),
     (
         "a foreign schema is answered instead of refused",

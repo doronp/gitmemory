@@ -38,6 +38,7 @@ import tempfile
 import unicodedata
 import warnings
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from . import store
 from .adapters import get as get_adapter
@@ -58,6 +59,9 @@ __all__ = [
 
 SCHEMA = 2
 COLUMNS = ("prose", "tool_use", "tool_result", "paths")
+# Serialises `build` per target directory. See `build`'s docstring for why the
+# directory, and not `$GITMEMORY_HOME`, is the thing worth locking.
+LOCK_NAME = ".gitmemory-build.lock"
 
 # A token FTS5 will index, used to sanitise a user query into a MATCH
 # expression. Anything outside this set is a separator to the `unicode61`
@@ -408,13 +412,65 @@ def db_path(home: str | None = None) -> str:
     return os.path.join(store.resolve_home(home), "index", f"gitmemory-v{SCHEMA}.db")
 
 
-def open_db(path: str) -> sqlite3.Connection:
-    db = sqlite3.connect(path)
+def open_db(path: str, *, write: bool = False) -> sqlite3.Connection:
+    """Open an index. Read-only unless `build` says otherwise.
+
+    `sqlite3.connect(path)` opens for writing and **creates the file if it is
+    not there**, so `gitmemory recall --db typo.db` left a 0-byte database at
+    the typo and every reader could scribble on an index it only meant to
+    query. Read-only mode is both fixes at once: an absent path is refused
+    where it is named, instead of becoming a file that answers nothing.
+
+    Not a defence against a *hostile* index — an attacker who can write the
+    file chooses what `recall` prints, and no open mode changes that. What it
+    removes is the accident. [E7]
+    """
+    if write:
+        db = sqlite3.connect(path)
+    else:
+        # `quote`, because `?` and `#` are URI syntax and a path may hold them;
+        # `abspath`, so the URI is never parsed as a relative one.
+        db = sqlite3.connect(f"file:{quote(os.path.abspath(path))}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
     return db
 
 
+@contextlib.contextmanager
+def _step_budget(db: sqlite3.Connection, ticks: int = 1000):
+    """Abort a query on this connection after roughly a million VM steps.
+
+    `meta` is a table in every index this code writes — but in a *file* it did
+    not write, `meta` can be a view, and a view is arbitrary SQL that runs
+    inside the innocuous `SELECT` below. A view over a recursive CTE counting
+    to 4x10^8 held `_check_schema` for **29.7 seconds** and could not be
+    interrupted: SQLite is executing in C, so `signal.alarm` does not fire and
+    neither does Ctrl-C. Scale the constant in the file and it is unbounded.
+
+    The real query is an index seek on a two-row table — a handful of VM steps
+    against a budget of a million — so the headroom is about six orders of
+    magnitude. Hitting it raises `OperationalError`, which `_check_schema`
+    already turns into "not a gitmemory index". [E7]
+    """
+    left = [ticks]
+
+    def tick() -> int:
+        left[0] -= 1
+        return left[0] <= 0
+
+    db.set_progress_handler(tick, 1000)
+    try:
+        yield
+    finally:
+        db.set_progress_handler(None, 0)
+
+
 _SUPERSEDED_RE = re.compile(r"\Agitmemory-v(\d+)\.db\Z")
+# What `build`'s `mkstemp` actually leaves, plus the journals SQLite hangs off
+# it. The prefix alone is not the name of anything we wrote: `--db` points the
+# sweep at a directory the user chose, and `.building-manifest.yaml` sitting in
+# it was deleted on sight. Ours always end `.db`, because `mkstemp` is called
+# with `suffix=".db"` eight lines from here. [E7]
+_PARTIAL_RE = re.compile(r"\A\.building-.+\.db(-journal|-wal|-shm)?\Z")
 
 
 def _sweep_partials(parent: str, keep: str = "") -> None:
@@ -438,8 +494,14 @@ def _sweep_partials(parent: str, keep: str = "") -> None:
     with contextlib.suppress(OSError), os.scandir(parent) as it:
         for entry in it:
             superseded = _SUPERSEDED_RE.match(entry.name)
-            stale = superseded and superseded.group(1) != str(SCHEMA)
-            if (entry.name.startswith(".building-") or stale) and entry.is_file():
+            # `<`, not `!=`. A version this code has never heard of is not a
+            # leftover, it is an index written by a *newer* gitmemory, and `!=`
+            # had the two versions deleting each other's index on alternate
+            # runs — each rebuilding from raw, each destroying the other's work,
+            # neither reporting anything. Forward is not the same direction as
+            # stale. [E7]
+            stale = superseded and int(superseded.group(1)) < SCHEMA
+            if (_PARTIAL_RE.match(entry.name) or stale) and entry.is_file():
                 if os.path.abspath(entry.path) == keep:
                     continue
                 with contextlib.suppress(OSError):
@@ -455,7 +517,8 @@ def _check_schema(db: sqlite3.Connection) -> None:
     from a retrieval index looks exactly like a right one. [E3]
     """
     try:
-        row = db.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
+        with _step_budget(db):
+            row = db.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()
     except sqlite3.DatabaseError as exc:
         raise ValueError(f"not a gitmemory index: {exc}") from exc
     found = row["value"] if row else None
@@ -472,6 +535,19 @@ def build(home: str | None = None, *, path: str | None = None) -> Stats:
     Full rebuild only. Incremental indexing is a cache-invalidation problem,
     and the thing being cached is a few seconds of parsing over bytes we
     already own; add it when a measurement says the rebuild is the bottleneck.
+
+    **One build at a time per directory.** The sweep cannot tell a partial index
+    left by a kill from one a *live* build is still writing — both are
+    `.building-*.db`, and the name is the only evidence there is. Two builds in
+    the same directory therefore deleted each other's temp and journal
+    mid-transaction, and the loser died on `sqlite3.OperationalError: disk I/O
+    error`: an error that names a failing disk when the disk is fine. Two
+    `gitmemory index` runs in two terminals is the ordinary way to get there.
+
+    The lock sits in the target's own directory rather than under `<home>`,
+    because the directory is the thing being contended: `--db` puts the sweep
+    wherever the caller points it, and a home-keyed lock would not serialise two
+    homes writing into one directory. [E7]
     """
     home = store.resolve_home(home)
     # abspath, because `--db out.db` has no dirname and `makedirs("")` raises
@@ -479,31 +555,32 @@ def build(home: str | None = None, *, path: str | None = None) -> Stats:
     target = os.path.abspath(path or db_path(home))
     parent = os.path.dirname(target)
     os.makedirs(parent, exist_ok=True)
-    _sweep_partials(parent, keep=target)
+    with store._lockfile(os.path.join(parent, LOCK_NAME)):
+        _sweep_partials(parent, keep=target)
 
-    # Build into a temp database and rename. A half-built index that answers
-    # queries is worse than no index, and a crash mid-build is the normal way
-    # to get one.
-    fd, tmp = tempfile.mkstemp(dir=parent, prefix=".building-", suffix=".db")
-    os.close(fd)
-    try:
-        db = open_db(tmp)
+        # Build into a temp database and rename. A half-built index that answers
+        # queries is worse than no index, and a crash mid-build is the normal way
+        # to get one.
+        fd, tmp = tempfile.mkstemp(dir=parent, prefix=".building-", suffix=".db")
+        os.close(fd)
         try:
-            db.executescript(_DDL + _VIEWS)
-            stats = _fill(db, home)
-            db.executescript("INSERT INTO fts(fts) VALUES('rebuild'); ANALYZE;")
-            db.executemany(
-                "INSERT INTO meta (key, value) VALUES (?, ?)",
-                [("schema", str(SCHEMA)), ("content_sha256", stats.content_sha256)],
-            )
-            db.commit()
-        finally:
-            db.close()
-        os.replace(tmp, target)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
+            db = open_db(tmp, write=True)
+            try:
+                db.executescript(_DDL + _VIEWS)
+                stats = _fill(db, home)
+                db.executescript("INSERT INTO fts(fts) VALUES('rebuild'); ANALYZE;")
+                db.executemany(
+                    "INSERT INTO meta (key, value) VALUES (?, ?)",
+                    [("schema", str(SCHEMA)), ("content_sha256", stats.content_sha256)],
+                )
+                db.commit()
+            finally:
+                db.close()
+            os.replace(tmp, target)
+        except BaseException:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+            raise
     return stats
 
 

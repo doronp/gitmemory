@@ -434,6 +434,22 @@ def _fsync_dir(path: str) -> None:
 
 
 @contextlib.contextmanager
+def _lockfile(path: str):
+    """Hold an exclusive `flock` on `path`, making it and its parent if needed.
+
+    The mechanism, with no opinion about what is being serialised — `_locked`
+    below names sessions, `index.build` names a directory of derived databases,
+    and neither wants its own copy of five lines of `os.open`. [E7]
+    """
+    _mkdir(os.path.dirname(path))
+    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def _locked(home: str, agent: str, session_id: str):
     """One capture at a time per session. Other sessions still run in parallel.
 
@@ -445,14 +461,7 @@ def _locked(home: str, agent: str, session_id: str):
     Locks live under `<home>/.locks/`, not beside the manifests — the sessions
     tree is what gets committed, and a lock file is not part of the proof.
     """
-    path = os.path.join(home, ".locks", agent, f"{session_id}.lock")
-    _mkdir(os.path.dirname(path))
-    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        os.close(fd)
+    return _lockfile(os.path.join(home, ".locks", agent, f"{session_id}.lock"))
 
 
 def _sweep_temps(session_dir: str) -> None:

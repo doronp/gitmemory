@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import threading
 import time
 import unicodedata
 from pathlib import Path
@@ -696,11 +697,96 @@ def test_a_partial_index_left_by_a_kill_is_swept(home, src):
     three partial databases plus journals next to the real one forever. The
     store reaps orphans in `raw/`; `index/` had no equivalent. [E3]"""
     built(home, src, [user("u1", "marmoset")]).close()
-    junk = Path(os.path.dirname(index.db_path(home)), ".building-abc123.db")
-    junk.write_bytes(b"leftover")
+    parent = Path(os.path.dirname(index.db_path(home)))
+    junk = [parent / n for n in (".building-abc123.db", ".building-abc123.db-journal")]
+    for p in junk:
+        p.write_bytes(b"leftover")
     index.build(home)
-    assert not junk.exists()
+    assert [p for p in junk if p.exists()] == []
     assert index.search(index.open_db(index.db_path(home)), "marmoset")
+
+
+def test_a_second_build_waits_instead_of_sweeping_the_first_one_away(home, src, monkeypatch):
+    """The sweep cannot tell a partial index left by a kill from one a *live*
+    build is still writing — both are `.building-*.db`, and the name is all the
+    evidence there is. So the second build deleted the first one's temp and
+    journal mid-transaction and the first died on `sqlite3.OperationalError:
+    disk I/O error`, an error that names a failing disk when the disk is fine.
+    Two `gitmemory index` runs in two terminals is how you get there. [E7]"""
+    write(src, [user(f"u{i}", f"marmoset {i}") for i in range(50)])
+    store.capture(src, "claude-code", "sess", home=home)
+
+    paused, go, once = threading.Event(), threading.Event(), []
+    real_fill = index._fill
+
+    def fill_then_wait(db, h):
+        stats = real_fill(db, h)
+        if not once:  # only the first build waits; the second is the one racing it
+            once.append(1)
+            paused.set()  # the temp database is on disk and the transaction is open
+            go.wait(20)
+        return stats
+
+    monkeypatch.setattr(index, "_fill", fill_then_wait)
+    errors: list[BaseException] = []
+
+    def build() -> None:
+        try:
+            index.build(home)
+        except BaseException as exc:  # noqa: BLE001 - reported, not raised, from a thread
+            errors.append(exc)
+
+    first, second = threading.Thread(target=build), threading.Thread(target=build)
+    first.start()
+    try:
+        assert paused.wait(20), "the first build never reached the pause"
+        second.start()
+        second.join(0.5)
+        assert second.is_alive(), "the second build did not wait for the first"
+    finally:
+        go.set()
+        first.join(20)
+        if second.ident is not None:  # it may never have been started
+            second.join(20)
+
+    assert errors == [], "a build died because the other one swept its temp away"
+    assert index.search(index.open_db(index.db_path(home)), "marmoset")
+
+
+def test_the_sweep_deletes_what_the_build_writes_and_not_what_it_finds(home, src, tmp_path):
+    """`--db` points the sweep at a directory the *user* chose, and the prefix
+    on its own is not the name of anything gitmemory wrote: `.building-` plus
+    anything at all was deleted on sight, so a half-written
+    `.building-manifest.yaml` in the working directory was collateral. Every
+    temp this module makes ends `.db`, because `mkstemp` is called with
+    `suffix=".db"`. [E7]"""
+    write(src, [user("u1", "marmoset")])
+    store.capture(src, "claude-code", "sess", home=home)
+    theirs = [tmp_path / n for n in (".building-manifest.yaml", ".building-notes")]
+    for p in theirs:
+        p.write_bytes(b"not ours")
+
+    index.build(home, path=str(tmp_path / "out.db"))
+    assert [p.name for p in theirs if not p.exists()] == []
+
+
+def test_an_index_from_a_newer_schema_is_not_mistaken_for_a_leftover(home, src):
+    """Forward is not the same direction as stale. The test was `!=`, so an
+    index written by a *newer* gitmemory looked exactly like one written by an
+    older one: run both against the same home and each deletes the other's
+    index on every build, each rebuilds from raw, and neither says a word. [E7]"""
+    write(src, [user("u1", "marmoset")])
+    store.capture(src, "claude-code", "sess", home=home)
+    parent = Path(os.path.dirname(index.db_path(home)))
+    parent.mkdir(parents=True, exist_ok=True)
+    future = parent / f"gitmemory-v{index.SCHEMA + 1}.db"
+    past = parent / f"gitmemory-v{index.SCHEMA - 1}.db"
+    for p in (future, past):
+        p.write_bytes(b"an index")
+
+    index.build(home)
+    assert future.exists(), "a newer schema's index was swept as a leftover"
+    assert not past.exists(), "precondition: the older one is still swept"
 
 
 def test_a_failed_build_leaves_the_index_it_was_replacing(home, src, tmp_path, monkeypatch):
@@ -756,13 +842,55 @@ def test_an_index_from_another_schema_is_refused_not_answered(home, src, tmp_pat
     one. [E3]"""
     other = str(tmp_path / "out.db")
     index.build(home, path=other)
-    db = index.open_db(other)
+    db = index.open_db(other, write=True)  # the test is corrupting it; see [E7]
     assert index.search(db, "marmoset") == []
     db.execute("UPDATE meta SET value = '99' WHERE key = 'schema'")
     with pytest.raises(ValueError, match="schema 99"):
         index.search(db, "marmoset")
+    empty = tmp_path / "empty.db"
+    empty.write_bytes(b"")
     with pytest.raises(ValueError, match="not a gitmemory index"):
-        index.search(index.open_db(str(tmp_path / "empty.db")), "marmoset")
+        index.search(index.open_db(str(empty)), "marmoset")
+
+
+def test_a_reader_cannot_create_or_scribble_on_an_index(home, src, tmp_path):
+    """`sqlite3.connect(path)` opens for writing and creates the file if it is
+    absent, so `recall --db typo.db` left a 0-byte database at the typo — a file
+    that answers nothing, forever, with no sign of where it came from. Every
+    caller but `build` is a reader. [E7]"""
+    absent = tmp_path / "not-here.db"
+    with pytest.raises(sqlite3.OperationalError, match="unable to open"):
+        index.open_db(str(absent))
+    assert not absent.exists(), "opening an index for reading created one"
+
+    built(home, src, [user("u1", "marmoset")]).close()
+    db = index.open_db(index.db_path(home))
+    assert index.search(db, "marmoset"), "the read path still reads"
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        db.execute("DELETE FROM blocks")
+
+
+def test_a_meta_that_is_not_a_table_cannot_run_forever(tmp_path):
+    """SQLite files are code-adjacent: in a file gitmemory did not write, `meta`
+    can be a **view**, and a view is arbitrary SQL that runs inside the
+    innocuous `SELECT` in `_check_schema`. A view over a recursive CTE counting
+    to 4x10^8 held it for 29.7 s and could not be interrupted — SQLite is
+    executing in C, so `signal.alarm` does not fire and neither does Ctrl-C.
+    Scale the constant in the file and it is unbounded. [E7]"""
+    hostile = str(tmp_path / "hostile.db")
+    db = sqlite3.connect(hostile)
+    db.executescript(
+        "CREATE VIEW meta AS "
+        "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM c WHERE x < 400000000) "
+        "SELECT 'schema' AS key, CAST(count(*) AS TEXT) AS value FROM c;"
+    )
+    db.commit()
+    db.close()
+
+    started = time.monotonic()
+    with pytest.raises(ValueError, match="not a gitmemory index"):
+        index.search(index.open_db(hostile), "marmoset")
+    assert time.monotonic() - started < 5, "the budget did not stop the hostile view"
 
 
 def test_a_bare_filename_is_a_usable_db_path(home, src, tmp_path, monkeypatch, capsys):
@@ -964,7 +1092,10 @@ def test_search_rejects_nothing_it_can_reach_the_database_with(home, src, capsys
     only clause in `main` that can return 2 here, which is the whole point of
     the clause. [E4, review: vacuity audit]
     """
-    db = built(home, src, [user("u1", "marmoset")])
+    built(home, src, [user("u1", "marmoset")]).close()
+    # `write=True` on purpose: the test is corrupting an index, which is a write,
+    # and `open_db`'s default has been read-only since [E7].
+    db = index.open_db(index.db_path(home), write=True)
     db.execute("DROP TABLE fts")
     with pytest.raises(sqlite3.Error):
         index.search(db, "marmoset")
