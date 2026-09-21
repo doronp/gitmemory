@@ -7,6 +7,7 @@ user session, never crash, write data atomically, and consume minimal resources.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -430,18 +431,28 @@ def test_a_symlink_planted_at_the_record_name_is_not_written_through(clean_env):
     file that does not exist yet is exactly how you get the shim to create it.
 
     The two names are not covered by the same thing, and writing this test as
-    though they were is how that came out. On the `.tmp-` the guard is real and
-    the negative control confirms it: strip `[ -h ]` and the payload goes
-    through the link into the victim file. On the published record there is no
+    though they were is how that came out. On the published record there is no
     write-through to prevent — `mv` is `rename(2)`, which replaces the symlink
     rather than following it — so `[ -h "$F" ]` buys something smaller and worth
     naming honestly: the shim does not silently destroy a name it did not
     create. Both are asserted below, each for what it actually does.
 
-    `set -C` is a third guard and this test cannot reach it, because the `[ -h ]`
-    loop has already moved off any planted name by the time `cat` runs. It
-    covers the window between that test and the write, which is a race, not a
-    state. Left in and left untested on purpose. [E4, review: F2]
+    The `.tmp-` name has two guards, not one, and the version of this docstring
+    written first credited the wrong one. Measured 2×2, dangling link planted at
+    both names:
+
+        [ -h ] and set -C   victim untouched
+        set -C alone        victim untouched   <- so `[ -h ]` is not what holds it
+        [ -h ] alone        victim untouched
+        neither             victim written
+
+    `set -C` makes the redirect `O_CREAT|O_EXCL`, which fails on a dangling
+    symlink outright, so it closes the same case the `[ -h ]` loop does — and it
+    additionally closes the window *between* that test and the write, which is a
+    race no state test can reach. The old docstring called it "left in and left
+    untested on purpose"; it was in fact the load-bearing one, and untested only
+    because this test cannot reach it while `[ -h ]` is present. The sibling
+    below runs a stripped shim so that it can. [E4, review: F2 / CLI 5]
     """
     env, home = clean_env
     spool = home / "spool"
@@ -467,6 +478,74 @@ def test_a_symlink_planted_at_the_record_name_is_not_written_through(clean_env):
     assert (spool / f"{p.pid}-PreCompact.json").is_symlink(), "the shim clobbered a link"
     written = [f for f in spool.glob("*.json") if not f.is_symlink()]
     assert [f.read_bytes() for f in written] == [b"the payload"]
+
+
+def test_set_c_alone_stops_the_write_through(clean_env, tmp_path):
+    """The other half of the guard above, reached by removing the half in front of it.
+
+    While `[ -h ]` is in the shim the loop has already moved off any planted
+    name by the time `cat` runs, so no test of the shipped file can tell whether
+    `set -C` does anything. That is how it came to be described as untested on
+    purpose, which was a guess, and the wrong one. Run a copy with the two
+    `|| [ -h ... ]` clauses deleted and `set -C` is the only thing left between
+    a dangling link and the victim — measured writing through the moment both
+    are gone, and not writing through here.
+
+    A stripped copy rather than a mutation of the real file: this is a test of
+    what a guard is worth, and the shipped shim keeps both. [E4, review: CLI 5]
+    """
+    env, home = clean_env
+    stripped, n = re.subn(r' \|\| \[ -h "[^"]+" \]', "", SHIM_PATH.read_text())
+    assert n == 2, f"the shim's `[ -h ]` guards moved; found {n}"
+    variant = tmp_path / "no-h-guard.sh"
+    variant.write_text(stripped)
+    variant.chmod(0o755)
+
+    spool = home / "spool"
+    spool.mkdir(parents=True)
+    target = home / "victim"
+
+    p = subprocess.Popen(
+        [str(variant), "PreCompact"],
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert p.stdin is not None
+    (spool / f".tmp-{p.pid}-0").symlink_to(target)
+    p.stdin.write(b"the payload")
+    p.stdin.close()
+    assert p.wait() == 0, "a planted link is still not a reason to fail the session"
+
+    assert not target.exists(), "`set -C` did not stop the write through the temp symlink"
+    # And the record is still lost rather than mis-filed: nothing on the way
+    # out, because the one name the shim would have used was taken by a link.
+    assert [f for f in spool.glob("*.json") if not f.is_symlink()] == []
+
+
+def test_a_refusal_cannot_rewrite_the_agents_terminal(clean_env):
+    """The shim's one message that quotes a value, with ESC and CR in the value.
+
+    `GITMEMORY_HOME` is the user's own variable, so this is not a privilege
+    boundary — but the shim's stderr lands in somebody else's agent transcript,
+    and `\\033[2K\\r` there does not print, it erases the warning line and
+    substitutes whatever follows it. The Python side holds itself to exactly
+    this standard (`__main__._UNSAFE`); the shim is the half that runs inside
+    another program. [E4, review: CLI 6]
+    """
+    env, _ = clean_env
+    env["GITMEMORY_HOME"] = "rel\033[2K\rgitmemory: everything is fine"
+    out = subprocess.run(
+        run_shim_cmd() + ["PreCompact"],
+        env=env,
+        input=b"",
+        capture_output=True,
+    )
+    assert out.returncode == 0
+    assert out.stdout == b""
+    assert b"\033" not in out.stderr and b"\r" not in out.stderr, out.stderr
+    assert out.stderr.startswith(b"gitmemory: GITMEMORY_HOME must be an absolute path")
 
 
 def test_the_shim_survives_being_run_under_nounset(clean_env):

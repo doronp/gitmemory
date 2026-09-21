@@ -49,10 +49,20 @@ GITIGNORE = """\
 # process was killed in between. `git add --all` stages dotfiles, so a commit
 # racing a live capture was committing a *partial* segment or a *partial*
 # manifest: unattested bytes for the first, and for the second a manifest that
-# `verify` reads as truncated JSON. Both get swept by the next capture, which
-# makes the working tree self-healing and the history not. [E4, review]
-.incoming.*
-*.tmp.*
+# `verify` reads as truncated JSON. The segment half is swept by the next
+# capture; the manifest half is not, and stays on disk for ever. [E4, review]
+#
+# Anchored to the exact depth each one lives at, because unanchored they match a
+# *directory component* — and one of those components is the user's filename.
+# A transcript called `session.tmp.42.jsonl` becomes the session key
+# `session.tmp.42-<tag>`, and a bare `*.tmp.*` then excluded the whole session,
+# raw and manifest both, from every commit. Capture succeeded, `verify` read the
+# bytes off disk and said clean, and the session was simply not in history. The
+# anchored forms cannot do that: the user controls one component and these pin
+# all of them, and neither a segment (`<start>-<end>.jsonl`) nor a manifest
+# (`g<NN>.json`) can spell the partial's name. [E4, review: gitrepo 2]
+raw/*/*/*/.incoming.*
+sessions/*/*/*.tmp.*
 """
 
 # Repository-local. The reading half of that is enforced in `_env`, not here.

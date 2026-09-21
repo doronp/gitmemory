@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from gitmemory import gitrepo
+from gitmemory import gitrepo, store
 
 pytestmark = pytest.mark.skipif(
     subprocess.run(["git", "--version"], capture_output=True, check=False).returncode != 0,
@@ -209,6 +209,59 @@ def test_a_global_ignore_file_cannot_drop_bytes_out_of_a_commit(tmp_path, monkey
     here = "sessions/claude-code/2026-09-21"
     assert f"{here}/000000000000-000000000008.jsonl" in committed, out.stdout
     assert f"{here}/g0.json" in committed, out.stdout
+
+
+def test_the_ignore_and_attributes_git_reads_without_being_told_to_reach_nothing(
+    tmp_path, monkeypatch
+):
+    """The same loss as above, through the door that needs no configuration at all.
+
+    `core.excludesFile` is a *setting*, and the test above plants one. But git
+    also reads `$XDG_CONFIG_HOME/git/ignore` and `$XDG_CONFIG_HOME/git/attributes`
+    — defaulting to `~/.config/git/` — with no setting's help, so scrubbing
+    `GIT_CONFIG_GLOBAL` closes one door and leaves its twin open. That file
+    exists on the machine this was written on. What holds the door is `HOME`
+    pointing at `/dev/null` and `XDG_CONFIG_HOME` being unset, which makes the
+    default path unreadable rather than merely unset; the property was closed
+    by that change and pinned by nothing until here. [E4, review: gitrepo 1]
+
+    Both surfaces, because they fail in opposite directions. `ignore` is silent:
+    the segment is skipped, the commit succeeds, `verify` reads disk and says
+    clean. `attributes` is loud but worse — `working-tree-encoding` rewrites the
+    bytes on the way into the blob, so history stops hashing to the digest the
+    manifest attests, which is the one claim this product makes.
+    """
+    fake = tmp_path / "fakehome"
+    (fake / ".config" / "git").mkdir(parents=True)
+    (fake / ".config" / "git" / "ignore").write_text("*.jsonl\n")
+    (fake / ".config" / "git" / "attributes").write_text("*.jsonl text eol=crlf\n")
+    monkeypatch.setenv("HOME", str(fake))
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    home = gitrepo.init(str(tmp_path / "store"))
+    src = str(tmp_path / "a.jsonl")
+    with open(src, "w") as fh:
+        fh.write('{"type":"user"}\n' * 20)
+    sid = store.session_id_for(src)
+    cap = store.capture(src, "claude-code", sid, home=home)
+    assert gitrepo.commit(home, "capture: one") is not None
+
+    tracked = _ask(home, "ls-files").split()
+    seg = next((t for t in tracked if t.startswith("raw/")), None)
+    assert seg is not None, tracked  # `ignore`: the bytes reached history at all
+
+    # `attributes`: and they reached it unrewritten. `eol=crlf` rather than a
+    # UTF-16 encoding because that one makes `git add` fail outright, which any
+    # test would notice; a line-ending filter is the quiet version, and quiet is
+    # the failure mode worth pinning.
+    blob = subprocess.run(
+        ["git", "-C", home, "cat-file", "blob", f"HEAD:{seg}"],
+        capture_output=True,
+        check=True,
+    ).stdout
+    with open(os.path.join(home, seg), "rb") as fh:
+        assert blob == fh.read(), "the blob is not the bytes on disk"
+    assert store.span(store.sessions(home)[0], 0, cap.size) == blob
 
 
 def test_a_setting_that_gets_past_the_scrub_stops_the_store_at_init(tmp_path, monkeypatch):
@@ -474,20 +527,69 @@ def test_a_half_written_capture_is_not_committed(tmp_path):
     committing either a partial segment — unattested bytes — or a partial
     manifest, which `verify` reads as truncated JSON. The next capture sweeps
     both, which makes the working tree self-healing and the history not.
+
+    Planted at the depths the store actually writes them, which the first
+    version of this test did not: it put the manifest temp inside the *raw*
+    generation directory, a place nothing writes one. That went unnoticed while
+    the ignore patterns were unanchored, because an unanchored pattern matches
+    at any depth — so the test passed against a layout the product does not
+    have, and stopped passing the moment the patterns were pinned to the real
+    one. [E4, review: gitrepo 2]
     """
     home = str(tmp_path / "store")
     gitrepo.init(home)
-    os.makedirs(os.path.join(home, "raw", "claude-code", "s", "g00"))
-    for name in (".incoming.000000000000-000000000008.jsonl", "g00.json.tmp.4242"):
-        with open(os.path.join(home, "raw", "claude-code", "s", "g00", name), "w") as fh:
+    seg_dir = os.path.join(home, "raw", "claude-code", "s", "g00")
+    man_dir = os.path.join(home, "sessions", "claude-code", "s")
+    os.makedirs(seg_dir)
+    os.makedirs(man_dir)
+    partials = [
+        os.path.join(seg_dir, ".incoming.4242.7"),
+        os.path.join(man_dir, "g00.json.tmp.4242.7"),
+    ]
+    for path in partials:
+        with open(path, "w") as fh:
             fh.write("half a file")
-    with open(os.path.join(home, "raw", "claude-code", "s", "g00", "real.jsonl"), "w") as fh:
+    with open(os.path.join(seg_dir, "000000000000-000000000006.jsonl"), "w") as fh:
         fh.write("whole\n")
+    with open(os.path.join(man_dir, "g00.json"), "w") as fh:
+        fh.write("{}\n")
 
     gitrepo.commit(home, "capture: one")
     tracked = _ask(home, "ls-files").split()
-    assert any(t.endswith("real.jsonl") for t in tracked), tracked
+    assert any(t.endswith("000000000000-000000000006.jsonl") for t in tracked), tracked
+    assert any(t.endswith("sessions/claude-code/s/g00.json") for t in tracked), tracked
     assert not [t for t in tracked if ".incoming." in t or ".tmp." in t], tracked
+
+
+def test_a_session_named_like_the_stores_own_temp_files_still_reaches_history(tmp_path):
+    """The ignore patterns hold a denylist against a path the *user* names. [E4, review: gitrepo 2]
+
+    `*.tmp.*`, unanchored, matches a directory component — and one of the
+    components under `raw/` and `sessions/` is `session_id_for`'s key, which is
+    built from the transcript's filename. A transcript called
+    `session.tmp.42.jsonl` therefore excluded its own entire session, raw and
+    manifest both, from every commit git was asked to make. Capture returned
+    normally, `verify` read the bytes off disk and reported clean, and the
+    session was simply absent from the history that is the product.
+
+    Nothing in the suite could see it, because nothing asserted that an
+    ordinarily-named session *is* committed — only that partials are not. Both
+    halves are asserted here, against a real capture rather than planted files,
+    so the test cannot drift from the layout.
+    """
+    home = str(tmp_path / "store")
+    gitrepo.init(home)
+    src = str(tmp_path / "session.tmp.42.jsonl")
+    with open(src, "w") as fh:
+        fh.write('{"type":"user"}\n' * 20)
+    sid = store.session_id_for(src)
+    assert ".tmp." in sid, sid  # the collision this is about
+    store.capture(src, "claude-code", sid, home=home)
+
+    gitrepo.commit(home, "capture: one")
+    tracked = _ask(home, "ls-files").split()
+    assert [t for t in tracked if t.startswith(f"raw/claude-code/{sid}/")], tracked
+    assert f"sessions/claude-code/{sid}/g00.json" in tracked, tracked
 
 
 def test_a_dead_index_lock_is_reclaimed_rather_than_wedging_the_store_for_ever(tmp_path):

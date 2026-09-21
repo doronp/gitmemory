@@ -43,7 +43,15 @@ esac
 case "$H" in
     /*) ;;
     *)
-        echo "gitmemory: GITMEMORY_HOME must be an absolute path, got '$H'" >&2
+        # Stripped before it is echoed. This is the one message that puts an
+        # environment variable's value into the agent's own transcript, and a
+        # value containing ESC or CR does not print, it *edits*: `\033[2K\r`
+        # erases the warning line and substitutes whatever follows. The Python
+        # side holds itself to exactly this standard (`__main__._UNSAFE` and the
+        # `print` shadow beside it); the shim is the half that runs inside
+        # somebody else's agent, so it is the half that matters more. One fork,
+        # on a path that is already exiting. [E4, review: CLI 6]
+        echo "gitmemory: GITMEMORY_HOME must be an absolute path, got '$(printf '%s' "$H" | tr -d '\000-\037')'" >&2
         exit 0
         ;;
 esac

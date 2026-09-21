@@ -140,6 +140,26 @@ def resolve_home(home: str | None = None) -> str:
         parent = up
 
 
+def is_store(home: str | None = None) -> bool:
+    """Whether `home` has ever been a store, as distinct from being an empty one.
+
+    `verify` is glob-driven, and an empty glob is indistinguishable from a clean
+    store — so `gitmemory verify --home /Volumes/backup/store` with the volume
+    unmounted, or with a typo in the path, printed `0 problem(s)` and exited 0.
+    The README says of `verify` that "there is an empty list or a list of
+    problems; there is no third answer", and that was the third answer wearing
+    the first one's clothes.
+
+    The predicate is deliberately not "is this store healthy" — that is what
+    `verify` is for, and keeping the two apart is what lets `verify` keep its
+    two-answer contract. A store that `watch` has initialised but never captured
+    into has `.git` and nothing else, and it is a store; a path with none of the
+    three has never been one. [E4, review: CLI 3]
+    """
+    home = resolve_home(home)
+    return any(os.path.exists(os.path.join(home, n)) for n in (".git", "sessions", "raw"))
+
+
 def session_id_for(source_path: str) -> str:
     """The store's name for the session a transcript file holds.
 

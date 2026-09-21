@@ -128,7 +128,24 @@ def _watch(args) -> int:
     )
 
 
+def _not_a_store(home: str | None) -> int | None:
+    """Exit 2 and say so, rather than letting an empty glob read as a clean store.
+
+    Shared by the two commands that are otherwise vacuous on a path that is not
+    a store: `verify` reported `0 problem(s)` and exited 0, and `index` reported
+    zero of everything and *created* the directory on the way. `recall` already
+    had the floor (`no index at ...`, exit 2) and this is its wording.
+    [E4, review: CLI 3]
+    """
+    if store.is_store(home):
+        return None
+    print(f"not a store: {store.resolve_home(home)}", file=sys.stderr)
+    return 2
+
+
 def _verify(args) -> int:
+    if (code := _not_a_store(args.home)) is not None:
+        return code
     problems = store.verify(args.home)
     for p in problems:
         print(p, file=sys.stderr)
@@ -167,6 +184,8 @@ def _push(args) -> int:
 
 
 def _index(args) -> int:
+    if (code := _not_a_store(args.home)) is not None:
+        return code
     stats = index.build(args.home, path=args.db)
     for line in stats.skipped:
         print(f"skipped {line}", file=sys.stderr)

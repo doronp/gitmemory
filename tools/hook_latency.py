@@ -45,7 +45,13 @@ def get_machine_info() -> str:
 
 
 def generate_payload() -> bytes:
-    """Generate a realistic ~30KB PreCompact JSON transcript payload."""
+    """Generate a realistic ~59KB PreCompact JSON transcript payload.
+
+    Measured, not estimated: the tool prints the size it actually built on every
+    run, and `hook/README.md` records 58.9 KB. The docstring said 30 KB, which
+    is what a re-measurer reads before deciding whether the published numbers
+    are comparable. [E4, review: docs 11]
+    """
     turns = []
     for i in range(15):
         turns.append(
@@ -127,6 +133,19 @@ def main() -> None:
     with tempfile.TemporaryDirectory(prefix="gitmemory_bench_") as tmp_dir:
         env = os.environ.copy()
         env["GITMEMORY_HOME"] = tmp_dir
+        # `HOME` as well, and inside the same temporary directory. The shim's
+        # default is `${GITMEMORY_HOME:-$HOME/.gitmemory}`, and it refuses a
+        # `GITMEMORY_HOME` that is not absolute — so any run where the variable
+        # above fails that test writes `count` spool records into the real home
+        # directory and then prints a clean-looking latency table. Measured: 21
+        # records in `$HOME/.gitmemory/spool`, exit 0, report normal. The
+        # `clean_env` fixture in `tests/test_hook.py` was hardened against
+        # exactly this after a run put 74 files in a developer's home; the
+        # sibling here was missed, and later put one in mine. Costs nothing —
+        # the shim reads `HOME` only on the branch this makes unreachable.
+        # [E4, review: CLI 4]
+        env["HOME"] = str(pathlib.Path(tmp_dir) / "home")
+        os.makedirs(env["HOME"])
 
         # Warm up run to ensure any filesystem/OS caches are populated
         warm = subprocess.run(
@@ -135,10 +154,19 @@ def main() -> None:
             input=payload,
             capture_output=True,
         )
-        if warm.returncode != 0:
+        # `returncode` cannot catch a broken shim — it exits 0 on every branch by
+        # contract, which is the whole point of a hook that must never fail the
+        # agent. So check what it was asked to do instead: a warm-up that leaves
+        # no record behind did not run. [E4, review: CLI 4]
+        spooled = sorted(pathlib.Path(tmp_dir, "spool").glob("*.json"))
+        if warm.returncode != 0 or not spooled:
             # A broken shim exits fast, and a fast broken shim benchmarks
             # beautifully. Refusing to report is the only honest option. [E4]
-            print(f"Error: the shim exited {warm.returncode} on the warm-up run", file=sys.stderr)
+            print(
+                f"Error: the shim exited {warm.returncode} and wrote "
+                f"{len(spooled)} record(s) on the warm-up run",
+                file=sys.stderr,
+            )
             print(warm.stderr.decode(errors="replace"), file=sys.stderr)
             sys.exit(1)
 

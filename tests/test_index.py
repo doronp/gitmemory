@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from gitmemory import index, store
+from gitmemory import gitrepo, index, store
 from gitmemory.__main__ import main
 
 
@@ -762,6 +762,40 @@ def test_cli_index_then_recall(home, src, capsys):
 def test_cli_recall_without_an_index_says_so(home, capsys):
     assert main(["--home", home, "recall", "marmoset"]) == 2
     assert "run `gitmemory index`" in capsys.readouterr().err
+
+
+def test_cli_verify_and_index_refuse_a_path_that_is_not_a_store(tmp_path, capsys):
+    """An empty glob is not a clean store, and `verify` said it was.
+
+    `store.verify` is glob-driven, so a home with nothing in it produced no
+    problems and the CLI printed `0 problem(s)` and exited 0. That is the answer
+    a mounted, healthy, empty store gives — and also the answer an unmounted
+    volume, a typo, and a `--home` pointing at the wrong user's directory give.
+    The README says of `verify` that there is an empty list or a list of
+    problems and no third answer; this was the third answer wearing the first
+    one's clothes. `index` had the same shape and additionally *created* the
+    directory on its way to reporting zero of everything. [E4, review: CLI 3]
+    """
+    absent = str(tmp_path / "nope")
+    assert main(["--home", absent, "verify"]) == 2
+    assert "not a store" in capsys.readouterr().err
+    assert main(["--home", absent, "index"]) == 2
+    assert "not a store" in capsys.readouterr().err
+    assert not os.path.exists(absent), "`index` created the directory it refused"
+
+
+def test_cli_verify_accepts_a_store_that_is_merely_empty(tmp_path, capsys):
+    """The other side of the floor, because a floor that refuses too much is worse.
+
+    `watch` inits the repository on its first pass and may capture nothing for
+    an hour. That store has `.git` and nothing else, it is a real store, and
+    `verify` on it must give the ordinary clean answer rather than the refusal
+    above. [E4, review: CLI 3]
+    """
+    home = str(tmp_path / "store")
+    gitrepo.init(home)
+    assert main(["--home", home, "verify"]) == 0
+    assert "0 problem(s)" in capsys.readouterr().out
 
 
 def test_cli_recall_survives_a_corrupt_database(home, src, capsys):
