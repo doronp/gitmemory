@@ -364,11 +364,28 @@ def init(home: str | None = None) -> str:
     """
     home = resolve_home(home)
     os.makedirs(home, mode=0o700, exist_ok=True)
+    # `mode=` applies only when `makedirs` creates the directory. A home the
+    # user made first — `mkdir ~/.gitmemory` under the default 022 umask —
+    # stays 0755 for ever, as does one restored by a `tar` or an `rsync`
+    # without `-p`. Measured: with home at 0755 the chain from `/` down to
+    # `.git/objects/xx/…` is other-traversable at every level, and the blob
+    # there decompresses to the transcript, credential and all. So the mode is
+    # re-applied on every start rather than decided once, which is the same
+    # reason this whole function is idempotent. [E7 fs-F2]
+    os.chmod(home, 0o700)
     _assert_own_git_dir(home)
     if not is_repo(home):
         # `--template=` empty, so a global `init.templateDir` cannot install
         # hooks into a repository whose work tree holds model-written bytes.
         _git(home, "init", "--quiet", "--template=", "--initial-branch=main")
+    # Every directory gitmemory makes is 0700 (`store._mkdir`). `.git` is the
+    # one it does not make: git creates it at the ambient umask, and it holds a
+    # second complete copy of every captured byte. Two mode slips to leak
+    # rather than one. `core.sharedRepository` is not the answer — measured, it
+    # takes 41 exposed entries to 11 and leaves this directory among them.
+    # Neither chmod is suppressed: a store we cannot make private is one we
+    # should refuse to write to. [E7 fs-F2]
+    os.chmod(os.path.join(home, ".git"), 0o700)
     for key, value in _CONFIG.items():
         _git(home, "config", key, value)
     _assert_no_foreign_config(home)

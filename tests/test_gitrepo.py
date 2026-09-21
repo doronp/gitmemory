@@ -920,3 +920,71 @@ def test_an_add_that_fails_for_any_other_reason_is_not_retried(tmp_path):
     finally:
         gitrepo._git = real
     assert calls == ["add"], f"a non-lock failure must not be retried: {calls}"
+
+
+# --- E7 fs-F2: the mode that was set once and never again --------------------
+
+
+def test_a_home_the_user_made_first_is_still_owner_only(tmp_path):
+    """A mode set once is a mode set never.
+
+    `os.makedirs(mode=...)` applies its mode only when it *creates* the
+    directory, so `mkdir ~/.gitmemory` under the default 022 umask left the
+    store at 0755 for ever — as did a restore by a `tar` or an `rsync` without
+    `-p`. Measured before the fix: the chain from the filesystem root down to
+    `.git/objects/xx/…` was other-traversable at every level and the blob was
+    0444, so any local account read every captured credential. No foothold, no
+    race, no write access; read is enough, which is why this outranked the
+    symlink findings in the same round. [E7 fs-F2]
+    """
+    home = str(tmp_path / "store")
+    os.mkdir(home)
+    os.chmod(home, 0o755)  # explicit, so a 077 umask cannot make this vacuous
+    gitrepo.init(home)
+
+    with open(os.path.join(home, "t.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write('{"k":"AKIAZZZZQQQQWWWW1234"}\n')  # synthetic, right shape
+    gitrepo.commit(home, "capture: one")
+
+    objects = [
+        os.path.join(root, name)
+        for root, _dirs, files in os.walk(os.path.join(home, ".git", "objects"))
+        for name in files
+    ]
+    assert objects, "no loose objects, so this test is not looking at the copy that leaks"
+
+    assert os.stat(home).st_mode & 0o077 == 0, "the store itself is readable by someone else"
+    gitdir = os.path.join(home, ".git")
+    assert os.stat(gitdir).st_mode & 0o077 == 0, "the second copy is readable by someone else"
+
+    # And the property those two modes exist for, checked against the objects
+    # themselves rather than inferred: git leaves `objects/xx` at 0755 and the
+    # blob at 0444, so "unreachable" has to mean *some* directory on the way
+    # down refuses the traversal, not all of them.
+    for obj in objects:
+        chain, p = [], obj
+        while p != home:
+            p = os.path.dirname(p)
+            chain.append(p)
+        assert any(os.stat(d).st_mode & 0o001 == 0 for d in chain), (
+            f"every directory from {home} down to {os.path.relpath(obj, home)} "
+            "lets another account walk through it"
+        )
+
+
+def test_the_home_mode_is_re_applied_on_every_start_not_just_the_first(tmp_path):
+    """`init` runs per start precisely so a store picks up what it is missing.
+
+    A `chmod` aimed at the wrong path, a restore, a synced volume: the mode can
+    be wrong at any time, not only at creation, so checking it only when the
+    directory is new checks it at the one moment it is guaranteed right.
+    [E7 fs-F2]
+    """
+    home = gitrepo.init(str(tmp_path / "store"))
+    os.chmod(home, 0o755)
+    os.chmod(os.path.join(home, ".git"), 0o755)
+
+    gitrepo.init(home)
+
+    assert os.stat(home).st_mode & 0o077 == 0
+    assert os.stat(os.path.join(home, ".git")).st_mode & 0o077 == 0

@@ -3375,6 +3375,30 @@ MUTANTS = [
         "                this_start += 0",
         "test_a_byte_order_mark_does_not_cost_the_first_line",
     ),
+    # --- E7 fs-F2 ---
+    (
+        "the store's own directory keeps whatever mode it was found with",
+        "gitrepo.py",
+        "    os.chmod(home, 0o700)",
+        "    pass",
+        "test_a_home_the_user_made_first_is_still_owner_only",
+    ),
+    (
+        "the one directory git makes keeps the ambient umask",
+        "gitrepo.py",
+        '    os.chmod(os.path.join(home, ".git"), 0o700)',
+        "    pass",
+        "test_a_home_the_user_made_first_is_still_owner_only",
+    ),
+    (
+        # The distinction the second test exists for: a mode fixed only on a
+        # store that is not a repository yet is a mode fixed once.
+        "the mode is applied at creation only, not on every start",
+        "gitrepo.py",
+        "    os.chmod(home, 0o700)",
+        '    if not os.path.isdir(os.path.join(home, ".git")):\n        os.chmod(home, 0o700)',
+        "test_the_home_mode_is_re_applied_on_every_start_not_just_the_first",
+    ),
 ]
 
 
