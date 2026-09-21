@@ -399,12 +399,19 @@ def _fsync_dir(path: str) -> None:
 
     And on macOS `os.fsync` does not reach the platter. It flushes the page
     cache to the device and returns; only `fcntl(F_FULLFSYNC)` asks the drive to
-    empty its own write cache, and the difference is not subtle — measured here,
-    28.2 µs against 2991.3 µs, a factor of 106. So the ordering this function
-    establishes is real against a *process* dying, which is the failure the
-    store is built for and the one the `kill -9` tests exercise, and is not
-    guaranteed against power loss, where the drive may commit the two renames in
-    either order.
+    empty its own write cache, and the difference is not subtle: tens of
+    microseconds against several milliseconds. `tools/fsync_cost.py` is that
+    measurement, so it can be repeated instead of quoted — four runs here gave
+    16.8–28.2 µs against 2996–3941 µs. This docstring used to state the quotient,
+    "a factor of 106", as if it were a constant; it is the least stable thing in
+    the measurement, because the denominator is small and moves with cache state
+    while the numerator sits on the drive. It ranged 106–219× across those runs.
+    [E4, review: docs — the 106× ratio]
+
+    So the ordering this function establishes is real against a *process* dying,
+    which is the failure the store is built for and the one the `kill -9` tests
+    exercise, and is not guaranteed against power loss, where the drive may
+    commit the two renames in either order.
 
     Not fixed with `F_FULLFSYNC`, deliberately. It is macOS-only, so it buys a
     platform branch on the capture path, and what it would buy back is already

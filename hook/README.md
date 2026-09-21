@@ -107,6 +107,16 @@ the same way on every iteration as a control:
 400 iterations on Darwin 25.6.0, arm64 (Apple M4 Pro), under `/bin/sh` — here
 bash 3.2.57 in posix mode — against a 58.9 KB `PreCompact` payload.
 
+**What the load was is not in that row, and it should be.** The table above does
+not say whether the machine was quiet, so a reader cannot tell whether it is a
+best case. A re-run at **load average 7.87** — eight background agents, the
+worst this machine sees — gives p50 **8.00 ms**, p99 **11.24 ms**, against a
+control of 1.99 ms and 3.56 ms. Both columns moved by about the same 7%, which
+is the useful part: the shim's share of p50 goes 5.6 ms → 6.0 ms, so the
+breakdown below survives the contention rather than being an artefact of an idle
+box. Re-measure with `python3 tools/hook_latency.py 400` and print `uptime`
+beside it. **[E4, review: docs — the latency table's quiescence]**
+
 **Every number in this table used to be measured under `/bin/dash`, which does
 not run this shim.** The shebang says `#!/bin/sh` and an agent firing the hook
 gets whatever that is; preferring `dash` when installed was a habit picked up

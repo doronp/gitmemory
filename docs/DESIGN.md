@@ -135,8 +135,19 @@ rather than made silently:
   the document while the file grew. What it grew for is in the file: every guard has a comment
   naming the failure it was written against.]**
   Reads hook JSON on stdin, writes **one file** to `spool/`, `exit 0`. No git, no Python, no
-  network on the hot path. Budget is 10 s; target <50 ms; **p50/p99 measured and published**,
-  which no tool in the field does.
+  network on the hot path. Target <50 ms; **p50/p99 measured and published** — 7.43 ms and
+  10.48 ms, in `hook/README.md`, against a control that times spawning `true` the same way.
+  **[E4, review: docs — this said "Budget is 10 s", which is not the budget for any event this
+  shim binds. Claude Code gives a `command` hook 600 s by default, and `SessionEnd` hooks *share a
+  1.5-second budget* (code.claude.com/docs/en/hooks, read 2026-09-21). 1.5 s shared is the binding
+  constraint and it is 6.7× tighter than the number we published, so the figure was not just
+  unsourced, it was slack in the wrong direction — the shim's 10.48 ms p99 is 0.7% of a budget it
+  does not get to itself. It also said "which no tool in the field does", which is a claim about
+  every tool that exists and cannot be checked. Narrowed to what §6 actually read: none of the four
+  publishes percentiles for the hook it puts in the agent's critical path. Two publish *retrieval*
+  latency — `ccf/agentcairn@8fd534b:benchmarks/` and `grooverLab/fable@c6d8c86:scripts/benchmark.py`
+  — and neither harness mentions the hook. That is a different path, off the one the user waits
+  on.]**
 - **Watcher (the guarantee).** Tails transcript dirs by `(path, inode, byte-offset, mtime)`.
   Append-only makes this cheap and exact. Catches crashed sessions, non-compacting sessions, and
   sessions where the hook was never installed.
@@ -277,7 +288,7 @@ manifest chain records the break honestly instead of hiding it.
   must not import an adapter to get one, and the E4 coalescer cuts on byte positions. The CLI
   passes offsets the adapter found; `--no-parse` records bytes with none.
 
-This is not hypothetical. Verified at `/tmp/gm-e0/fable/docs/ARCHITECTURE.md:18` — *"The live
+This is not hypothetical. Verified at `grooverLab/fable@c6d8c86:docs/ARCHITECTURE.md:18` — *"The live
 transcript is REWRITTEN by the pruner (52 generations, 3GB of backups exist)"*. The rewriter there
 is **fable's own `prune.py`** (`prune_file(..., replace=True)`, auto-fired from its hook), not
 Claude Code. So: a memory tool installed on the same machine destructively rewrites the source
@@ -376,9 +387,24 @@ THIRD_PARTY.md when the first line of code depends on it, not before.
 ### 2.7 Retrieval
 
 SQLite FTS5 with **separate columns** and per-column `bm25()` weights. Flat indexing is a known
-failure: tool results are ~79% of text volume, so flat BM25 returns pasted logs. Hybrid BM25 ⊕
-Model2Vec fused by RRF (k=60, ~6 lines). FlashRank on top-50. Skip ANN: at ~144 k vectors numpy
-brute force is 5.8 ms and *exact*.
+failure: tool output is the bulk of a transcript and the least of its signal, so flat BM25 returns
+pasted logs.
+
+A dense arm (Model2Vec, RRF at k=60) and a rerank arm (FlashRank on top-50) are planned, shipped as
+the **optional `hybrid` extra**, and **have never been run** — `docs/benchmarks/E3-longmemeval.md`
+records both as *"arm not available"* against the 470-instance gate. Until they run, FTS5 alone is
+the measured system and they are a hypothesis.
+
+**[E4, review: docs — this paragraph used to give the bulk as "~79% of text volume" and to settle
+ANN with "at ~144 k vectors numpy brute force is 5.8 ms and *exact*". Neither number had a source
+and neither is reachable from here: the 79% was an E0 estimate over Claude Code transcripts, and the
+only ones on this machine are the operator's, which this project does not read; the 5.8 ms describes
+a vector search that does not exist, in a dependency the environment does not install. The measured
+sibling that does survive is §2.2's — base64 image payloads were **61.7%** of all indexed text — and
+it is the one that justifies projecting rather than inlining. The column split stands on its own
+argument, which never needed a percentage: whatever the exact share, tool output is bulky and
+low-signal and a flat index drowns in it. `bench/` is where the share and the arms both get
+settled.]**
 
 **Built with four columns, not three [E3].** This section originally named `prose`,
 `tool_result`, `paths`. The implementation adds **`tool_use`** as its own column, weighted
@@ -489,7 +515,11 @@ Public + synthetic only. **Never this machine's history.**
   transcript and a pre-built retriever cannot know which one a query refers to [E3].
 - **Retriever arms:** BM25 · Model2Vec · RRF hybrid · RRF+FlashRank. Public evidence is genuinely
   contradictory (BM25 *beats* bge-base on LongMemEval knowledge_update 88.0 vs 81.3, loses on
-  MembBench 39.45 vs 60.29), so we measure rather than cite.
+  MembBench 39.45 vs 60.29), so we measure rather than cite. **Of those four, only BM25 has been
+  measured**: the E3 gate ran 470 instances against FTS5 and skipped the other three, which need the
+  `hybrid` **extra** the environment does not install — the report says so, in the arm list, as
+  *"arm not available"*. Planning to measure is not measuring, and this bullet read as though the
+  comparison had happened. [E4, review: docs — the unrun arms]
 - **Contiguity fuzzing** (Hypothesis): injected truncation, interleaving, duplicate replay, schema
   drift, mid-write crash, in-place mutation, inode reuse. The claim must be fuzzed, not asserted.
 - **Determinism:** build twice from the same raw, `git diff --exit-code` on `derived/`.
@@ -559,8 +589,18 @@ suite until something has tried to break it.
 
 ## 6. E0 honesty gate — result and recorded dissent
 
-Four tools read at code level (clones under `/tmp/gm-e0/`), then a three-lens panel
-(`kill` / `build` / `neutral`) ruled independently. **2 BUILD / 1 PR_TO_fable.**
+Four tools read at code level, then a three-lens panel (`kill` / `build` / `neutral`) ruled
+independently. **2 BUILD / 1 PR_TO_fable.**
+
+Read at these commits, so every claim in the table below is fetchable — the clones were scratch and
+the scratch is gone, which is why the citations are not paths. **[E4, review: docs — E0 citations]**
+
+| Tool | Read at |
+|---|---|
+| agentcairn | `ccf/agentcairn@8fd534b` |
+| fable | `grooverLab/fable@c6d8c86` |
+| continuity-v2 | `Haustorium12/continuity-v2@4e98d46` |
+| claude-code-log | `daaain/claude-code-log@6ad029e` |
 
 | Tool | License | Retains raw bytes? | git substrate? | Contiguity proof? | No LLM in auto path? |
 |---|---|---|---|---|---|
