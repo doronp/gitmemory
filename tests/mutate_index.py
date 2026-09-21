@@ -223,9 +223,30 @@ MUTANTS = [
     (
         "partial indexes from a kill are never swept",
         "index.py",
-        "    _sweep_partials(parent)",
+        "    _sweep_partials(parent, keep=target)",
         "    pass",
         "test_a_partial_index_left_by_a_kill_is_swept",
+    ),
+    (
+        # The sweep gained a second job — deleting indexes named for a schema
+        # version that is no longer current — and `keep`, which spares the
+        # build's own target. It runs before the rename, so on a build that
+        # succeeds `keep` changes nothing; what it protects is the previous
+        # index when the build *fails*, which is the promise temp-plus-rename
+        # makes. Two earlier versions of this row's test asserted the
+        # successful path and were green without `keep`.
+        "a failed build sweeps away the index it was replacing",
+        "index.py",
+        "    _sweep_partials(parent, keep=target)",
+        "    _sweep_partials(parent)",
+        "test_a_failed_build_leaves_the_index_it_was_replacing",
+    ),
+    (
+        "an index from a superseded schema is left on disk forever",
+        "index.py",
+        "            stale = superseded and superseded.group(1) != str(SCHEMA)",
+        "            stale = False",
+        "test_an_index_from_an_older_schema_is_swept",
     ),
     (
         "a foreign schema is answered instead of refused",
@@ -1743,9 +1764,132 @@ MUTANTS = [
         # produces is wrong in the direction that flatters the project.
         "cumulative usage is summed per turn instead of per request",
         "index.py",
-        "GROUP BY agent, session_id, COALESCE(request_id, turn_id);",
-        "GROUP BY agent, session_id, turn_id;",
+        "        PARTITION BY agent, request_id ORDER BY generation DESC, seq DESC",
+        "        PARTITION BY agent, request_id, turn_id ORDER BY generation DESC, seq DESC",
         "test_repeated_cumulative_usage_is_billed_once",
+    ),
+    (
+        # HIGH-1. `seq` is per generation (`enumerate(kept)`, restarting at 0),
+        # so ordering by it alone picks whichever generation was *longer* — and a
+        # compaction that drops turns makes that the superseded one.
+        "a fork bills whichever generation was longer",
+        "index.py",
+        "        PARTITION BY agent, request_id ORDER BY generation DESC, seq DESC",
+        "        PARTITION BY agent, request_id ORDER BY seq DESC",
+        "test_a_fork_bills_the_newest_generation_not_the_longest",
+    ),
+    (
+        # HIGH-2. Usage is cumulative, so within one generation the last turn of
+        # a request holds the total. Dropping the tie-break leaves it to insert
+        # order, which is right today by accident and is not a rule.
+        "the first turn of a request is billed instead of the last",
+        "index.py",
+        "        PARTITION BY agent, request_id ORDER BY generation DESC, seq DESC",
+        "        PARTITION BY agent, request_id ORDER BY generation DESC, seq ASC",
+        "test_two_turns_of_one_request_bill_the_last_one_not_the_first",
+    ),
+    (
+        # MEDIUM-1. A subagent transcript is a separate session and the same API
+        # call. Partitioning by session bills it once per file it appears in.
+        "a subagent file double-bills its parent's request",
+        "index.py",
+        "        PARTITION BY agent, request_id ORDER BY generation DESC, seq DESC",
+        "        PARTITION BY agent, session_id, request_id ORDER BY generation DESC, seq DESC",
+        "test_a_subagent_file_does_not_double_bill_its_parents_request",
+    ),
+    (
+        # MEDIUM-2. Cumulative usage with no request id cannot be deduplicated;
+        # counting it in full is the 2.79x error the view exists to avoid.
+        "usage with no request id is billed as if it were a request",
+        "index.py",
+        "    WHERE usage <> '{}' AND request_id IS NOT NULL",
+        "    WHERE usage <> '{}'",
+        "test_usage_with_no_request_id_is_shown_as_unbilled_not_billed_or_dropped",
+    ),
+    (
+        # MEDIUM-3. `<synthetic>` is Claude Code's marker for a turn produced
+        # without an API call. `billable_usage` has always excluded it.
+        "a synthetic turn is billed as a real request",
+        "index.py",
+        "      AND role = 'assistant' AND COALESCE(model, '') <> '<synthetic>'",
+        "      AND role = 'assistant'",
+        "test_a_synthetic_turn_is_not_billed",
+    ),
+    (
+        # The other half of MEDIUM-2/3: excluded usage that is *also* invisible
+        # makes `dash_spend` disagree with the store by an unknowable amount.
+        "excluded usage vanishes instead of being named",
+        "index.py",
+        "  AND (request_id IS NULL OR role <> 'assistant' OR model = '<synthetic>')",
+        "  AND 0",
+        "test_spend_plus_unbilled_accounts_for_every_usage_block",
+    ),
+    (
+        # MEDIUM-5. The digest was fed block rows only, so an assistant turn
+        # that emitted no content — a tool call, a cancelled reply — fed it
+        # nothing while carrying a usage block worth any number of tokens.
+        "a turn with no blocks leaves no trace in the digest",
+        "index.py",
+        '            digest.update(_insert(db, "turns", row))',
+        '            _insert(db, "turns", row)',
+        "test_a_turn_that_produced_no_blocks_still_reaches_the_digest",
+    ),
+    (
+        # The other half of MEDIUM-5: segmentation is part of what the index is,
+        # and two captures of one turn each hold the same blocks as one capture
+        # of two turns while `dash_contiguity` shows a different shape.
+        "how a store was segmented leaves no trace in the digest",
+        "index.py",
+        "        digest.update(\n"
+        "            _generation_row(db, stored, turns=len(session.turns), "
+        "blocks=len(rows), reason=None)\n"
+        "        )",
+        "        _generation_row(db, stored, turns=len(session.turns), "
+        "blocks=len(rows), reason=None)",
+        "test_the_same_bytes_captured_in_two_passes_are_not_the_same_index",
+    ),
+    (
+        # MEDIUM-9 / HIGH-3's neighbour. `strftime` and `substr` both return
+        # *something* for junk: the first NULL by luck, the second a nine-
+        # character prefix of the garbage, bucketed as if it were a day.
+        "an unparseable timestamp is bucketed as a day",
+        "index.py",
+        "FROM turns WHERE datetime(ts) IS NOT NULL GROUP BY day, agent ORDER BY day;",
+        "FROM turns WHERE ts IS NOT NULL GROUP BY day, agent ORDER BY day;",
+        "test_growth_buckets_by_utc_day_and_drops_unreadable_stamps",
+    ),
+    (
+        "growth buckets by the local clock rather than UTC",
+        "index.py",
+        "SELECT substr(datetime(ts), 1, 10) AS day, agent,",
+        "SELECT substr(ts, 1, 10) AS day, agent,",
+        "test_growth_buckets_by_utc_day_and_drops_unreadable_stamps",
+    ),
+    (
+        # MEDIUM-4. A fork replays turns, so this is the store's size and not a
+        # conversation's length — and it was labelled `turns`, which is the
+        # second number. The rename is the fix; the caption carries the caveat.
+        "the stored-turn count is labelled as a turn count",
+        "index.py",
+        "       SUM(turns)       AS stored_turns,  -- per-generation sum; see dash_corpus",
+        "       SUM(turns)       AS turns,",
+        "test_a_fork_makes_the_stored_count_exceed_the_conversation",
+    ),
+    (
+        "the stored-block count is labelled as a block count",
+        "index.py",
+        "       SUM(blocks)                 AS stored_blocks,",
+        "       SUM(blocks)                 AS blocks,",
+        "test_a_fork_makes_the_stored_count_exceed_the_conversation",
+    ),
+    (
+        # HIGH-3. The panel is where a reader looks for what is *not* known, so
+        # a gap the front page admits and this view omits reads as measured.
+        "the injection-cost refusal is dropped from the panel",
+        "index.py",
+        "UNION ALL SELECT 'injection cost', 'NOT BUILT',",
+        "UNION ALL SELECT 'hook latency, again', 'NOT BUILT',",
+        "test_the_unmeasured_panel_names_what_is_not_known",
     ),
     (
         "a replayed generation is billed again",
@@ -1757,17 +1901,36 @@ MUTANTS = [
     (
         "a generation that would not parse leaves no trace",
         "index.py",
-        "            _generation_row(db, stored, turns=0, blocks=0, reason=repr(exc))",
+        "            digest.update("
+        "_generation_row(db, stored, turns=0, blocks=0, reason=repr(exc)))",
         "            pass",
         "test_a_generation_that_would_not_parse_is_still_counted",
     ),
     (
         "the cache share counts output tokens in its denominator",
         "index.py",
-        "           / NULLIF(SUM(input_tokens + cache_write_tokens + cache_read_tokens), 0), 1",
-        "           / NULLIF(SUM(input_tokens + cache_write_tokens + cache_read_tokens\n"
-        "                       + output_tokens), 0), 1",
+        "           / SUM(input_tokens + cache_write_tokens + cache_read_tokens), 1",
+        "           / SUM(input_tokens + cache_write_tokens + cache_read_tokens\n"
+        "                 + output_tokens), 1",
         "test_cache_share_is_a_share_of_what_went_in",
+    ),
+    (
+        # A share of nothing is unanswerable, not zero. The deleted `NULLIF` was
+        # a no-op — SQLite returns NULL for `x/0` — so the thing worth pinning is
+        # not the guard but the NULL: a well-meant `COALESCE(..., 0.0)` here
+        # would report a model that sent no input at all as 0% cached, which is
+        # a number where there is no number.
+        "a zero denominator reads as 0% rather than NULL",
+        "index.py",
+        "       ROUND(\n"
+        "           100.0 * SUM(cache_read_tokens)\n"
+        "           / SUM(input_tokens + cache_write_tokens + cache_read_tokens), 1\n"
+        "       ) AS cache_read_pct",
+        "       COALESCE(ROUND(\n"
+        "           100.0 * SUM(cache_read_tokens)\n"
+        "           / SUM(input_tokens + cache_write_tokens + cache_read_tokens), 1\n"
+        "       ), 0.0) AS cache_read_pct",
+        "test_a_share_of_nothing_is_null_not_zero",
     ),
     (
         "the dashboard binds to every interface by default",
@@ -1777,11 +1940,96 @@ MUTANTS = [
         "test_the_command_is_immutable_and_loopback",
     ),
     (
-        "the dashboard opens the index writable",
+        # Renamed. It was "the dashboard opens the index writable", which
+        # overstated the flag: Datasette executes queries read-only either way.
+        # `--immutable` adds the promise that nothing *else* writes, which is
+        # what lets SQLite cache — and what LOW-1's digest line exists for. The
+        # name is the only record of the decision, so it says what the flag does.
+        # [E6 review, NIT-2]
+        "the index is opened without the no-other-writer promise",
         "dashboard.py",
         '        "--immutable",',
         '        "--load-extension=",',
         "test_the_command_is_immutable_and_loopback",
+    ),
+    (
+        # NIT-3. The number has a stated reason in a comment beside it.
+        "the dashboard takes datasette's default port",
+        "dashboard.py",
+        "PORT = 8081",
+        "PORT = 8001",
+        "test_the_port_is_not_datasettes_default",
+    ),
+    (
+        # NIT-3. The front page is where HIGH-3's claim lived; dropping it from
+        # the metadata takes the refusals off the page with it.
+        "the front page never reaches datasette",
+        "dashboard.py",
+        '        "description_html": _DESCRIPTION.strip(),',
+        "",
+        "test_the_metadata_lands_on_the_database_it_was_written_for",
+    ),
+    (
+        # NIT-4. The coverage check read `type = 'view'` only.
+        "a table is added to the schema with no caption",
+        "index.py",
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);\n"
+        "CREATE TABLE undescribed (x TEXT);",
+        "test_every_table_the_index_defines_is_described_too",
+    ),
+    (
+        # LOW-3. "Tokens by model" with every model in one row.
+        "the spend panel merges every model into one row",
+        "index.py",
+        "FROM dash_requests GROUP BY agent, model;",
+        "FROM dash_requests GROUP BY agent;",
+        "test_spend_keeps_one_row_per_model",
+    ),
+    (
+        "a forked conversation is counted as two conversations",
+        "index.py",
+        "       COUNT(DISTINCT session_id)  AS sessions,",
+        "       COUNT(session_id)           AS sessions,",
+        "test_corpus_counts_conversations_once_and_generations_every_time",
+    ),
+    (
+        "the stored byte count is a placeholder",
+        "index.py",
+        '            "bytes": stored.size,',
+        '            "bytes": 0,',
+        "test_corpus_counts_conversations_once_and_generations_every_time",
+    ),
+    (
+        # LOW-3. `unparseable: 1` with no reason beside it is a number nobody
+        # can act on, and this column is the only route the reason has to a page.
+        "why a generation could not be read never reaches the page",
+        "index.py",
+        "       group_concat(skip_reason, ' | ') AS skipped",
+        "       NULL AS skipped",
+        "test_contiguity_names_why_a_generation_could_not_be_read",
+    ),
+    (
+        "the model a turn used is not recorded",
+        "index.py",
+        '        "model": turn.model,',
+        '        "model": None,',
+        "test_a_turn_row_carries_the_fields_the_views_group_by",
+    ),
+    (
+        "a subagent turn is indistinguishable from its parent's",
+        "index.py",
+        '        "is_sidechain": int(turn.is_sidechain),',
+        '        "is_sidechain": 0,',
+        "test_a_turn_row_carries_the_fields_the_views_group_by",
+    ),
+    (
+        "usage on a non-assistant turn is thrown away",
+        "index.py",
+        '        "usage": canonical_json(turn.usage).decode(),',
+        '        "usage": canonical_json(turn.usage).decode()'
+        ' if turn.role == "assistant" else "{}",',
+        "test_a_user_turn_carries_no_usage_and_is_not_billed",
     ),
     (
         "a missing datasette is installed instead of reported",
@@ -1789,6 +2037,62 @@ MUTANTS = [
         '    if shutil.which("datasette"):\n        return args',
         "    if True:\n        return args",
         "test_uvx_is_the_fallback_not_the_default",
+    ),
+    (
+        # MEDIUM-6. `uvx datasette` resolves against PyPI at run time and
+        # installs whatever it serves that minute, during what the user ran as a
+        # read-only look at a local file. The range is what makes it reviewable.
+        "the uvx fallback runs an unpinned datasette",
+        "dashboard.py",
+        'UVX_SPEC = "datasette<2"',
+        'UVX_SPEC = "datasette"',
+        "test_the_command_is_immutable_and_loopback",
+    ),
+    (
+        # LOW-5. `--immutable` constrains writes and says nothing about reads.
+        # Datasette otherwise offers the whole `.db` — every transcript byte,
+        # unredacted — as a single file link.
+        "the whole store is downloadable from the dashboard",
+        "dashboard.py",
+        '        "--setting",\n        "allow_download",\n        "off",',
+        "",
+        "test_the_command_is_immutable_and_loopback",
+    ),
+    (
+        # MEDIUM-8. Tested against the default value rather than the set, so
+        # `--host localhost` warned "not loopback", which is false — and a
+        # warning that cries wolf on the safe spelling is one people learn to
+        # click past before they ever meet 0.0.0.0.
+        "a loopback alias is warned about as if it were public",
+        "__main__.py",
+        "    if args.host not in dashboard.LOOPBACK:",
+        "    if args.host != dashboard.HOST:",
+        "test_a_bind_outside_loopback_warns_and_a_loopback_alias_does_not",
+    ),
+    (
+        "a public bind is not warned about at all",
+        "__main__.py",
+        "    if args.host not in dashboard.LOOPBACK:",
+        "    if False:",
+        "test_a_bind_outside_loopback_warns_and_a_loopback_alias_does_not",
+    ),
+    (
+        # LOW-1. Datasette holds the file open and `--immutable` entitles SQLite
+        # to cache it, while `build` renames a fresh file over the path — so a
+        # page left open across a rebuild serves the old inode, confidently.
+        "the page does not say which build it is serving",
+        "dashboard.py",
+        '        print(f"content {_digest(path)} — restart after a rebuild;',
+        '        print(f"content unknown — restart after a rebuild;',
+        "test_the_start_up_line_names_the_build_being_served",
+    ),
+    (
+        "an unreadable index takes the server down with it",
+        "dashboard.py",
+        "    except Exception:  # noqa: BLE001 - a start-up caption must not block the server\n"
+        '        return "unknown"',
+        "    except Exception:\n        raise",
+        "test_the_start_up_line_survives_an_index_it_cannot_read",
     ),
     # ======================================================================= #
     # E5: the guards against hand-written chat.

@@ -522,6 +522,27 @@ observable** (attention leaves no trace — the panel says **REFERENCED**, not U
 tails are invisible (a prevented dead-end is an unbounded unmeasured saving; a stale memory that
 misled is an unbounded unmeasured cost). Any single frugality number assumes both tails are zero.
 
+**As built [E6, reconciled after the review].** The paragraphs above are the design; this is
+what exists, because a design document that describes panels nobody built is a second thing to
+verify claims against. Seven SQL views *inside the database*, so `sqlite3` and the next
+dashboard get the same definitions: `dash_corpus` · `dash_growth` · `dash_contiguity` ·
+`dash_requests` · `dash_unbilled` · `dash_spend` · `dash_unmeasured`. Deviations:
+
+- **Quality and Health are not built.** Quality needs the three retriever arms the environment
+  cannot install (§3) — a panel reading one arm would claim a comparison that has not happened.
+  Health needs daemon liveness and hook latency, which are not in the index.
+- **No dollar figure, deliberately.** "Estimated $ + price-snapshot date" above would make this
+  repository a price list with an expiry date nobody watches, and a stale one is worse than
+  none. Tokens are what we measure; the multiplication is the reader's.
+- **Injection cost is not built either** — `dash_unmeasured` carries it as a row reading
+  `NOT BUILT`, alongside net-saving-vs-no-memory and the two invisible tails. The frugality
+  refusals ship as rows on a page rather than as prose in this file.
+- **`dash_unbilled` is new** and has no paragraph above. `dash_spend` bills one turn per
+  `(agent, request_id)`; everything with usage that it excludes — a non-assistant turn, a
+  `<synthetic>` model, a missing request id — is itemised there, so the spend panel is an
+  admitted floor with its remainder beside it rather than a number that quietly disagrees
+  with `billable_usage`.
+
 ---
 
 ## 3. Evaluation

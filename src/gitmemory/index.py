@@ -174,21 +174,34 @@ CREATE TABLE generations (
 # `sqlite3`, a notebook, the next dashboard — gets the same definitions. The
 # YAML is left to say what the numbers *mean*. [E6]
 _VIEWS = """
+-- `stored_turns`, not `turns`, and the extra word is the whole point. A fork
+-- replays the prefix of a conversation into the next generation, so the store
+-- really does hold those turns twice and every column here is a per-generation
+-- sum. Called `turns` beside a de-duplicated `sessions` count, one row read
+-- "1 session, 3 turns" over a conversation with two. The name now carries the
+-- caveat to wherever the number is quoted. [E6 review]
 CREATE VIEW dash_corpus AS
 SELECT agent,
        COUNT(DISTINCT session_id)  AS sessions,
        COUNT(*)                    AS generations,
-       SUM(turns)                  AS turns,
-       SUM(blocks)                 AS blocks,
+       SUM(turns)                  AS stored_turns,
+       SUM(blocks)                 AS stored_blocks,
        SUM(bytes)                  AS bytes,
        SUM(compactions)            AS compactions,
        SUM(1 - parsed)             AS unparseable
 FROM generations GROUP BY agent;
 
+-- `datetime(ts)`, not `ts IS NOT NULL`. A timestamp is a string the agent wrote
+-- and an empty or malformed one is not null: `''` bucketed under the day `''`
+-- and `not-a-date-at-all` under `not-a-date`, both sitting in the facet list as
+-- peers of real dates, under a caption promising that unstamped turns are
+-- absent. `datetime()` returns NULL for anything it cannot read, which is the
+-- test the caption always meant, and it resolves a UTC offset rather than
+-- slicing the local-clock date out of the front of the string. [E6 review]
 CREATE VIEW dash_growth AS
-SELECT substr(ts, 1, 10) AS day, agent,
-       COUNT(*) AS turns, SUM(byte_len) AS bytes
-FROM turns WHERE ts IS NOT NULL GROUP BY day, agent ORDER BY day;
+SELECT substr(datetime(ts), 1, 10) AS day, agent,
+       COUNT(*) AS stored_turns, SUM(byte_len) AS bytes
+FROM turns WHERE datetime(ts) IS NOT NULL GROUP BY day, agent ORDER BY day;
 
 -- Contiguity is per session, not per generation: a session with three
 -- generations is one conversation the store forked, and "is it whole" is a
@@ -199,31 +212,87 @@ SELECT agent, session_id,
        SUM(segments)    AS segments,
        SUM(compactions) AS compactions,
        SUM(bytes)       AS bytes,
-       SUM(turns)       AS turns,
+       SUM(turns)       AS stored_turns,  -- per-generation sum; see dash_corpus
        SUM(1 - parsed)  AS unparseable,
        group_concat(skip_reason, ' | ') AS skipped
 FROM generations GROUP BY agent, session_id;
 
 -- One row per billable request. Usage is repeated on every turn of a request
 -- and is *cumulative*, so summing turns over-counts -- 2.79x, measured on a
--- real transcript. Last write per request wins, which is what `MAX(seq)` with
--- bare columns selects (a documented SQLite behaviour, pinned by a test).
+-- real transcript. The last write of a request wins.
 --
--- Grouped by session rather than by generation: a fork replays the same
--- requests into the next generation, and billing them twice is exactly the
--- over-count this view exists to avoid. The replayed rows are the same bytes,
--- so which one MAX picks cannot change the answer.
+-- `row_number()`, not `MAX(seq)` with bare columns, and the partition is
+-- `(agent, request_id)` rather than anything per-file. Four separate defects
+-- lived in the one line this replaces, all of them found by review and all of
+-- them reproduced end-to-end before it was rewritten: [E6 review]
+--
+--  * `seq` restarts at 0 in every generation, so `MAX(seq)` did not mean "last
+--    write", it meant "whichever generation was longer". A request caught
+--    mid-stream at seq 3 of generation 0 and completed at seq 0 of the fork
+--    reported the *truncated* number -- 10 where the request cost 30.
+--  * A tie on `seq` -- the normal shape, since a fork diverges *at* a line --
+--    left the answer to insert order. Flipping the order of two rows moved the
+--    request from one model to the other. This is the defect `search()` already
+--    names two hundred lines below; `(generation, seq)` is a total order within
+--    a session and cannot tie.
+--  * A `requestId` appears in both the main transcript and the subagent that
+--    shares it, and those are separate *files*, so separate sessions. Grouping
+--    by `session_id` billed both copies. One real session kept 78% of its
+--    cache-read tokens in subagents (DESIGN 2.2), so this was most of that
+--    column, doubled. A request id is unique per API call, so the agent is the
+--    only scope it needs.
+--  * `COALESCE(request_id, turn_id)` made every turn with no request id its own
+--    request and added its cumulative usage in full -- the whole 2.79x
+--    over-count, reinstated inside the view written to remove it. Those turns
+--    are unattributable rather than free: they are excluded here and counted,
+--    with their tokens, in `dash_unbilled`.
+--
+-- The `role`/`<synthetic>` filter matches `adapters.claude_code.billable_usage`,
+-- which is the other implementation of this rule. Without it a user-role line
+-- carrying a usage block was billed as a model: a probe read 99999 input tokens
+-- against the adapter's 100.
+--
+-- ponytail: newest generation wins, mirroring `search()`. That is right because
+-- a fork replays whole lines, so the only truncated copy of a request is the
+-- live tail, which is the newest generation and has no older complete copy to
+-- lose to. The ceiling is a shape where it does -- a completed request in an
+-- older generation than a partial replay of it -- and the upgrade is to order
+-- by the cumulative counter itself, which is monotonic per request.
 CREATE VIEW dash_requests AS
-SELECT agent, session_id,
-       COALESCE(request_id, turn_id) AS request,
-       MAX(seq) AS seq,
+SELECT agent, session_id, request_id AS request, ts,
        COALESCE(model, '(unknown)') AS model,
        COALESCE(json_extract(usage, '$.input_tokens'), 0)                 AS input_tokens,
        COALESCE(json_extract(usage, '$.output_tokens'), 0)                AS output_tokens,
        COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)  AS cache_write_tokens,
        COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0)      AS cache_read_tokens
-FROM turns WHERE usage <> '{}'
-GROUP BY agent, session_id, COALESCE(request_id, turn_id);
+FROM (
+    SELECT *, row_number() OVER (
+        PARTITION BY agent, request_id ORDER BY generation DESC, seq DESC
+    ) AS rn
+    FROM turns
+    WHERE usage <> '{}' AND request_id IS NOT NULL
+      AND role = 'assistant' AND COALESCE(model, '') <> '<synthetic>'
+) WHERE rn = 1;
+
+-- The turns `dash_requests` refuses, and what they carry. Dropping them quietly
+-- would make `dash_spend` disagree with `billable_usage` by an amount nobody
+-- could see; this is that amount, with the reason next to it. A non-zero
+-- `no request id` row means `dash_spend` is a floor rather than a total. [E6]
+CREATE VIEW dash_unbilled (agent, reason, turns, input_tokens, output_tokens,
+                           cache_write_tokens, cache_read_tokens) AS
+SELECT agent,
+       CASE WHEN role <> 'assistant'      THEN 'not an assistant turn'
+            WHEN model = '<synthetic>'    THEN 'synthetic model'
+            ELSE 'no request id' END,
+       COUNT(*),
+       SUM(COALESCE(json_extract(usage, '$.input_tokens'), 0)),
+       SUM(COALESCE(json_extract(usage, '$.output_tokens'), 0)),
+       SUM(COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)),
+       SUM(COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0))
+FROM turns
+WHERE usage <> '{}'
+  AND (request_id IS NULL OR role <> 'assistant' OR model = '<synthetic>')
+GROUP BY 1, 2;
 
 CREATE VIEW dash_spend AS
 SELECT agent, model,
@@ -235,9 +304,16 @@ SELECT agent, model,
        -- Cache-served share of everything that went *in*. This is a saving
        -- against "the same prompt, uncached" and against nothing else; it is
        -- not a saving against not having sent the prompt.
+       --
+       -- No guard on the denominator. There was a `NULLIF(..., 0)` here and it
+       -- was a no-op dressed as a safety measure: SQLite returns NULL for `x/0`
+       -- rather than raising, so a model whose every input column is zero gets
+       -- a NULL share either way. NULL is also the right answer -- a share of
+       -- nothing is not 0% -- so the guard is gone and the NULL is asserted.
+       -- [E6 review]
        ROUND(
            100.0 * SUM(cache_read_tokens)
-           / NULLIF(SUM(input_tokens + cache_write_tokens + cache_read_tokens), 0), 1
+           / SUM(input_tokens + cache_write_tokens + cache_read_tokens), 1
        ) AS cache_read_pct
 FROM dash_requests GROUP BY agent, model;
 
@@ -260,7 +336,17 @@ UNION ALL SELECT 'cost of a stale memory that misled', 'UNBOUNDED, UNMEASURED',
        || 'zero by every number above, on no evidence.'
 UNION ALL SELECT 'hook latency', 'NOT IN THIS DATABASE',
        'Measured by tools/hook_latency.py against a running hook, not by the '
-       || 'index. Nothing here should be read as a p99.';
+       || 'index. Nothing here should be read as a p99.'
+-- DESIGN 2.9 names injection cost as frugality item 1, "exact, and it is a
+-- cost ... shown first", and the front page said it was shown. It is not: no
+-- hook records injected tokens, nothing in this schema holds one, and a reader
+-- who checked this panel and did not find it here would have concluded it was
+-- among the measured numbers. The claim is gone from the page and the gap is
+-- named where the other gaps are. [E6 review]
+UNION ALL SELECT 'injection cost', 'NOT BUILT',
+       'The one frugality number that would be exact -- tokens a memory system '
+       || 'adds to a context is a count, not an estimate. Nothing injects yet, '
+       || 'so nothing records it. When it exists it belongs above, not here.';
 """
 
 
@@ -328,8 +414,11 @@ def open_db(path: str) -> sqlite3.Connection:
     return db
 
 
-def _sweep_partials(parent: str) -> None:
-    """Delete `.building-*.db` left by a killed build.
+_SUPERSEDED_RE = re.compile(r"\Agitmemory-v(\d+)\.db\Z")
+
+
+def _sweep_partials(parent: str, keep: str = "") -> None:
+    """Delete `.building-*.db` left by a killed build, and superseded indexes.
 
     `build`'s `except BaseException` covers a crash; it cannot cover SIGKILL or
     a lost power rail, and three killed builds leave three partial indexes plus
@@ -337,10 +426,22 @@ def _sweep_partials(parent: str) -> None:
     this for `raw/` in `_adopt_orphans`; `index/` had no equivalent. Safe to do
     unconditionally: the name is ours, the file is derived, and a concurrent
     build holds its own `mkstemp` name that this pass has not seen yet. [E3]
+
+    The schema version is in the filename, so a bump does not collide — it
+    *orphans*. E6 took the schema to 2 and left every `gitmemory-v1.db` on disk:
+    a full second copy of the transcript text, in a gitignored directory nobody
+    opens, recurring at every future bump. Rebuild-from-raw is the migration
+    story and the old file is garbage the moment the new one lands; the E3
+    argument above applies to it verbatim. `keep` is the build's own target,
+    because `--db` can point at a name this pattern matches. [E6 review]
     """
     with contextlib.suppress(OSError), os.scandir(parent) as it:
         for entry in it:
-            if entry.name.startswith(".building-") and entry.is_file():
+            superseded = _SUPERSEDED_RE.match(entry.name)
+            stale = superseded and superseded.group(1) != str(SCHEMA)
+            if (entry.name.startswith(".building-") or stale) and entry.is_file():
+                if os.path.abspath(entry.path) == keep:
+                    continue
                 with contextlib.suppress(OSError):
                     os.unlink(entry.path)
 
@@ -378,7 +479,7 @@ def build(home: str | None = None, *, path: str | None = None) -> Stats:
     target = os.path.abspath(path or db_path(home))
     parent = os.path.dirname(target)
     os.makedirs(parent, exist_ok=True)
-    _sweep_partials(parent)
+    _sweep_partials(parent, keep=target)
 
     # Build into a temp database and rename. A half-built index that answers
     # queries is worse than no index, and a crash mid-build is the normal way
@@ -427,12 +528,23 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
             # A generation that would not parse is still a generation the store
             # holds, and a dashboard that silently omits it reports a whole
             # store. It goes in with `parsed = 0` and the reason. [E6]
-            _generation_row(db, stored, turns=0, blocks=0, reason=repr(exc))
+            digest.update(_generation_row(db, stored, turns=0, blocks=0, reason=repr(exc)))
             continue
         generations += 1
         turns += len(session.turns)
         for turn in session.turns:
-            _insert(db, "turns", _turn_row(stored, turn))
+            row = _turn_row(stored, turn)
+            # The turn rows are in the digest too, and they have to be: every
+            # number the dashboard shows is read off `turns` and `generations`,
+            # and the digest existed to answer "are these two builds over the
+            # same content". A turn that produced no blocks — an assistant turn
+            # with empty content and a usage block is the ordinary case — fed
+            # *nothing* into the digest, so two stores whose spend differed by
+            # any amount hashed identically. Same for the generation row, where
+            # a differently segmented capture of byte-identical content compared
+            # equal while `dash_contiguity` showed a different shape. This is the
+            # same argument the skips below were added under. [E6 review]
+            digest.update(_insert(db, "turns", row))
         for row in rows:
             digest.update(canonical_json(row))
             db.execute(
@@ -440,7 +552,9 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
                 row,
             )
             blocks += 1
-        _generation_row(db, stored, turns=len(session.turns), blocks=len(rows), reason=None)
+        digest.update(
+            _generation_row(db, stored, turns=len(session.turns), blocks=len(rows), reason=None)
+        )
     # The skips are part of what this index *is*. Left out, two builds over
     # different stores — one whole, one with a generation that would not parse —
     # compared equal, which is the one question this digest exists to answer.
@@ -492,13 +606,17 @@ def _encodable(value):
     return value.encode("utf-8", "replace").decode("utf-8")
 
 
-def _insert(db: sqlite3.Connection, table: str, row: dict) -> None:
+def _insert(db: sqlite3.Connection, table: str, row: dict) -> bytes:
     """Named-parameter insert. The column list comes from the row, not a
     literal, so adding a field to a `_*_row` function cannot get out of step
-    with the statement that writes it."""
+    with the statement that writes it.
+
+    Returns the row's canonical bytes so the caller can feed the digest from the
+    same value it wrote, rather than from a second rendering of it."""
     db.execute(
         f"INSERT INTO {table} ({','.join(row)}) VALUES ({','.join(':' + k for k in row)})", row
     )
+    return canonical_json(row)
 
 
 def _turn_row(stored: store.Stored, turn) -> dict:
@@ -528,8 +646,9 @@ def _turn_row(stored: store.Stored, turn) -> dict:
 
 def _generation_row(
     db: sqlite3.Connection, stored: store.Stored, *, turns: int, blocks: int, reason: str | None
-) -> None:
-    _insert(
+) -> bytes:
+    """Write the generation row. Returns its canonical bytes, for the digest."""
+    return _insert(
         db,
         "generations",
         {

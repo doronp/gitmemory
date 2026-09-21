@@ -470,6 +470,60 @@ def test_a_generation_that_could_not_be_parsed_changes_the_digest(home, src, tmp
     assert stats.content_sha256 != whole, "a skipped generation left no trace in the digest"
 
 
+# SHA-256 of the empty string: what `hashlib.sha256()` reads when nothing was
+# ever fed to it, which is how the gap below was found.
+EMPTY_SHA256 = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+
+def test_a_turn_that_produced_no_blocks_still_reaches_the_digest(tmp_path):
+    """The digest was fed only block rows, so an assistant turn that emitted no
+    content — a tool call, a cancelled reply — fed it *nothing at all* while
+    still carrying a usage block worth any number of tokens. Two stores whose
+    spend differed by an arbitrary amount hashed to `e3b0c442…`, the SHA-256 of
+    the empty string, and compared equal. [E6 review]"""
+
+    def store_with(output_tokens: int, where: str) -> str:
+        home2, src2 = str(tmp_path / where), str(tmp_path / f"{where}.jsonl")
+        os.mkdir(home2)
+        line = assistant("a1", [])  # no blocks
+        line["requestId"] = "req-1"
+        line["message"]["usage"] = {"output_tokens": output_tokens}
+        write(src2, [line])
+        store.capture(src2, "claude-code", "sess", home=home2)
+        return index.build(home2).content_sha256
+
+    # Two digits each, deliberately. The generation row carries the segment's
+    # byte count, so `10` against `9_000_000` differs in the *length* of the
+    # line and the test passes with the turn row still left out of the digest —
+    # which is how the first draft of this test held nothing. Equal widths take
+    # the generation row out of the comparison and leave only the usage.
+    cheap = store_with(10, "cheap")
+    dear = store_with(99, "dear")
+    assert cheap != EMPTY_SHA256, "the digest saw nothing at all"
+    assert cheap != dear
+
+
+def test_the_same_bytes_captured_in_two_passes_are_not_the_same_index(tmp_path):
+    """Segmentation is part of what the index *is*: one capture of two turns and
+    two captures of one turn each hold identical blocks and different
+    `generations` rows. Only the block rows reached the digest, so the two
+    compared equal — and the digest is the thing that answers "is this the same
+    index". [E6 review]"""
+    lines = [user("u1", "one"), user("u2", "two")]
+
+    def store_with(splits: list[int], where: str) -> str:
+        home2, src2 = str(tmp_path / where), str(tmp_path / f"{where}.jsonl")
+        os.mkdir(home2)
+        at = 0
+        for n in splits:
+            write(src2, lines[at : at + n])
+            at += n
+            store.capture(src2, "claude-code", "sess", home=home2)
+        return index.build(home2).content_sha256
+
+    assert store_with([2], "onepass") != store_with([1, 1], "twopass")
+
+
 def test_every_block_of_every_turn_is_counted(home, src):
     """`Stats.blocks` was asserted only as `== 0` on an empty store, so
     `blocks += 0` was invisible. The count is what the CLI prints. [E3]"""
@@ -640,6 +694,52 @@ def test_a_partial_index_left_by_a_kill_is_swept(home, src):
     index.build(home)
     assert not junk.exists()
     assert index.search(index.open_db(index.db_path(home)), "marmoset")
+
+
+def test_a_failed_build_leaves_the_index_it_was_replacing(home, src, tmp_path, monkeypatch):
+    """What `keep` is actually for — and it took two wrong tests to find out.
+
+    The sweep runs *before* the rename, not after, so on a build that succeeds
+    `keep` changes nothing: without it the old file is deleted a moment before
+    `os.replace` would have overwritten it anyway. Two drafts of this test
+    asserted the successful path and were green with `keep` deleted.
+
+    The difference only shows when the build fails. Temp-plus-rename exists so
+    that a crash leaves the previous index intact; a sweep that eats the target
+    first takes that promise away and leaves no index at all. Reachable only via
+    `--db`, since the default name is the current schema's by construction and
+    the pattern never matches it. [E6 review]"""
+    write(src, [user("u1", "marmoset")])
+    store.capture(src, "claude-code", "sess", home=home)
+    target = str(tmp_path / f"gitmemory-v{index.SCHEMA - 1}.db")  # a name the sweep matches
+    index.build(home, path=target)
+    before = Path(target).read_bytes()
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("the build died here")
+
+    monkeypatch.setattr(index, "_fill", explode)
+    with pytest.raises(RuntimeError):
+        index.build(home, path=target)
+    assert Path(target).exists(), "the failed build swept away the index it was replacing"
+    assert Path(target).read_bytes() == before
+
+
+def test_an_index_from_an_older_schema_is_swept(home, src):
+    """A schema bump renames the file, so the previous index stays on disk with
+    every transcript in it — indefinitely, invisibly, and unreachable by any
+    command that would rebuild or redact it. [E6 review]"""
+    built(home, src, [user("u1", "marmoset")]).close()
+    parent = os.path.dirname(index.db_path(home))
+    old = Path(parent, f"gitmemory-v{index.SCHEMA - 1}.db")
+    old.write_bytes(b"an index from two schemas ago")
+    unrelated = Path(parent, "notes.db")
+    unrelated.write_bytes(b"not ours")
+
+    index.build(home)
+    assert not old.exists()
+    assert unrelated.exists(), "the sweep matches the versioned name, not every .db"
+    assert Path(index.db_path(home)).exists()
 
 
 def test_an_index_from_another_schema_is_refused_not_answered(home, src, tmp_path):

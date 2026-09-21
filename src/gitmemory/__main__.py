@@ -199,9 +199,15 @@ def _index(args) -> int:
 
 
 def _dashboard(args) -> int:
-    if args.host != dashboard.HOST:
+    if args.host not in dashboard.LOOPBACK:
         # The store is the most sensitive file on the machine. Binding it to
         # anything but loopback is a deliberate act and is reported as one.
+        #
+        # Against the set, not against the default: `--host localhost` used to
+        # print "serving the store on localhost, not loopback", which is false —
+        # localhost *is* loopback — and a warning that cries wolf on the safe
+        # spelling is one people learn to click past before they meet 0.0.0.0.
+        # [E6 review]
         print(f"warning: serving the store on {args.host}, not loopback", file=sys.stderr)
     return dashboard.serve(args.home, db=args.db, host=args.host, port=args.port)
 

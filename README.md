@@ -52,7 +52,7 @@ asserted.
 
 ## Status
 
-Under construction, epoch by epoch. 936 tests, plus one gated on the
+Under construction, epoch by epoch. 959 tests, plus one gated on the
 LongMemEval download (`-m corpus`).
 
 | | | |
@@ -62,7 +62,7 @@ LongMemEval download (`-m corpus`).
 | E3 | Index + retrieval + CLI | passed — 470 LongMemEval instances, [gate report](docs/benchmarks/E3-longmemeval.md) |
 | E4 | Hook shim + watcher + git daemon | in review |
 | E5 | Derivation and decision graph | passed — 1.0000/1.0000 on a blind split, [gate report](docs/benchmarks/E5-decision-gate.md); three artifacts per generation |
-| E6 | Dashboard | built — six views over the index, served read-only on loopback by Datasette |
+| E6 | Dashboard | passed — seven views over the index, served read-only on loopback by Datasette, [review record](docs/reviews/E6-standalone-review.md) |
 | E7 | RC1: security review, private repo | |
 
 **Read the E5 number carefully.** 1.0000 precision and recall is the score on a
@@ -78,7 +78,8 @@ one that has ever moved.
 The discipline the test count does not show: every fix is pinned by a negative
 control — mutate the module to remove the behaviour, confirm the named test
 fails — because a fix nothing distinguishes is a fix nothing is holding in
-place. Three of this epoch's fixes were refuted that way and rewritten.
+place. Seven of this epoch's tests were refuted that way and rewritten — three
+the reviewer caught, four found while writing the tests that answer them.
 
 See `docs/DESIGN.md` for the locked decisions and `docs/reviews/` for the
 review record, including the findings that were disputed and why.
