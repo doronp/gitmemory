@@ -111,20 +111,71 @@ def test_the_repository_is_created_on_main_whatever_the_user_configured(tmp_path
     assert out.stdout.strip() == "main"
 
 
-def _global_config(tmp_path, monkeypatch, body: str) -> None:
-    """Give git a global config the module cannot scrub away.
+def _global_config(tmp_path, monkeypatch, body: str) -> str:
+    """Plant a hostile `$HOME/.gitconfig`. It does **not** reach the child.
 
-    `GIT_CONFIG_GLOBAL` is the obvious way and it is the wrong one here: `_env`
-    strips every `GIT_CONFIG*` variable, so a test that plants the setting there
-    is testing the scrub a second time and never reaches the thing it names.
-    Both the template test and the gpgSign test below passed that way while the
-    flag they were written for was absent. `$HOME/.gitconfig` survives.
+    This docstring used to end "`$HOME/.gitconfig` survives", and that was the
+    second wrong answer to the same question. `GIT_CONFIG_GLOBAL` was the first:
+    `_env` strips every `GIT_CONFIG*` name, so planting the setting there tests
+    the scrub rather than the flag. Moving to `$HOME` did not fix it, because
+    `_env` also sets `HOME` to `/dev/null` — three locks on the global file, and
+    the tests below were bouncing off the outermost one every time.
+
+    So a test that calls only this is a test of the isolation, which is a real
+    property and is what these are now documented as proving. To reach the inner
+    lock, pair it with `_without_the_global_isolation`.
     """
     fake = tmp_path / "fakehome"
     fake.mkdir(exist_ok=True)
     (fake / ".gitconfig").write_text(body)
     monkeypatch.setenv("HOME", str(fake))
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    return str(fake)
+
+
+def _without_the_global_isolation(monkeypatch, fake_home: str) -> None:
+    """Let the planted global config through, so the inner lock is on its own.
+
+    Three settings in this module exist only for the case where `_env` fails:
+    `--template=`, `commit.gpgSign = false`, and `--no-verify`. While `_env`
+    holds, none of them can be observed — a vacuity audit deleted each in turn
+    and the whole suite stayed green. Defence in depth that nothing distinguishes
+    is defence in depth nobody will notice losing.
+
+    Narrow on purpose: `HOME` is redirected and `GIT_CONFIG_GLOBAL` dropped, and
+    that is all. `GIT_CONFIG_SYSTEM` and `GIT_CONFIG_NOSYSTEM` stay, so the
+    machine's own `/etc/gitconfig` cannot make this pass or fail. The
+    `init`-time self-check has to go too: it exists to refuse exactly the state
+    being constructed here. [E4, review: vacuity audit]
+    """
+    real = gitrepo._env
+
+    def permissive() -> dict[str, str]:
+        env = real()
+        env["HOME"] = fake_home
+        env.pop("GIT_CONFIG_GLOBAL", None)
+        return env
+
+    monkeypatch.setattr(gitrepo, "_env", permissive)
+    monkeypatch.setattr(gitrepo, "_assert_no_foreign_config", lambda home: None)
+
+
+def _assert_the_global_was_read(home: str, fake_home: str) -> None:
+    """The neutralisation's own check, without which these tests re-rot.
+
+    Asked through the patched `_env`, because the question is what *git*
+    loaded. If `_without_the_global_isolation` ever stops working — a rename in
+    `gitrepo`, another lock added — the tests it serves would go back to
+    passing for the wrong reason, silently, which is how they got here.
+    """
+    seen = subprocess.run(
+        ["git", "-C", home, "config", "--list", "--show-origin"],
+        env=gitrepo._env(),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert os.path.join(fake_home, ".gitconfig") in seen, f"global not read:\n{seen}"
 
 
 def test_no_hook_from_a_global_template_is_installed(tmp_path, monkeypatch):
@@ -151,9 +202,30 @@ def test_no_hook_from_a_global_template_is_installed(tmp_path, monkeypatch):
     assert not canary.exists()
 
 
-def test_a_hook_planted_after_init_still_does_not_run(tmp_path):
-    """`core.hooksPath` plus `--no-verify`: two locks, because one can be unset."""
+def test_the_empty_template_declines_a_template_the_isolation_let_through(tmp_path, monkeypatch):
+    """The same attack with `_env`'s global-config lock switched off.
+
+    The test above cannot fail when `--template=` is deleted, because the
+    planted `init.templateDir` never reaches git — `HOME` is `/dev/null` and
+    `GIT_CONFIG_GLOBAL` is too. So it proves the isolation, and the flag it is
+    named for was unpinned until this one existed. [E4, review: vacuity audit]
+    """
+    template = tmp_path / "template" / "hooks"
+    template.mkdir(parents=True)
+    canary = tmp_path / "canary"
+    hook = template / "pre-commit"
+    hook.write_text(f"#!/bin/sh\ntouch {canary}\nexit 1\n")
+    hook.chmod(0o755)
+    fake = _global_config(tmp_path, monkeypatch, f"[init]\n\ttemplateDir = {template.parent}\n")
+    _without_the_global_isolation(monkeypatch, fake)
+
     home = gitrepo.init(str(tmp_path / "store"))
+
+    _assert_the_global_was_read(home, fake)
+    assert not os.path.exists(os.path.join(home, ".git", "hooks", "pre-commit"))
+
+
+def _plant_pre_commit(tmp_path, home: str):
     hooks = os.path.join(home, ".git", "hooks")
     os.makedirs(hooks, exist_ok=True)
     canary = tmp_path / "canary"
@@ -161,16 +233,68 @@ def test_a_hook_planted_after_init_still_does_not_run(tmp_path):
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(f"#!/bin/sh\ntouch {canary}\nexit 1\n")
     os.chmod(path, 0o755)
+    return canary
+
+
+def test_a_hook_planted_after_init_still_does_not_run(tmp_path):
+    """`core.hooksPath` and `--no-verify` together. Neither is pinned here.
+
+    Deleting either one leaves this passing, because the other still holds — so
+    what it proves is the pair. The one below removes `core.hooksPath` first, so
+    `--no-verify` has to do the work alone. [E4, review: vacuity audit]
+    """
+    home = gitrepo.init(str(tmp_path / "store"))
+    canary = _plant_pre_commit(tmp_path, home)
     assert gitrepo.commit(home, "first") is not None
     assert not canary.exists()
 
 
-def test_a_global_gpgsign_does_not_wedge_the_commit(tmp_path, monkeypatch):
-    """A daemon has no terminal, so a passphrase prompt is a hang, not an error."""
-    _global_config(
-        tmp_path, monkeypatch, "[commit]\n\tgpgSign = true\n[user]\n\tsigningKey = DEADBEEF\n"
-    )
+def test_no_verify_alone_stops_a_pre_commit_hook(tmp_path):
+    """`core.hooksPath` unset, which the comment on it says anyone can do.
+
+    Only `pre-commit` and `commit-msg`, which is why `core.hooksPath` is the
+    lock that matters and this one is the belt — but a belt nothing tests is a
+    belt that gets removed in a refactor. [E4, review: vacuity audit]
+    """
     home = gitrepo.init(str(tmp_path / "store"))
+    # `check=False`: exit 5 means the key was not there, which is the state this
+    # test wants anyway. Raising on it would turn "the other lock was removed"
+    # into a setup error instead of the pass it should be.
+    subprocess.run(["git", "-C", home, "config", "--unset", "core.hooksPath"], check=False)
+    canary = _plant_pre_commit(tmp_path, home)
+
+    assert gitrepo.commit(home, "first") is not None
+    assert not canary.exists()
+
+
+_HOSTILE_SIGNING = "[commit]\n\tgpgSign = true\n[user]\n\tsigningKey = DEADBEEF\n"
+
+
+def test_a_global_gpgsign_does_not_wedge_the_commit(tmp_path, monkeypatch):
+    """A daemon has no terminal, so a passphrase prompt is a hang, not an error.
+
+    Proves the isolation: the planted config never reaches git, so the
+    `commit.gpgSign = false` pin is not what makes this pass. The one below
+    pins that. [E4, review: vacuity audit]
+    """
+    _global_config(tmp_path, monkeypatch, _HOSTILE_SIGNING)
+    home = gitrepo.init(str(tmp_path / "store"))
+    assert gitrepo.commit(home, "first") is not None
+
+
+def test_the_pinned_gpgsign_survives_a_global_the_isolation_let_through(tmp_path, monkeypatch):
+    """`commit.gpgSign = false` on its own, against a global that says true.
+
+    A repository-local key outranks a global one, so the pin is what decides
+    this — and with the pin deleted the commit is handed to a signing key that
+    does not exist, which is the wedge the pin is for. [E4, review: vacuity audit]
+    """
+    fake = _global_config(tmp_path, monkeypatch, _HOSTILE_SIGNING)
+    _without_the_global_isolation(monkeypatch, fake)
+
+    home = gitrepo.init(str(tmp_path / "store"))
+
+    _assert_the_global_was_read(home, fake)
     assert gitrepo.commit(home, "first") is not None
 
 

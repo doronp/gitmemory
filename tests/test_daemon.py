@@ -404,11 +404,24 @@ def test_two_sessions_with_the_same_basename_stay_separate(tmp_path):
 
 
 def test_a_first_sighting_is_captured_without_waiting_for_the_interval(tmp_path):
+    """The interval has to out-run the epoch, or the sentinel answers instead.
+
+    A never-seen session is `(-1, 0.0)` — size and manifest mtime — and the gate
+    is `size < 0 or now - mtime >= interval`. With `interval=1e9` the second
+    clause is `now - 0.0`, which is the age of the Unix epoch in seconds and is
+    larger, so the session came through whether or not the first clause existed.
+    A vacuity audit deleted `size < 0` and the suite stayed green: this test,
+    the only one that names the property, could not see it.
+
+    `1e12` is about thirty thousand years, which no clock here reaches, so the
+    first-sighting rule is the only thing left that can explain the capture.
+    [E4, review: vacuity audit]
+    """
     home = str(tmp_path / "home")
     root = tmp_path / "proj"
     _write(str(root / "a.jsonl"), TURN)
     _config(home, [root])
-    result = daemon.tick(home, daemon.load_watches(home), interval=1e9)
+    result = daemon.tick(home, daemon.load_watches(home), interval=1e12)
     assert result.appended == len(TURN)
     assert result.errors == []
 

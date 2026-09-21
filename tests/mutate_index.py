@@ -644,6 +644,40 @@ MUTANTS = [
         "        if False:",
         "test_nothing_new_rewrites_nothing",
     ),
+    (
+        "a never-seen session no longer bypasses the interval gate",
+        "daemon.py",
+        " or size < 0 or now - mtime >= interval):",
+        " or now - mtime >= interval):",
+        "test_a_first_sighting_is_captured_without_waiting_for_the_interval",
+    ),
+    # The three below are the *inner* lock of a pair. Each was unobservable
+    # while `_env`'s config isolation held, which it does in every other test
+    # here, so all three could be deleted with the suite green. They are pinned
+    # now by tests that switch the outer lock off first — see
+    # `_without_the_global_isolation`. `core.hooksPath` is the one that was
+    # already pinned, by two tests of its own.
+    (
+        "the empty --template= is dropped; a global init.templateDir applies",
+        "gitrepo.py",
+        '        _git(home, "init", "--quiet", "--template=", "--initial-branch=main")',
+        '        _git(home, "init", "--quiet", "--initial-branch=main")',
+        "test_the_empty_template_declines_a_template_the_isolation_let_through",
+    ),
+    (
+        "--no-verify is dropped, leaving only core.hooksPath against a pre-commit hook",
+        "gitrepo.py",
+        '    _git(home, "commit", "--quiet", "--no-verify", "--message", message)',
+        '    _git(home, "commit", "--quiet", "--message", message)',
+        "test_no_verify_alone_stops_a_pre_commit_hook",
+    ),
+    (
+        "the repository no longer pins commit.gpgSign = false",
+        "gitrepo.py",
+        '    "commit.gpgSign": "false",\n',
+        "",
+        "test_the_pinned_gpgsign_survives_a_global_the_isolation_let_through",
+    ),
 ]
 
 
