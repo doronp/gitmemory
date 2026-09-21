@@ -49,8 +49,10 @@ GITIGNORE = """\
 # process was killed in between. `git add --all` stages dotfiles, so a commit
 # racing a live capture was committing a *partial* segment or a *partial*
 # manifest: unattested bytes for the first, and for the second a manifest that
-# `verify` reads as truncated JSON. The segment half is swept by the next
-# capture; the manifest half is not, and stays on disk for ever. [E4, review]
+# `verify` reads as truncated JSON. Both halves are swept by the next capture —
+# the segment in `_adopt_orphans`, the manifest in `_sweep_temps`, which was
+# added because this comment used to say the manifest half never was.
+# [E4, review: store 8]
 #
 # Anchored to the exact depth each one lives at, because unanchored they match a
 # *directory component* — and one of those components is the user's filename.

@@ -59,6 +59,9 @@ CHUNK = 1 << 20
 EMPTY_SHA256 = hashlib.sha256().hexdigest()
 
 _GEN_RE = re.compile(r"^g(\d+)\.json$")
+# What `_write_atomic` leaves behind when it is killed between the create and
+# the rename. See `_sweep_temps`.
+_TMP_RE = re.compile(r"^g\d+\.json\.tmp\.")
 # Leading alnum bans `..`, `-rf`, and dotfiles in one rule. `agent` and
 # `session_id` become path components, so they are a trust boundary even when
 # today's only caller is our own adapter.
@@ -341,6 +344,35 @@ def _check_manifest(man: object) -> None:
             )
 
 
+def _clean_boundaries(values: object, size: int) -> tuple[list[int], int]:
+    """The offered boundaries that address a byte of `[0, size]`, and the count dropped.
+
+    Total over any input, which is the whole point of it. `_check_manifest`
+    types the *container*, and the elements went straight to `0 <= b <= end` —
+    where `0 <= "x"` is a TypeError raised **after** `os.replace` had published
+    the segment. So the capture left an orphan behind, the next capture's
+    adoption copied the same list into the manifest it wrote, and every capture
+    after that died in the same place. `verify` called the store clean
+    throughout. [E4, review: store 3]
+
+    Dropped rather than raised, for the reason `_capture` already gives: bytes
+    outrank boundaries, and refusing a capture would lose a transcript over an
+    annotation of it. Filtering the *union* rather than only the new argument is
+    what lets a store that already holds a bad offset heal on its next capture.
+
+    `repr` for the drop count because a boundary can be anything a JSON document
+    can hold, including a dict, and a set of those is a TypeError of its own.
+    """
+    kept: set[int] = set()
+    dropped: set[str] = set()
+    for b in _seq(values):
+        if isinstance(b, int) and not isinstance(b, bool) and 0 <= b <= size:
+            kept.add(b)
+        else:
+            dropped.add(repr(b))
+    return sorted(kept), len(dropped)
+
+
 def _write_atomic(path: str, data: bytes) -> None:
     _mkdir(os.path.dirname(path))
     tmp = _tmp_name(f"{path}.tmp")
@@ -413,6 +445,25 @@ def _locked(home: str, agent: str, session_id: str):
         os.close(fd)
 
 
+def _sweep_temps(session_dir: str) -> None:
+    """Remove the manifest temps a killed `_write_atomic` left behind.
+
+    The segment half of that crash — `raw/.../.incoming.<pid>.<tid>` — has been
+    swept since E2, a few lines below. This half was not:
+    `sessions/<a>/<s>/g00.json.tmp.<pid>.<tid>` stayed on disk for ever, and
+    `gitrepo.GITIGNORE` documented that as a standing condition rather than
+    fixing it. A temp is an abandoned copy that never became a manifest;
+    removing it is what the interrupted process would have done itself.
+
+    Safe because the caller holds the session lock, and the lock is what serialises
+    the only thing that writes one. [E4, review: store 8]
+    """
+    with contextlib.suppress(OSError), os.scandir(session_dir) as it:
+        for entry in it:
+            if _TMP_RE.match(entry.name):
+                _unlink(entry.path)
+
+
 def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> bool:
     """Finish a capture that was killed after its segment landed. True if it did.
 
@@ -438,20 +489,51 @@ def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> 
     Re-hashing the whole generation is the cost, and it is paid only after a
     crash. Callers hold the session lock. [E2]
     """
+    _sweep_temps(session_dir)
     prior = _manifests(session_dir)
     gen = prior[-1][0] if prior else 0
-    seg_dir = os.path.join(home, "raw", agent, session_id, _gen_dir(gen))
+    raw_dir = os.path.join(home, "raw", agent, session_id)
+    # A fork is killed in the same publish-then-manifest window as any other
+    # capture, but its segment lands one generation *above* anything a manifest
+    # names. Computing `gen` from `prior[-1]` therefore looked in `g<N>/`, found
+    # nothing, and returned — while the next capture forked again, built the
+    # same `g<N+1>/000000000000-NNN.jsonl` name, and hit `refusing to overwrite
+    # an existing segment`. Permanently: every capture after it repeats that,
+    # or `verify` stays red for ever if the source went away.
+    # [E4, review: store 1]
+    forked = bool(prior) and os.path.isdir(os.path.join(raw_dir, _gen_dir(gen + 1)))
+    seg_dir = os.path.join(raw_dir, _gen_dir(gen + 1 if forked else gen))
     if not os.path.isdir(seg_dir):
         return False
 
     man: dict | None = None
     if prior:
         with open(prior[-1][1], "rb") as fh:
-            man = json.loads(fh.read())
+            prev_bytes = fh.read()
+        man = json.loads(prev_bytes)
         # Before anything is rewritten, and here rather than only in `_capture`:
         # adoption is the *first* reader of the last manifest, and it feeds
         # `size` straight to `while size in pending`. [E3]
         _check_manifest(man)
+        if forked:
+            # The killed capture's ancestry is entirely reconstructible: it is a
+            # function of the manifest it forked away from, which is on disk and
+            # has just been checked. Everything else about a fresh generation is
+            # a constant — it starts at byte zero, carries no segments, and
+            # carries no boundaries, exactly as `_capture` writes one.
+            man = {
+                "source_path": man.get("source_path", ""),
+                "diverged_from": {
+                    "generation": gen,
+                    "at_byte": man["size"],
+                    "prev_file_sha256": man["file_sha256"],
+                },
+                "prev_manifest_sha256": hashlib.sha256(prev_bytes).hexdigest(),
+                "segments": [],
+                "size": 0,
+                "compact_boundaries": [],
+            }
+            gen += 1
 
     with os.scandir(seg_dir) as it:
         names = sorted(e.name for e in it if e.is_file())
@@ -512,7 +594,10 @@ def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> 
         "file_sha256": whole.hexdigest(),
         "prev_manifest_sha256": (man or {}).get("prev_manifest_sha256"),
         "segments": segments,
-        "compact_boundaries": (man or {}).get("compact_boundaries", []),
+        # Filtered, not copied. Adoption is the one writer that used to pass a
+        # previous manifest's boundaries straight into `canonical_json`, which
+        # is how one unusable element became permanent. [E4, review: store 3]
+        "compact_boundaries": _clean_boundaries((man or {}).get("compact_boundaries"), size)[0],
     }
     _write_atomic(os.path.join(session_dir, _gen_file(gen)), canonical_json(manifest))
     return True
@@ -635,6 +720,19 @@ def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting
             raise
 
     end = base + appended
+    # A boundary is an offset into this generation, so one outside `[0, end]`
+    # addresses bytes the store does not have. The daemon tries not to produce
+    # those — it re-stats the source around the parse — but that is a mitigation
+    # with a window in it, and a guarantee needs a floor. Without this the store
+    # wrote whatever it was handed, `verify` called it clean, and the next
+    # capture carried it into the following manifest for ever; a *negative* one
+    # got through too, which sends `span` reading from the wrong place. The
+    # union is filtered rather than only the argument, so a store that already
+    # holds a bad offset heals on its next capture. [E4, review: Gemini r3 §4]
+    #
+    # Computed here rather than after the segment is published, because the
+    # no-op return below has to know whether these changed. [E4, review: store 7]
+    kept_boundaries, dropped = _clean_boundaries([*carried, *(boundaries or [])], end)
     seg_rel: str | None = None
     if appended:
         name = f"{base:012d}-{end:012d}.jsonl"
@@ -656,28 +754,21 @@ def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting
         )
     else:
         _unlink(tmp)
-        if prior and not diverged:
+        if prior and not diverged and kept_boundaries == carried:
             # Nothing new and nothing wrong: leave the manifest byte-identical
             # so a no-op capture produces no commit. `adopted` still travels —
             # this is the exact path a recovery pass takes, and reporting 0
             # appended with nothing else set is what made the repair invisible.
-            return Capture(prior[-1][1], gen, None, 0, end, None, adopted=adopted)
+            #
+            # Gated on the boundaries as well as the bytes. A compaction that
+            # appends nothing still happened, and taking this return before the
+            # merge below threw its offset away in silence — `verify` clean,
+            # capture reporting success, the annotation simply gone.
+            # [E4, review: store 7]
+            return Capture(
+                prior[-1][1], gen, None, 0, end, None, adopted=adopted, dropped_boundaries=dropped
+            )
 
-    # A boundary is an offset into this generation, so one outside `[0, end]`
-    # addresses bytes the store does not have. The daemon tries not to produce
-    # those — it re-stats the source around the parse — but that is a mitigation
-    # with a window in it, and a guarantee needs a floor. Without this the store
-    # wrote whatever it was handed, `verify` called it clean, and the next
-    # capture carried it into the following manifest for ever; a *negative* one
-    # got through too, which sends `span` reading from the wrong place. The
-    # union is filtered rather than only the argument, so a store that already
-    # holds a bad offset heals on its next capture. [E4, review: Gemini r3 §4]
-    #
-    # Dropped rather than raised: bytes outrank boundaries, and refusing the
-    # capture would lose a transcript over an annotation of it. Counted, so the
-    # drop is not silent.
-    offered = {*carried, *(boundaries or [])}
-    kept_boundaries = sorted(b for b in offered if 0 <= b <= end)
     manifest = {
         "schema": SCHEMA,
         "agent": agent,
@@ -706,7 +797,7 @@ def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting
         end,
         diverged,
         adopted=adopted,
-        dropped_boundaries=len(offered) - len(kept_boundaries),
+        dropped_boundaries=dropped,
     )
 
 
@@ -786,13 +877,23 @@ def sessions(home: str) -> list[Stored]:
             # contradiction a reordered manifest passed straight through: the
             # proof reported clean and every offset addressed a concatenation
             # that was never the transcript. [E3]
-            segs = sorted(_seq(man.get("segments")), key=_seg_start)
+            # A run of *zero* segments is a real generation, not a broken one: a
+            # source truncated to nothing forks, and the fork holds no bytes
+            # yet. `not run` dropped it, so every reader took the sealed
+            # previous generation as the live one — stale history presented as
+            # current, with nothing saying so. A missing or non-list `segments`
+            # is still a skip, because that manifest speaks for nothing and
+            # `segment_groups` feeds the egress gate. [E4, review: store 6]
+            raw_segments = man.get("segments")
+            if not isinstance(raw_segments, list):
+                continue
+            segs = sorted(raw_segments, key=_seg_start)
             run = [_segment_path(home, s) for s in segs]
         except EscapingSegment:
             raise
         except Exception:  # noqa: BLE001 - a manifest is untrusted data
             continue
-        if not run or not all(run):
+        if not all(run):
             continue
         # Everything below is best-effort. A row is never dropped for a bad
         # *metadata* field, only for an unreadable or escaping segment list:
@@ -899,7 +1000,7 @@ def verify(home: str | None = None) -> list[str]:
 
 
 def _verify_unattested(home: str) -> list[str]:
-    """Raw generation directories that no manifest speaks for.
+    """Every file in the store that no manifest speaks for.
 
     The sweep above is manifest-driven: it starts from `sessions/*/*/g*.json`
     and checks that the bytes each manifest names are the bytes on disk. That
@@ -919,10 +1020,27 @@ def _verify_unattested(home: str) -> list[str]:
     clean is a hole in the proof rather than a missing nicety.
     [E4, review: concurrency 5]
 
-    One extra glob, walked in the other direction.
+    The first version of this was pinned to `raw/*/*/g*` — the one depth the
+    incident of the day had used. That is a denylist with a single entry: a file
+    at `raw/<agent>/<session>/leftover.jsonl`, or at `raw/loose.jsonl`, was
+    invisible to it and `git add --all` committed it anyway. And there was no
+    check on `sessions/` at all, which is the tree that *is* the proof.
+
+    So the question is asked once, in the shape the guarantee needs: which files
+    in this store does no manifest speak for? Under `raw/`, that is everything
+    outside an attested generation directory — inside one, the manifest-driven
+    sweep names the stray against the manifest it contradicts, which is the more
+    useful message and does not race. Under `sessions/`, the store writes
+    exactly one kind of file at exactly one depth, so anything else is a
+    finding, including the `g<NN>.json.tmp.<pid>.<tid>` a killed `_write_atomic`
+    leaves. [E4, review: store 2]
+
+    One extra glob and two walks, all in the other direction.
     """
-    out: list[str] = []
-    for seg_dir in sorted(glob(os.path.join(home, "raw", "*", "*", "g*"))):
+    found: list[tuple[str, str]] = []
+    raw = os.path.join(home, "raw")
+    attested = set()
+    for seg_dir in sorted(glob(os.path.join(raw, "*", "*", "g*"))):
         if not os.path.isdir(seg_dir):
             continue
         gen_dir = os.path.basename(seg_dir)
@@ -935,19 +1053,117 @@ def _verify_unattested(home: str) -> list[str]:
             gen_dir + ".json",
         )
         if os.path.exists(manifest):
-            continue  # attested; the manifest-driven sweep already checked it
+            attested.add(os.path.realpath(seg_dir))
+    for dirpath, dirnames, filenames in os.walk(raw):
+        if os.path.realpath(dirpath) in attested:
+            # `_verify_manifest` owns this directory, holding the session lock
+            # while it lists it. A subdirectory of it is not a generation
+            # directory of anything and shows up there as an unrecorded entry.
+            dirnames[:] = []
+            continue
         # An empty directory attests to nothing and is not evidence of loss.
-        with contextlib.suppress(OSError):
-            names = sorted(os.listdir(seg_dir))
-            if names:
-                out.append(
-                    f"raw/{os.path.relpath(seg_dir, os.path.join(home, 'raw'))}: "
-                    f"{len(names)} file(s) with no manifest: {', '.join(names[:3])}"
-                )
-    return out
+        for name in sorted(filenames):
+            rel = os.path.relpath(os.path.join(dirpath, name), home)
+            found.append((rel, f"{rel}: no manifest speaks for these bytes"))
+    sess = os.path.join(home, "sessions")
+    for dirpath, _, filenames in os.walk(sess):
+        rel_dir = os.path.relpath(dirpath, sess)
+        at_depth = rel_dir != os.curdir and rel_dir.count(os.sep) == 1
+        for name in sorted(filenames):
+            if at_depth and _GEN_RE.match(name):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, name), home)
+            found.append((rel, f"{rel}: not a manifest"))
+    return [msg for rel, msg in found if _abandoned(home, rel)]
 
 
-def _verify_manifest(home: str, path: str) -> list[str]:  # noqa: PLR0912 - one branch per failure mode
+def _abandoned(home: str, rel: str) -> bool:
+    """Whether a candidate finding is litter rather than a file being written.
+
+    The walk above is lockless by nature: it has no session in hand until it has
+    already found something. So it sees the in-flight artefacts too — the
+    `g<NN>.json.tmp.<pid>.<tid>` a live `_write_atomic` is holding open, the
+    `.incoming.<pid>.<tid>` a live capture is filling. Both are real unattested
+    bytes once a crash leaves them behind, and neither is a problem while the
+    process that made them is still there. Left unchecked, this sweep reported
+    the sound store it was added to protect — the same false positive the lock
+    in `_locked_if_writable` exists to prevent, arriving from the other side.
+
+    Taking the session's lock settles which one it is with no heuristic about
+    pids or mtimes: the writer holds that lock for as long as either artefact
+    exists, so by the time we have it the file is either gone (it was in flight)
+    or still on disk (it was abandoned). Paths above the session level have no
+    writer to wait for. [E4, review: store 2]
+    """
+    parts = rel.split(os.sep)
+    if len(parts) < 4:  # <tree>/<agent>/<session>/…
+        return True
+    with _locked_if_writable(home, parts[1], parts[2]):
+        return os.path.exists(os.path.join(home, rel))
+
+
+@contextlib.contextmanager
+def _locked_if_writable(home: str, agent: str, session_id: str):
+    """The session lock when the store can be written to, and nothing when it cannot.
+
+    `verify` read a manifest, hashed its segments, and only then listed the
+    generation directory — taking no lock at any point. A capture that published
+    a segment inside that window was reported as an unrecorded file, on a store
+    that was perfectly sound. A watcher in one terminal and a `verify` in
+    another is the ordinary way to run this, not a contrived race; the reviewer
+    measured 79 of 82 concurrent runs calling a healthy store corrupt.
+    [E4, review: store 5]
+
+    Degrading rather than failing is what keeps the central claim true: a
+    stranger with a read-only checkout has to be able to run `verify`, and a
+    read-only store is exactly the one where no capture can be in flight — so a
+    lock we cannot take is a lock we do not need. The names are checked because
+    they come off the filesystem rather than through `_safe`, and they are about
+    to be joined into a path.
+    """
+    fd = None
+    if _SAFE_RE.match(agent) and _SAFE_RE.match(session_id):
+        try:
+            lock = os.path.join(home, ".locks", agent, f"{session_id}.lock")
+            _mkdir(os.path.dirname(lock))
+            fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError:
+            if fd is not None:
+                os.close(fd)
+            fd = None
+    try:
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _verify_manifest(home: str, path: str) -> list[str]:
+    # Built from the directory this manifest is **filed under**, not from the
+    # identity it declares about itself. Those are normally the same and a
+    # tampered manifest is exactly the case where they are not: editing
+    # `session_id` to name a directory that does not exist made `os.scandir`
+    # raise, `contextlib.suppress(OSError)` swallow it, and the stray-file scan
+    # examine nothing — while every other check below still passed, because they
+    # all follow the `path` recorded inside each segment entry. The one check
+    # that exists to find unattested bytes was the one an attacker could switch
+    # off, from inside the file being checked.
+    #
+    # `_safe` is not applied to the components: they come off the filesystem,
+    # they are already whatever `capture` wrote, and re-normalising them here
+    # would reintroduce the same "trust the string over the location" move.
+    # [E4, review: store-contract 2]
+    session_dir = os.path.dirname(path)
+    filed_agent = os.path.basename(os.path.dirname(session_dir))
+    filed_session = os.path.basename(session_dir)
+    with _locked_if_writable(home, filed_agent, filed_session):
+        return _verify_one(home, path, filed_agent, filed_session)
+
+
+def _verify_one(  # noqa: PLR0912 - one branch per failure mode
+    home: str, path: str, filed_agent: str, filed_session: str
+) -> list[str]:
     rel = os.path.relpath(path, home)
     out: list[str] = []
     try:
@@ -1021,24 +1237,7 @@ def _verify_manifest(home: str, path: str) -> list[str]:  # noqa: PLR0912 - one 
     if whole.hexdigest() != man.get("file_sha256"):
         out.append(f"{rel}: concatenated segments do not hash to file_sha256")
 
-    # Built from the directory this manifest is **filed under**, not from the
-    # identity it declares about itself. Those are normally the same and a
-    # tampered manifest is exactly the case where they are not: editing
-    # `session_id` to name a directory that does not exist made `os.scandir`
-    # raise, `contextlib.suppress(OSError)` swallow it, and the stray-file scan
-    # examine nothing — while every other check in this function still passed,
-    # because they all follow the `path` recorded inside each segment entry. The
-    # one check that exists to find unattested bytes was the one an attacker
-    # could switch off, from inside the file being checked.
-    #
-    # `_safe` is not applied to the components: they come off the filesystem,
-    # they are already whatever `capture` wrote, and re-normalising them here
-    # would reintroduce the same "trust the string over the location" move.
-    # [E4, review: store-contract 2]
-    session_dir = os.path.dirname(path)
-    filed_agent = os.path.basename(os.path.dirname(session_dir))
-    filed_session = os.path.basename(session_dir)
-    # And say so, rather than only declining to be misled by it. A manifest
+    # Say so, rather than only declining to be misled by it. A manifest
     # whose declared identity disagrees with its location is a tampered or
     # hand-moved manifest either way, and `verify` exists to name that.
     if (agent, session_id) != (filed_agent, filed_session):
@@ -1053,6 +1252,19 @@ def _verify_manifest(home: str, path: str) -> list[str]:  # noqa: PLR0912 - one 
         for entry in sorted(it, key=lambda e: e.name):
             if os.path.realpath(entry.path) not in listed:
                 out.append(f"{rel}: unrecorded file in the generation directory: {entry.name}")
+
+    # The writer's floor, applied by the reader. `verify` checked the fields it
+    # needed for its own arithmetic and never `_FIELDS`, so a `size` of `370.0`
+    # passed every one of them — `370 != 370.0` is False — while
+    # `_check_manifest` raises on it at the top of the *next* capture. A clean
+    # proof and a dead session, with no command that says which.
+    #
+    # Appended rather than returned, and last, so the specific checks above get
+    # to say the more useful thing first. [E4, review: store 4]
+    try:
+        _check_manifest(man)
+    except ValueError as exc:
+        out.append(f"{rel}: {exc}")
 
     out += _verify_chain(path, rel, man, gen)
     return out

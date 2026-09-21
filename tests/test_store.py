@@ -849,11 +849,16 @@ def test_the_per_segment_hash_check_is_not_deletable(home, src):
 def test_a_misfiled_manifest_is_caught(home, src):
     """[E2] `generation` drives every path below it; a mismatch must stop there.
 
-    Two problems, not one, since E4 added the reverse sweep: renaming the
+    Three problems, not one, since E4 added the reverse sweep: renaming the
     manifest out of the way is also what leaves `raw/.../g00` with nothing
-    attesting it, and that is a true and separate fact about the store. What
-    the count is still guarding is the original point — that a bad generation
-    is not then *used*, producing a cascade of invented paths under `g01`.
+    attesting it, and that is a true and separate fact about each of the two
+    segments in there. What the count is still guarding is the original point —
+    that a bad generation is not then *used*, producing a cascade of invented
+    paths under `g01`.
+
+    One finding per file rather than one per directory: the sweep now walks the
+    whole of `raw/` instead of a pinned depth, and a walk has no directory to
+    aggregate to. [E4, review: store 2]
     """
     _build(home, src, chunks=2)
     d = Path(home, "sessions", "claude-code", "sess")
@@ -861,8 +866,9 @@ def test_a_misfiled_manifest_is_caught(home, src):
 
     problems = store.verify(home)
     assert [p for p in problems if "filed as g01.json" in p], problems
-    assert [p for p in problems if "g00: 2 file(s) with no manifest" in p], problems
-    assert len(problems) == 2, f"a bad generation must not be fed to a path: {problems}"
+    unattested = [p for p in problems if "g00/" in p and "no manifest speaks" in p]
+    assert len(unattested) == 2, problems
+    assert len(problems) == 3, f"a bad generation must not be fed to a path: {problems}"
 
 
 def test_a_dotfile_in_a_generation_directory_is_a_stray(home, src):
@@ -1514,3 +1520,208 @@ def test_a_manifest_is_checked_against_where_it_lives_not_what_it_claims(home, s
 
     problems = store.verify(home)
     assert [p for p in problems if "declares claude-code/elsewhere" in p], problems
+
+
+# --- E4 review round: the eight store findings ----------------------------- #
+
+
+def test_an_orphan_in_a_forked_generation_is_adopted(home, src):
+    """Adoption looked only in the newest *manifested* generation's directory.
+
+    A capture that forks is killed in the same publish-then-manifest window as
+    any other, but its segment lands one generation higher than anything a
+    manifest names — so `_adopt_orphans` computed `gen` from `prior[-1]`, looked
+    in `g00/`, found nothing, and returned. The next capture then forked again,
+    built the same `g01/000000000000-NNN.jsonl` name, and hit `refusing to
+    overwrite an existing segment`. Permanently: every later capture repeats it.
+    [E4, review: store 1]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    prev = manifest(home)
+    # Same length, different bytes: the next capture must fork.
+    data = Path(src).read_bytes().replace(b"hello", b"HELLO")
+    assert len(data) == prev["size"]
+    Path(src).write_bytes(data)
+    g01 = Path(home, "raw", "claude-code", "sess", "g01")
+    g01.mkdir(parents=True)
+    (g01 / f"{0:012d}-{len(data):012d}.jsonl").write_bytes(data)
+
+    assert store.verify(home) != [], "the wedged state the crash leaves"
+    store.capture(src, "claude-code", "sess", home=home)
+    assert store.verify(home) == [], "the next capture finishes what the crash started"
+    man = manifest(home, gen=1)
+    assert man["size"] == len(data)
+    assert man["diverged_from"] == {
+        "generation": 0,
+        "at_byte": prev["size"],
+        "prev_file_sha256": prev["file_sha256"],
+    }
+    assert man["file_sha256"] == hashlib.sha256(data).hexdigest()
+
+
+def test_unattested_bytes_anywhere_under_raw_are_a_finding(home, src):
+    """The reverse sweep was pinned to `raw/*/*/g*`, so bytes at any other depth
+    were invisible to it and `git add --all` committed them. [E4, review: store 2]"""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    Path(home, "raw", "claude-code", "sess", "leftover.jsonl").write_bytes(b"real bytes\n")
+    Path(home, "raw", "loose.jsonl").write_bytes(b"real bytes\n")
+
+    problems = store.verify(home)
+    assert [p for p in problems if "leftover.jsonl" in p], problems
+    assert [p for p in problems if "loose.jsonl" in p], problems
+
+
+def test_a_stray_file_in_the_sessions_tree_is_a_finding(home, src):
+    """There was no stray check on `sessions/` at all — the tree that *is* the
+    proof. [E4, review: store 2]"""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    Path(home, "sessions", "claude-code", "sess", "notes.txt").write_bytes(b"x\n")
+    Path(home, "sessions", "loose.json").write_bytes(b"{}\n")
+
+    problems = store.verify(home)
+    assert [p for p in problems if "notes.txt" in p], problems
+    assert [p for p in problems if "loose.json" in p], problems
+
+
+@pytest.mark.parametrize(
+    ("field", "bad"),
+    [
+        ("size", 370.0),
+        ("file_sha256", 12),
+        ("compact_boundaries", {}),
+        ("source_path", 7),
+    ],
+)
+def test_verify_applies_the_floor_the_next_capture_will_apply(home, src, field, bad):
+    """A manifest `verify` calls clean must be one a capture can use.
+
+    `verify` never applied `_FIELDS`, so `size: 370.0` passed every check it has
+    — `370 != 370.0` is False — while `_check_manifest` raises on it at the top
+    of the next capture. Clean proof, dead session, and no command that says
+    which. [E4, review: store 4]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    assert manifest(home)["size"] == 370, "the float below has to equal the real size"
+    rewrite(home, lambda m: m.__setitem__(field, bad))
+
+    assert [p for p in store.verify(home) if field in p], store.verify(home)
+
+
+def test_a_boundary_that_is_not_an_offset_cannot_wedge_the_store(home, src):
+    """`_check_manifest` typed the container and not its elements, and the
+    element reached arithmetic.
+
+    `compact_boundaries: ["x"]` survives the writer's floor, and `0 <= "x"`
+    raises TypeError — *after* `os.replace` has published the segment. So the
+    capture leaves an orphan, the next capture's adoption copies the same list
+    into the manifest it writes, and every capture after that dies in the same
+    place. Permanent, and `verify` called the store clean throughout.
+    [E4, review: store 3]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    rewrite(home, lambda m: m.__setitem__("compact_boundaries", ["x"]))
+    transcript(src, 5, start=5)
+
+    store.capture(src, "claude-code", "sess", home=home)
+    assert store.verify(home) == []
+    assert manifest(home)["compact_boundaries"] == [], "the bad offset healed rather than wedged"
+
+
+def test_verify_does_not_report_a_live_capture_as_corruption(home, src):
+    """`verify` read the manifest, then hashed, then listed the directory — with
+    no lock, so a segment published in between read as an unrecorded file.
+
+    A watcher and a `verify` in another terminal is the ordinary case. The
+    reviewer measured 79 of 82 concurrent runs reporting a healthy store
+    corrupt. [E4, review: store 5]
+    """
+    transcript(src, 200)
+    store.capture(src, "claude-code", "sess", home=home)
+    stop = threading.Event()
+    failed: list[BaseException] = []
+
+    def grow():
+        i = 200
+        while not stop.is_set():
+            try:
+                transcript(src, 5, start=i)
+                store.capture(src, "claude-code", "sess", home=home)
+            except BaseException as exc:  # noqa: BLE001 - reported, not swallowed
+                failed.append(exc)
+                return
+            i += 5
+
+    writer = threading.Thread(target=grow)
+    writer.start()
+    try:
+        problems = [p for _ in range(30) for p in store.verify(home)]
+    finally:
+        stop.set()
+        writer.join()
+    assert failed == [], failed
+    assert problems == [], problems[:5]
+
+
+def test_a_generation_with_no_segments_is_still_the_live_one(home, src):
+    """`sessions()` dropped a run of zero segments, which is a real state: a
+    source truncated to nothing forks, and the fork has no bytes yet.
+
+    Every reader then saw the *sealed* g00 as the live generation — stale
+    history presented as current, with nothing saying so. [E4, review: store 6]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    Path(src).write_bytes(b"")
+    cap = store.capture(src, "claude-code", "sess", home=home)
+    assert (cap.generation, cap.size) == (1, 0)
+
+    assert [s.generation for s in store.sessions(home)] == [0, 1]
+    assert store.verify(home) == []
+
+
+def test_a_boundary_offered_when_nothing_grew_is_not_discarded(home, src):
+    """The no-op early return skipped the boundary merge entirely, so a
+    compaction that appended no bytes lost its only record. [E4, review: store 7]"""
+    size = transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    cap = store.capture(src, "claude-code", "sess", home=home, boundaries=[size])
+
+    assert cap.appended == 0
+    assert manifest(home)["compact_boundaries"] == [size]
+    assert store.verify(home) == []
+
+
+def test_a_no_op_capture_still_writes_nothing_when_there_is_nothing_to_write(home, src):
+    """The other side of the fix: a genuine no-op must stay a no-op, or every
+    idle pass produces a commit. [E4, review: store 7]"""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    path = Path(home, "sessions", "claude-code", "sess", "g00.json")
+    before = path.read_bytes(), path.stat().st_mtime_ns
+
+    store.capture(src, "claude-code", "sess", home=home)
+    assert (path.read_bytes(), path.stat().st_mtime_ns) == before
+
+
+def test_an_abandoned_manifest_temp_is_swept(home, src):
+    """`_write_atomic`'s temp is the one crash artefact nothing removed.
+
+    The segment half is swept by the next capture; this half stayed on disk for
+    ever, and the GITIGNORE comment claiming both were swept was wrong about it.
+    [E4, review: store 8]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    litter = Path(home, "sessions", "claude-code", "sess", "g00.json.tmp.4242.7")
+    litter.write_bytes(b'{"half":')
+    assert [p for p in store.verify(home) if litter.name in p], "reported while it is there"
+
+    transcript(src, 5, start=5)
+    store.capture(src, "claude-code", "sess", home=home)
+    assert not litter.exists()
+    assert store.verify(home) == []
