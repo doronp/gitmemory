@@ -14,7 +14,7 @@ behaviour, the named test required to fail.
 
 ## Status
 
-**Ten findings; six closed so far.** This document grows as the round does.
+**Ten findings; seven closed so far.** This document grows as the round does.
 
 | | Finding | Outcome |
 |---|---|---|
@@ -23,7 +23,7 @@ behaviour, the named test required to fail.
 | F3 | `_sweep_partials` deletes files it does not own | **fixed** — the name the build writes, and `<` not `!=` |
 | F4 | A SQLite file the user did not create is trusted completely | **fixed** — read-only by default, and a step budget |
 | F5 | Lone surrogates reach the committed artifacts | **fixed** — one transform, at the one door |
-| F6 | One oversized block aborts the whole build | open |
+| F6 | One oversized block aborts the whole build | **fixed** — the guard now covers the writes, under a savepoint |
 | F7 | Control characters and bidi overrides reach `graph.json` labels | **fixed** — same transform, and it was not only `graph.json` |
 | F8 | `derive.ideas` costs ~32 s of CPU for 284 KB of crafted text | open |
 | F9 | `index/` is created 0755 where the store is 0700 | open |
@@ -223,9 +223,56 @@ which the ZWSP has become six ASCII characters rather than none. Closing that
 means normalising *before* scanning, which is a different change with a
 different risk, and nothing in this round showed it reachable.
 
+## F6 — the guard stopped one line short of the error
+
+`_fill`'s per-generation `try` was widened once already, and the comment above
+it says why: a malformed tool call escaping the row loop "cost the index every
+other generation as well, which is the exact failure this guard says it
+prevents". The `INSERT`s were still outside it.
+
+`prose`, `tool_result` and `paths` are unbounded, and SQLite refuses a value
+over `SQLITE_LIMIT_LENGTH` — 10⁹ bytes by default — at bind time. One
+transcript block over that limit is "an agent `cat`'d a big file", which is the
+project's own stated reason for keeping raw bytes at all.
+
+Reproduced over a store of three generations, one oversized, with the limit
+lowered so the test costs 200 KB rather than a gigabyte:
+
+```
+limit=None:   ok generations=3 blocks=3 skipped=()
+limit=100000: !! DataError: string or blob too big -> the whole build is lost
+              index on disk: False
+```
+
+Every session in the store, on every run, until someone found and deleted the
+offending generation by hand. After:
+
+```
+limit=100000: ok generations=2 blocks=2
+              skipped=("claude-code/sess1/g00: DataError('string or blob too big')",)
+```
+
+Two changes, and the second is what makes the first honest. The `try` now
+covers the writes; a `SAVEPOINT` around each generation means one that fails
+halfway through its inserts leaves nothing behind, and its contribution to the
+digest is held in a local list until it is known to have landed. Without the
+savepoint the wider guard would be worse than the narrow one — a half-written
+generation, silently, in an index that reported it as skipped.
+
+`_fill` also opens its transaction explicitly now. Releasing an *outermost*
+savepoint commits, which would have published each generation as it went and
+left `build`'s `db.commit()` describing nothing; an explicit `BEGIN` keeps
+every savepoint a nested one. Verified both ways before the code was written.
+
+**What was not confirmed.** The reviewer proved the mechanism at a lowered
+limit and said so; a capture of a real >1 GB single block was not run, and is
+not run here either. The trigger at the default limit remains PLAUSIBLE. It
+does not change the fix: the guard was wrong about its own scope regardless of
+which error reaches it.
+
 ## Negative controls added this round
 
-Nine rows, all run, **9/9 CAUGHT by their intended test**.
+Fifteen rows, all run, **15/15 CAUGHT by their intended test**.
 
 | Mutant | Verdict |
 |---|---|
@@ -238,7 +285,16 @@ Nine rows, all run, **9/9 CAUGHT by their intended test**.
 | a symlink in the chain is already a directory | CAUGHT |
 | a symlinked derived leaf is followed, not refused | CAUGHT |
 | a rollback that could not run is reported as if it had | CAUGHT |
+| recall prints the control characters it was handed | CAUGHT |
+| a lone surrogate survives the one transform that removes it | CAUGHT |
+| the zero-width characters are not in the unsafe class | CAUGHT |
+| the committed artifacts are written without the render transform | CAUGHT |
+| the inserts are outside the per-generation guard again | CAUGHT |
+| a generation that failed halfway leaves its rows behind | CAUGHT |
+| a failed generation still reaches the digest | CAUGHT |
 
-Two existing rows — "an index from a superseded schema is left on disk forever"
-and "a skipped generation loses its stale artifacts" — had their anchors
-re-pointed at the rewritten lines and were re-run: both still CAUGHT.
+Five existing rows had their anchors re-pointed at rewritten lines and were
+re-run — "an index from a superseded schema is left on disk forever", "a
+skipped generation loses its stale artifacts", "blocks are not counted", "a
+turn with no blocks leaves no trace in the digest" and "how a store was
+segmented leaves no trace in the digest". All five still CAUGHT.

@@ -588,50 +588,73 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
     digest = hashlib.sha256()
     skipped: list[str] = []
     turns = blocks = generations = 0
+    # One transaction around the whole fill, explicitly, so the per-generation
+    # `SAVEPOINT`s below are always *nested* ones. Releasing an outermost
+    # savepoint commits, which would publish each generation as it went and
+    # leave `build`'s `db.commit()` describing nothing. [E7]
+    db.execute("BEGIN")
     for stored in store.sessions(home):
-        # Parse *and* build every row before writing any of them. The guard used
+        # The guard covers parsing, row construction **and the writes**. It used
         # to wrap only the parse, so a malformed tool call or a lone surrogate —
         # both of which the store preserves on purpose — escaped from the row
         # loop and cost the index every other generation as well, which is the
-        # exact failure this guard says it prevents. All-or-nothing per
-        # generation also keeps a half-written generation out of the digest. [E3]
+        # exact failure this guard says it prevents. The writes were still
+        # outside it: `prose`, `tool_result` and `paths` are unbounded, SQLite
+        # refuses a value over SQLITE_LIMIT_LENGTH, and one transcript block
+        # over that limit — an agent that `cat`'d a big file, which is the
+        # reason this project keeps raw bytes at all — took the whole build
+        # down at bind time with a `DataError`, for every session in the store,
+        # on every run until someone deleted the generation by hand.
+        #
+        # The savepoint is what makes the wider guard honest: a generation that
+        # fails halfway through its inserts leaves nothing behind, and its
+        # contribution to the digest is held in `chunk` until it is known to
+        # have landed. All-or-nothing per generation, in the database and in
+        # the hash. [E3, widened E7]
+        db.execute("SAVEPOINT generation")
+        chunk: list[bytes] = []
         try:
             session = parse_generation(stored)
             rows = [_row(stored, turn, block) for turn in session.turns for block in turn.blocks]
+            for turn in session.turns:
+                # The turn rows are in the digest too, and they have to be: every
+                # number the dashboard shows is read off `turns` and `generations`,
+                # and the digest existed to answer "are these two builds over the
+                # same content". A turn that produced no blocks — an assistant turn
+                # with empty content and a usage block is the ordinary case — fed
+                # *nothing* into the digest, so two stores whose spend differed by
+                # any amount hashed identically. Same for the generation row, where
+                # a differently segmented capture of byte-identical content compared
+                # equal while `dash_contiguity` showed a different shape. This is the
+                # same argument the skips below were added under. [E6 review]
+                chunk.append(_insert(db, "turns", _turn_row(stored, turn)))
+            for row in rows:
+                chunk.append(canonical_json(row))
+                db.execute(
+                    f"INSERT INTO blocks ({','.join(row)}) "
+                    f"VALUES ({','.join(':' + k for k in row)})",
+                    row,
+                )
+            chunk.append(
+                _generation_row(db, stored, turns=len(session.turns), blocks=len(rows), reason=None)
+            )
         except Exception as exc:  # noqa: BLE001 - a segment run is untrusted data
-            # One unparseable generation must not cost the index every other
-            # one; it is reported, not swallowed. Same rule as `verify`. [E2]
+            # One bad generation must not cost the index every other one; it is
+            # reported, not swallowed. Same rule as `verify`. [E2]
+            db.execute("ROLLBACK TO generation")
+            db.execute("RELEASE generation")
             skipped.append(f"{stored.key}: {exc!r}")
-            # A generation that would not parse is still a generation the store
-            # holds, and a dashboard that silently omits it reports a whole
-            # store. It goes in with `parsed = 0` and the reason. [E6]
+            # A generation the index could not take is still a generation the
+            # store holds, and a dashboard that silently omits it reports a
+            # whole store. It goes in with `parsed = 0` and the reason. [E6]
             digest.update(_generation_row(db, stored, turns=0, blocks=0, reason=repr(exc)))
             continue
+        db.execute("RELEASE generation")
         generations += 1
         turns += len(session.turns)
-        for turn in session.turns:
-            row = _turn_row(stored, turn)
-            # The turn rows are in the digest too, and they have to be: every
-            # number the dashboard shows is read off `turns` and `generations`,
-            # and the digest existed to answer "are these two builds over the
-            # same content". A turn that produced no blocks — an assistant turn
-            # with empty content and a usage block is the ordinary case — fed
-            # *nothing* into the digest, so two stores whose spend differed by
-            # any amount hashed identically. Same for the generation row, where
-            # a differently segmented capture of byte-identical content compared
-            # equal while `dash_contiguity` showed a different shape. This is the
-            # same argument the skips below were added under. [E6 review]
-            digest.update(_insert(db, "turns", row))
-        for row in rows:
-            digest.update(canonical_json(row))
-            db.execute(
-                f"INSERT INTO blocks ({','.join(row)}) VALUES ({','.join(':' + k for k in row)})",
-                row,
-            )
-            blocks += 1
-        digest.update(
-            _generation_row(db, stored, turns=len(session.turns), blocks=len(rows), reason=None)
-        )
+        blocks += len(rows)
+        for part in chunk:
+            digest.update(part)
     # The skips are part of what this index *is*. Left out, two builds over
     # different stores — one whole, one with a generation that would not parse —
     # compared equal, which is the one question this digest exists to answer.

@@ -197,10 +197,37 @@ MUTANTS = [
         "test_a_generation_that_could_not_be_parsed_changes_the_digest",
     ),
     (
+        "the inserts are outside the per-generation guard again",
+        "index.py",
+        '        db.execute("SAVEPOINT generation")',
+        '        db.execute("SAVEPOINT generation") if False else None',
+        "test_a_block_sqlite_refuses_costs_its_own_generation_and_no_other",
+    ),
+    (
+        # Without the rollback the savepoint is bookkeeping: the failed
+        # generation's turn rows stay in the database and the index reports a
+        # generation it does not hold.
+        "a generation that failed halfway leaves its rows behind",
+        "index.py",
+        '            db.execute("ROLLBACK TO generation")',
+        "            pass",
+        "test_a_block_sqlite_refuses_costs_its_own_generation_and_no_other",
+    ),
+    (
+        # The digest is held in `chunk` for the same reason the rows are held in
+        # the savepoint. Folding it in as it goes puts a failed generation's
+        # turns into the hash of a build that does not contain them.
+        "a failed generation still reaches the digest",
+        "index.py",
+        "        for part in chunk:\n            digest.update(part)",
+        "        for part in chunk:\n            pass",
+        "test_the_same_bytes_captured_in_two_passes_are_not_the_same_index",
+    ),
+    (
         "blocks are not counted",
         "index.py",
-        "            blocks += 1",
-        "            blocks += 0",
+        "        blocks += len(rows)",
+        "        blocks += 0",
         "test_every_block_of_every_turn_is_counted",
     ),
     (
@@ -1958,8 +1985,8 @@ MUTANTS = [
         # nothing while carrying a usage block worth any number of tokens.
         "a turn with no blocks leaves no trace in the digest",
         "index.py",
-        '            digest.update(_insert(db, "turns", row))',
-        '            _insert(db, "turns", row)',
+        '                chunk.append(_insert(db, "turns", _turn_row(stored, turn)))',
+        '                _insert(db, "turns", _turn_row(stored, turn))',
         "test_a_turn_that_produced_no_blocks_still_reaches_the_digest",
     ),
     (
@@ -1968,11 +1995,11 @@ MUTANTS = [
         # of two turns while `dash_contiguity` shows a different shape.
         "how a store was segmented leaves no trace in the digest",
         "index.py",
-        "        digest.update(\n"
-        "            _generation_row(db, stored, turns=len(session.turns), "
+        "            chunk.append(\n"
+        "                _generation_row(db, stored, turns=len(session.turns), "
         "blocks=len(rows), reason=None)\n"
-        "        )",
-        "        _generation_row(db, stored, turns=len(session.turns), "
+        "            )",
+        "            _generation_row(db, stored, turns=len(session.turns), "
         "blocks=len(rows), reason=None)",
         "test_the_same_bytes_captured_in_two_passes_are_not_the_same_index",
     ),

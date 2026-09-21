@@ -931,6 +931,50 @@ def test_an_interrupted_build_also_leaves_nothing_behind(home, src, monkeypatch)
     assert index.search(index.open_db(index.db_path(home)), "marmoset")
 
 
+def test_a_block_sqlite_refuses_costs_its_own_generation_and_no_other(home, tmp_path, monkeypatch):
+    """The per-generation guard did not cover the writes, which is where the
+    error is.
+
+    `prose`, `tool_result` and `paths` are unbounded, and SQLite refuses a value
+    over `SQLITE_LIMIT_LENGTH` — 10⁹ bytes by default — at bind time, outside
+    the `try`. One transcript block over that took the whole build down, for
+    every session in the store, on every run until someone found and deleted
+    the generation by hand. The limit is lowered here so the test costs 200 KB
+    instead of a gigabyte; what is being tested is the guard, not the number.
+    [E7]
+    """
+    for n, body in enumerate(["the peculiar marmoset", "X" * 200_000, "the second marmoset"]):
+        src = tmp_path / f"s{n}.jsonl"
+        write(str(src), [user(f"u{n}", body)])
+        store.capture(str(src), "claude-code", f"sess{n}", home=home)
+
+    real = index.open_db
+    monkeypatch.setattr(
+        index,
+        "open_db",
+        lambda path, *, write=False: _capped(real(path, write=write), 100_000),
+    )
+    stats = index.build(home)
+
+    assert stats.generations == 2, stats.skipped
+    assert any("too big" in s for s in stats.skipped), stats.skipped
+    db = index.open_db(index.db_path(home))
+    assert index.search(db, "peculiar"), "the generation before the oversized one"
+    assert index.search(db, "second"), "the generation after it"
+    # Rolled back, not half-written: the oversized generation left no turn row
+    # behind either, and it is in the index as a skip with a reason.
+    rows = db.execute("SELECT turns, parsed, skip_reason FROM generations ORDER BY 1").fetchall()
+    assert [r["turns"] for r in rows] == [0, 1, 1], [tuple(r) for r in rows]
+    assert sum(r["parsed"] for r in rows) == 2, [tuple(r) for r in rows]
+    assert any("too big" in (r["skip_reason"] or "") for r in rows), [tuple(r) for r in rows]
+    assert db.execute("SELECT count(*) FROM turns").fetchone()[0] == 2
+
+
+def _capped(db, limit: int):
+    db.setlimit(0, limit)  # SQLITE_LIMIT_LENGTH
+    return db
+
+
 def test_an_empty_store_builds_an_index_that_answers_nothing(home):
     assert index.build(home).blocks == 0
     assert index.search(index.open_db(index.db_path(home)), "marmoset") == []
