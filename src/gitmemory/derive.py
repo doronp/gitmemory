@@ -124,6 +124,7 @@ class Stats:
     generations: int = 0
     ideas: int = 0
     marks: int = 0
+    decisions: int = 0
     # Reason per generation, never a bare count: a derivation that silently
     # skipped half the store and reported a clean run is the failure mode.
     skipped: list[str] = field(default_factory=list)
@@ -419,7 +420,12 @@ _BACKREF = re.compile(
     r"|(?:let me|i'?ll|i will) (?:repeat|restate|reiterate|remind|echo"
     r"|say (?:it|this|that) again)\b"
     r"|(?:once |yet )?again[,:]|once more[,:]|one more time[,:]"
-    r"|same (?:as (?:before|above|last time)|rule|point|thing|request|deal)\b"
+    # `same <noun>` only where the noun is elliptical for "as before" — a rule,
+    # a point, a thing, a deal are all *the same one we had*. `request` was in
+    # this list and is not that idiom: "for each client, same request, and never
+    # reuse the connection" describes what is sent, and the guard swallowed the
+    # rule beside it. [round 4, Gemini F1]
+    r"|same (?:as (?:before|above|last time)|rule|point|thing|deal)\b"
     r"|for the record\b|as a reminder\b|if you recall\b"
     r"|like (?:i|we|you) (?:said|mentioned|noted|asked|agreed|put it)\b"
     r"|you'?(?:ll|ve) (?:recall|remember|heard)\b"
@@ -518,8 +524,6 @@ _RETROSPECTIVE = re.compile(
     r"|back when|when (?:we|i) (?:first|originally|initially|started|began)"
     r"|yesterday|the other (?:day|week|night|morning|afternoon)"
     r"|started (?:out|off)|in the early days"
-    rf"|in (?:older|earlier|prior|previous|the original|the first|the early)"
-    rf" {_ARTEFACT}"
     r"|(?:up )?until (?:now|recently|last|then)|up to now|till recently"
     r"|since then|ever since|by then|at that time"
     # "before then", "prior to that", "beforehand" are deliberately absent: they
@@ -529,6 +533,26 @@ _RETROSPECTIVE = re.compile(
     # instruction. The frame is the tell, not the tense.
     r"|for (?:context|background|history)|as (?:context|background)"
     r"|fyi|fwiw|just so you know|for what it'?s worth)\b",
+    re.I,
+)
+
+# The early-stage frame, out of `_RETROSPECTIVE` because it is the one time
+# adverbial there that also scopes work not yet done. "In earlier versions we
+# had no CI" dates a report; "in the first implementation of the module, never
+# use unsafe code" scopes a rule over an implementation nobody has written.
+# Same words, opposite direction, so the frame cannot decide on its own and is
+# paired with `_PAST_FINITE` in `_decision_kind`. Dropping `the first` from the
+# list instead was tried and refused: it makes "in the first version we had no
+# CI at all" a directive, which trades one false positive for another.
+#
+# ponytail: the frame, not the class. `initially`, `at first` and `early on`
+# have the same two readings — "initially, never use a cache" is a rule — and
+# stay unconditional above, because the tense test costs a suppression on every
+# verbless fragment ("back then, no CI") and they are commoner in that shape.
+# [round 4, Gemini F4]
+_RETRO_STAGE = re.compile(
+    r"\bin (?:older|earlier|prior|previous|the original|the first|the early)"
+    rf" {_ARTEFACT}\b",
     re.I,
 )
 
@@ -556,6 +580,45 @@ _REPAIR = re.compile(
     re.I,
 )
 
+# A block that is nothing but a question. A question quotes the rule it is
+# asking about: "should we avoid raw SQL in the handlers?" proposes one and
+# "why do we never run tests?" complains about one, and neither imposes
+# anything on the work.
+#
+# Interrogative *shape*, not the mark alone — a wh-word or an inverted
+# auxiliary at the front and the mark at the back, with nothing sentence-final
+# in between. A directive with a tag question after it ("use Parquet instead of
+# CSV, ok?") has the mark and none of the shape, and a question followed by an
+# answer ("why do we never run tests? from now on, never merge without them")
+# does not end on one. `do not` is excluded from the openers because it is the
+# one that starts an imperative rather than a question. [round 4, Gemini F5]
+_QUESTION = re.compile(
+    r"\A\s*(?:who|what|when|where|why|how|which|whose|whom"
+    r"|do(?! not\b)|does|did|is|are|was|were|am|will|would|shall|should"
+    r"|can|could|may|might|must|have|has|had|any(?:one|body)?)\b"
+    r"[^.!?]*\?\s*\Z",
+    re.I | re.S,
+)
+
+# The protasis of a conditional: the circumstance a rule applies in, which is
+# not the rule. Stripped rather than suppressed, because both halves are real —
+# "if the build fails, never retry more than twice" is a directive, and "if we
+# never release the lock, the database hangs" is a consequence — and blanket
+# `if`-suppression loses the first to fix the second. What remains after the
+# cut is the apodosis, wherever it sits: before the clause, after it, or
+# wrapped around it.
+#
+# The span runs from the subordinator to the next comma or clause end, so the
+# cut needs a comma when the protasis is fronted. Without one — "unless you
+# have a reason never use raw SQL" — it eats the rule as well, which is the
+# ceiling; the upgrade is a clause parser, and chat punctuates.
+# [round 4, Gemini F5]
+_PROTASIS = re.compile(
+    r"\b(?:if|unless|in case|provided that|assuming|as long as|so long as"
+    r"|whenever|when)\b[^,.;:!?]*(?:,|(?=[.;:!?]|\Z))",
+    re.I,
+)
+
 # Negated auxiliaries, as a class rather than as the five that turned up first.
 # Written as auxiliary + slot + negator rather than as whole contracted forms,
 # because that is the third place the modifier goes ("I'm *really* not sure") and
@@ -577,6 +640,16 @@ _MIND = (
 # First-person epistemic negation — "I don't think that works" — which wears a
 # prohibition's words and imposes nothing. Guarded on the subject, because the
 # same verb with any other subject ("you don't touch that") is deontic.
+#
+# ponytail: block-scoped, like every other guard here, and that is the known
+# cost. "We still don't want to use pickle, so never import it." is a want
+# clause *and* an imperative, and the want clause suppresses both. Narrowing the
+# class is not the repair — it flips "I don't think we need a rule that we never
+# commit generated files" into a directive, which is the sentence this exists
+# for — so the fix is to scope the guard to its own clause. `_PROTASIS` is the
+# first cut at clause boundaries in this module and the natural place to start.
+# [round 4, Gemini F2, deferred — the report blames `still`, which does nothing:
+# the sentence scores the same without it]
 _OPINION = re.compile(
     # The negated-attitude frame, with the adverb slot open on both sides of the
     # auxiliary: "I *honestly* don't think", "I do not *really* think".
@@ -598,14 +671,61 @@ _OPINION = re.compile(
     re.I,
 )
 
+# The irregular past-tense forms a report about what happened reaches for.
+# Shared by the two tense cues below, which want different halves of the past.
+_PAST_IRREGULAR = (
+    r"was|were|been|had|did|got|saw|ran|went|took|made|came|found|knew"
+    r"|thought|said|broke|hit|felt|kept|left|lost|meant|sent|spent|told|wrote"
+    r"|built|caught|brought|gave|held|paid|understood|won"
+)
+
+# The tense cue `never` is read against. Regulars carry most of it; the handful
+# of present-tense verbs English spells with a final `-ed` are excluded by name,
+# because "never exceed 100 rows" and "never embed credentials" are rules and a
+# bare `\w+ed` deletes both.
+#
+# ponytail: a list, not a lemmatiser. The ceiling is an irregular nobody wrote
+# down — "we never begun" is not English, but "it never bore fruit" would slip
+# through — and the upgrade is a tagger, which is a model and is out of scope on
+# this path by design. Adding a word to the list is the intended repair.
+_PAST = (
+    r"(?:(?!(?:need|proceed|exceed|embed|feed|seed|speed|succeed|breed|heed"
+    r"|bleed|cede|indeed)\b)\w+ed"
+    rf"|{_PAST_IRREGULAR})"
+)
+
+# A finite past-tense verb: the tense cue for a whole clause rather than for the
+# word after `never`. `_PAST`'s `\w+ed` branch is deliberately not reused —
+# across a whole block it matches participial adjectives, and "never use
+# deprecated APIs" is a rule with no past clause in it that `deprecated` would
+# report as one. `used` is the one regular worth the risk, because "we used X"
+# is how half of these clauses are written.
+_PAST_FINITE = re.compile(rf"\b(?:{_PAST_IRREGULAR}|used)\b", re.I)
+
 # The rejected side of a constraint: a deontic prohibition. Sufficient on its
 # own for a directive — "never touch the vendored tree" governs later work with
 # no second clause — which is why the class is kept to unambiguously deontic
 # forms. Bare "cannot" is out on purpose: inability and prohibition share the
 # word and inability is the commoner one in a transcript.
 _PROHIBIT = re.compile(
-    r"\b(?:never|not to|do(?:es)? not|don'?t|doesn'?t|must ?n[o']t|may not"
-    r"|shall not|should ?n[o']t|no longer|avoid(?:s|ed|ing)?"
+    # `never` with the tense of the clause it opens looked at, because a report
+    # of what did not happen wears the same word as a rule about what may not:
+    # "we never had that problem" is four words and was read as a standing
+    # prohibition. [round 4]
+    rf"\b(?:never(?!\s+{_PAST}\b)"
+    # The exception, and the reason the cue is the *clause's* tense rather than
+    # the next word's: a present-tense copula in front makes what follows a
+    # passive rule, not a report — "raw SQL is never allowed here". `was`/`were`
+    # are deliberately not here, because "raw SQL was never allowed" is the
+    # report. `be`/`been`/`being` are not either: they never precede `never`
+    # ("has never been merged" puts `been` after it, where it reads as the past
+    # tense it is), so listing them would be a lookbehind that cannot fire.
+    r"|(?:(?<=\bis )|(?<=\bare ))never"
+    # `avoided` is gone with it: "we avoided threads" is the same report in a
+    # different verb. The cost is the passive "raw SQL is avoided here", which
+    # is a weak rule and rare beside the report. [round 4]
+    r"|not to|do(?:es)? not|don'?t|doesn'?t|must ?n[o']t|may not"
+    r"|shall not|should ?n[o']t|no longer|avoid(?:s|ing)?"
     r"|refrain(?:s|ing)? from|steer clear of|stay away from|keep out of"
     r"|ban(?:s|ned|ning)?|forbid(?:s|den|ding)?|prohibit(?:s|ed|ing)?"
     r"|disallow(?:s|ed|ing)?|rule out|off limits|under no circumstances)\b"
@@ -657,6 +777,18 @@ _CONTRAST = re.compile(
     # preposition elided.
     r"|,\s*(?:and )?not\b"
     # A preference stated as a comparison: "composition over inheritance".
+    #
+    # ponytail: the gap of up to 40 characters is what keeps "prefer X strongly
+    # over Y" in, and it is also the hole. A preference verb can take an `over`
+    # that is nobody's loser once something else intervenes: "we chose to go
+    # over the design" and "we recommend running the tests over the network"
+    # both score `directive` here, and both are reports. The two proposed
+    # repairs were blocklists — of verbs, then of nouns after `over` — and a
+    # list that admits the two sentences someone wrote down is the failure mode
+    # this class is built against. The upgrade is a complement test on `over`,
+    # which needs a parse. Declined twice now, with the sentences kept here so
+    # the next reader argues with them rather than with the abstraction.
+    # [round 4, Gemini F3 — see docs/reviews/E5-gemini-pair-review-derive.md]
     rf"|\b{_PREFER}\b[^.;:!?]{{1,40}}\bover\b",
     re.I,
 )
@@ -766,19 +898,31 @@ def _decision_kind(text: str, role: str) -> str | None:
     loosening these two, because loosening them makes every polite suggestion a
     directive.
     """
-    # Five ways of writing a sentence that is *about* a decision without being
+    # Seven ways of writing a sentence that is *about* a decision without being
     # one, all of which borrow the vocabulary of the thing they describe. They
     # are checked for both roles: a user mistypes a flag and corrects it in the
     # substitution frame exactly as the assistant does, and the correction is a
     # repair either way.
+    #
+    # `_RETRO_STAGE` is the one that needs a second cue: the frame it matches
+    # dates a report and scopes a rule with the same words, and the tense of the
+    # block is what tells them apart. See the comment on it.
     if (
         _BACKREF.search(text)
         or _DELIBERATION.search(text)
         or _RETROSPECTIVE.search(text)
+        or (_RETRO_STAGE.search(text) and _PAST_FINITE.search(text))
         or _OPINION.search(text)
         or _REPAIR.search(text)
+        or _QUESTION.search(text)
     ):
         return None
+
+    # The circumstance out, the rule left behind. After the guards, because a
+    # guard scopes the whole sentence it opens — "as we agreed, if the build
+    # fails, never retry" is still a restatement — and before the rules, because
+    # the cues inside a protasis are not what the block decides.
+    text = _PROTASIS.sub(" ", text)
 
     if role == "user":
         # A substitution frame carries both sides in one phrase; a prohibition
@@ -884,6 +1028,12 @@ def build(home: str | None = None, *, count: int = DEFAULT_IDEAS) -> Stats:
     resolved = store.resolve_home(home)
     # Before the loop, not inside it: see `_sumy`. [E5:4]
     _sumy()
+    # Local, because `graph` imports `decisions` from this module and a
+    # module-scope import here is a cycle. Only the emitter is used, never
+    # `graph.build`, so `derived/` stays buildable without the graphify extra:
+    # the artifact is the extraction dict graphify consumes, not a drawing.
+    from gitmemory import graph
+
     _sweep_temps(resolved)
     stats = Stats()
     for stored in store.sessions(resolved):
@@ -892,12 +1042,13 @@ def build(home: str | None = None, *, count: int = DEFAULT_IDEAS) -> Stats:
             session = parse_generation(stored)
             payload_ideas = ideas(session, count=count)
             payload_timeline = timeline(session)
-            # Inside the try, both of them. Outside, a failure on the second
-            # write aborted the whole build with no skip entry and left the
-            # generation torn: a fresh ideas.json beside a stale timeline.json.
-            # [E5:7]
+            payload_graph = graph.extraction([session])
+            # Inside the try, all three. Outside, a failure on a later write
+            # aborted the whole build with no skip entry and left the generation
+            # torn: a fresh ideas.json beside a stale timeline.json. [E5:7]
             _write(os.path.join(out, "ideas.json"), payload_ideas)
             _write(os.path.join(out, "timeline.json"), payload_timeline)
+            _write(os.path.join(out, "graph.json"), payload_graph)
         except Exception as exc:  # noqa: BLE001 - a segment run is untrusted data
             # Leave nothing behind that still asserts facts about a generation
             # this run could not read or could not finish writing. A stale
@@ -910,4 +1061,5 @@ def build(home: str | None = None, *, count: int = DEFAULT_IDEAS) -> Stats:
         stats.generations += 1
         stats.ideas += len(payload_ideas["ideas"])
         stats.marks += len(payload_timeline["marks"])
+        stats.decisions += len(payload_graph["nodes"])
     return stats

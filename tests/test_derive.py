@@ -561,7 +561,7 @@ def test_artifacts_are_canonical_json_on_disk(home, src):
     from gitmemory.records import canonical_json
 
     stored(home, src, compacted())
-    for name in ("ideas.json", "timeline.json"):
+    for name in ("ideas.json", "timeline.json", "graph.json"):
         hit = list(Path(home, "derived").rglob(name))
         raw = hit[0].read_bytes()
         assert raw == canonical_json(json.loads(raw)), f"{name} is not canonical bytes"
@@ -791,12 +791,18 @@ def test_the_word_cap_binds_part_way_through_a_document(home, src, monkeypatch):
 # --- finding 7 and 2: a failure costs its own generation and nothing else --- #
 
 
+@pytest.mark.parametrize("artifact", ["ideas.json", "timeline.json", "graph.json"])
 def test_a_write_failure_costs_one_generation_and_leaves_nothing_torn(
-    home, src, tmp_path, monkeypatch
+    home, src, tmp_path, monkeypatch, artifact
 ):
     """Both `_write` calls sat outside the `try`: a failure on the second aborted
     the whole build with no skip entry, and left a fresh ideas.json beside a
     stale timeline.json. [E5:7]
+
+    Parametrised over all three artifacts once the graph joined them. Pinning
+    one name pins the position it happened to hold, and the interesting position
+    is the last one: a failure there leaves two good files, which is the torn
+    generation that looks most like a whole one.
     """
     other = tmp_path / "src" / "other.jsonl"
     write(src, conversation())
@@ -807,7 +813,7 @@ def test_a_write_failure_costs_one_generation_and_leaves_nothing_torn(
     real = derive._write
 
     def fail_on_the_second_write(path, payload):
-        if "sess-a" in path and path.endswith("timeline.json"):
+        if "sess-a" in path and path.endswith(artifact):
             raise OSError(28, "No space left on device")
         return real(path, payload)
 
@@ -1353,6 +1359,151 @@ def test_reporting_never_having_seen_it_is_not_forbidding_it(home, src):
     assert labelled(session) == [("directive", control)]
 
 
+# --------------------------------------------------------------------------- #
+# round 4 — the pair review
+#
+# Five defects, four of them reported by the reviewer and one found while
+# reproducing its examples. The fifth is the largest: "We never had that
+# problem." is four words, has none of the reviewer's `earlier` in it, and was
+# read as a standing prohibition. The gate scored 1.0000 before and after every
+# one of these; `bench/probes.py` is what moved. `docs/reviews/` has the record,
+# including what was declined.
+# --------------------------------------------------------------------------- #
+
+
+def test_a_report_of_what_never_happened_is_not_a_rule(home, src):
+    """ "We never had that problem" wears the same word as "we never commit
+    secrets" and means the opposite kind of thing: one says what did not happen,
+    the other says what may not. The cue is the tense of the clause `never`
+    opens, which is also why `avoided` had to go — "we avoided threads" is the
+    same report in a different verb.
+
+    The two controls are the exceptions that make the cue a tense test rather
+    than a word list. A present-tense copula in front turns the participle into
+    a passive rule, and English spells a handful of present-tense verbs with a
+    final `-ed`, so a bare `\\w+ed` would delete "never exceed 100 rows" too.
+    """
+    passive = "Raw SQL is never allowed in the handlers."
+    regular = "Never exceed 100 rows per page."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "We never had that problem."),
+            user("u2", "That code path never ran in production."),
+            user("u3", "The cache never worked on Windows."),
+            user("u4", "We avoided threads entirely."),
+            user("u5", "Raw SQL was never allowed in the handlers."),
+            user("u6", passive),
+            user("u7", regular),
+        ],
+    )
+    assert labelled(session) == [("directive", passive), ("directive", regular)]
+
+
+def test_an_early_stage_dates_a_report_and_scopes_a_rule(home, src):
+    """ "In the first implementation" points both ways. Behind a report it dates
+    it; in front of an imperative it scopes a rule over an implementation nobody
+    has written yet. The frame cannot tell them apart, so the finite past verb
+    in the clause does.
+
+    Deleting "the first" from the frame instead was tried and refused: it makes
+    the first line below a directive, which trades one false positive for
+    another.
+    """
+    control = "In the first implementation of the module, never use unsafe code."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "In the first version we had no CI at all."),
+            user("u2", "In the first implementation there was no retry logic."),
+            user("u3", "In earlier versions we used cron instead of a systemd timer."),
+            user("u4", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_a_question_about_a_rule_is_not_the_rule(home, src):
+    """A question quotes the rule it asks about. "Should we avoid raw SQL?"
+    proposes one and "why do we never run tests?" complains about one, and
+    neither imposes anything — but both carry the prohibition whole, so the
+    extractor read the question mark as emphasis.
+
+    Interrogative shape, not the mark: the two controls end in one and are
+    directives anyway. A tag question does not invert an auxiliary to the front,
+    and "do not" opens the only imperative that looks like it does.
+    """
+    tag = "Use Parquet instead of CSV, ok?"
+    imperative = "Do not use pip here — clear?"
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "Should we avoid raw SQL in the handlers?"),
+            user("u2", "Why do we never run tests?"),
+            user("u3", "Is there any reason we still use pip?"),
+            user("u4", "What about the rule that we never commit generated files?"),
+            user("u5", tag),
+            user("u6", imperative),
+        ],
+    )
+    assert labelled(session) == [("directive", tag), ("directive", imperative)]
+
+
+def test_a_condition_is_not_the_rule_it_carries(home, src):
+    """Both halves of a conditional are real, which is why the protasis is cut
+    out rather than used to suppress the block. "If we never release the lock,
+    the database hangs" states a consequence and was read as a rule; "if the
+    build fails, never retry more than twice" *is* a rule, and suppressing every
+    `if` to fix the first loses it.
+
+    The three controls put the rule on each side of the cut — after the clause,
+    before it, and wrapped around it — because a fix that only handled the
+    fronted case would pass on the first of them alone.
+    """
+    after = "If the build fails, never retry more than twice."
+    before = "Never retry more than twice if the build fails."
+    around = "Configure it so that if the queue is full, never block the caller."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "If we never release the lock, the database hangs."),
+            user("u2", "The database hangs if we never release the lock."),
+            user("u3", after),
+            user("u4", before),
+            user("u5", around),
+        ],
+    )
+    assert labelled(session) == [
+        ("directive", after),
+        ("directive", before),
+        ("directive", around),
+    ]
+
+
+def test_the_same_request_is_not_the_same_rule(home, src):
+    """ "Same rule", "same point", "same deal" are all elliptical for *the same
+    one as before*, which is what makes them back-references. "Same request" is
+    not that idiom — it describes what is sent — and it took the rule beside it
+    down with it.
+    """
+    control = "For each client, same request, and never reuse the connection."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "Same rule as the other service: never reuse the connection."),
+            user("u2", "Same thing as before: no network calls in unit tests."),
+            user("u3", "Same deal here, never commit generated files."),
+            user("u4", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
 def test_having_no_opinion_is_not_forbidding_one(home, src):
     """ "I have no strong view" is the speaker declining to constrain anything,
     and it is written with the same determiner as "no raw SQL". The noun after
@@ -1525,3 +1676,70 @@ def test_a_decision_is_frozen_and_hashable(home, src):
     assert len({d, derive.Decision("directive", "deadbeef")}) == 1, "not usable as a scorer key"
     with pytest.raises(AttributeError):
         d.source_ref = "cafe"  # type: ignore[misc]
+
+
+# --------------------------------------------------------------------------- #
+# the graph as a published artifact
+#
+# `graph.extraction` had tests from the day it was written and nothing called
+# it: the emitter was complete, scored, and reachable only from a test file, so
+# `gitmemory derive` produced two artifacts out of three and the README said so.
+# --------------------------------------------------------------------------- #
+
+
+DECIDED = [
+    user("u1", "Keep every timestamp in UTC; no local time anywhere in the tree."),
+    assistant("a1", [text("I'll replace the polling loop with an inotify watch.")]),
+]
+
+
+def test_the_decision_graph_is_published_beside_the_ideas(home, src):
+    """The artifact is the extraction dict, not a drawing: graphify assembles it
+    on demand, and writing a picture instead would put a rendering decision into
+    a tree whose whole promise is that it rebuilds byte-identically.
+    """
+    from gitmemory import graph
+
+    gen = stored(home, src, DECIDED)
+    payload = loaded(home, "graph.json")
+    assert payload == graph.extraction([index.parse_generation(gen)]), (
+        "the published artifact is not what the emitter emits"
+    )
+    assert {n["kind"] for n in payload["nodes"]} == {"directive", "reversal"}
+    assert len(payload["edges"]) == 1, "two decisions in one transcript are one succession"
+
+
+def test_the_decision_count_stats_reports_is_the_count_on_disk(home, src):
+    """The sibling of the ideas/marks check above, and the reason `build` counts
+    nodes rather than calling `decisions` a second time: a stat computed from
+    anything but the payload that was written can disagree with the file.
+    """
+    write(src, DECIDED)
+    store.capture(src, "claude-code", "sess", home=home)
+    stats = derive.build(home)
+    assert stats.decisions == len(loaded(home, "graph.json")["nodes"]) == 2
+
+
+def test_a_key_in_a_decision_block_costs_its_label_and_not_the_generation(home, src):
+    """The write door refuses a secret, and a node label is the first artifact
+    that carries block text through it verbatim. Refusing is right and skipping
+    the generation is not: one leaked key in one decision would take that
+    generation's ideas and timeline down with it, having derived nothing.
+
+    So the label goes and the node stays. `source_ref` still names the block,
+    and `raw/` still holds the bytes — the push gate is what keeps those home.
+    """
+    from gitmemory import graph
+
+    key = "AKIAZZZZQQQQWWWW1234"  # synthetic, right shape
+    rule = f"Never hardcode {key} in the tree; read it from the environment."
+    stored(home, src, [user("u1", rule)])
+
+    payload = loaded(home, "graph.json")
+    assert [n["label"] for n in payload["nodes"]] == [graph.REDACTED], payload
+    assert loaded(home, "ideas.json") and loaded(home, "timeline.json"), (
+        "the whole generation was skipped over one label"
+    )
+    blob = b"".join(p.read_bytes() for p in Path(home, "derived").rglob("*.json"))
+    assert blob, "derived nothing, so the scan below is vacuous"
+    assert key.encode() not in blob, "the key reached the committed artifact tree"

@@ -28,10 +28,10 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Iterable
 
-from gitmemory.derive import Decision, decisions
+from gitmemory.derive import Decision, _leaks, decisions
 from gitmemory.records import Session
 
-__all__ = ["LABEL_CHARS", "NO_TEXT", "build", "extraction"]
+__all__ = ["LABEL_CHARS", "NO_TEXT", "REDACTED", "build", "extraction"]
 
 # Long enough to read on a node, short enough that the diagram is not a wall of
 # text. The full block is one lookup away by `source_ref`, which is the point of
@@ -45,6 +45,17 @@ LABEL_CHARS = 120
 # node, which is the thing the missing-ref check above refuses. [review: Gemini 2]
 NO_TEXT = "(no visible text)"
 
+# What a node wears when the block it names quotes a secret. The node stays —
+# dropping it would lose a decision and break the chain of edges through it —
+# and `source_ref` still names the bytes, so the block is one lookup away in
+# `raw/`, which is the unredacted copy by design.
+#
+# Without this the write door in `derive._write` would refuse the whole
+# artifact, and a single leaked key in one decision block would cost a
+# generation every derived file it has. `ideas()` already takes the milder
+# route for the same reason: it drops the offending sentence, not the run.
+REDACTED = "(redacted: this block quotes a secret)"
+
 _WS = re.compile(r"\s+")
 
 
@@ -54,7 +65,14 @@ def _label(text: str) -> str:
     Whitespace is collapsed first because a label is a single line by the time
     anything draws it, and a newline inside one is the kind of thing that
     renders as a blank node three layers downstream with no clue why.
+
+    The secret scan runs on the whole block, before the cut, not on the label it
+    returns. A key that straddles `LABEL_CHARS` survives the cut as a fragment
+    no detector matches, so scanning afterwards would pass a truncated key
+    through and call it clean.
     """
+    if _leaks(text.encode("utf-8", "surrogatepass")):
+        return REDACTED
     flat = _WS.sub(" ", text).strip()
     if not flat:
         return NO_TEXT

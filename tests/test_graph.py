@@ -171,6 +171,28 @@ def test_a_block_with_no_visible_text_gets_a_caption_not_a_blank_node():
     assert validate_extraction(out) == []
 
 
+def test_a_key_past_the_cut_still_redacts_the_whole_label():
+    """Scan the block, not the label.
+
+    `derive._write` refuses any artifact carrying a secret, so a key in a
+    decision block would otherwise cost that generation every derived file it
+    has. Redacting the label keeps the node — it still names the bytes — and
+    keeps the other two artifacts.
+
+    The key here sits past `LABEL_CHARS` on purpose. Scanning the returned label
+    instead would see a clean 120-character prefix and publish it, and if the
+    limit landed mid-key it would publish a fragment of the key as well.
+    """
+    key = "AKIAZZZZQQQQWWWW1234"  # synthetic, right shape
+    text = "word " * 40 + key
+    assert len(text) > graph.LABEL_CHARS + len(key), "the key has to be past the cut"
+    s = _session("s1", [("user", text)])
+    out = graph.extraction([s], extract=_decide(_ids(s)[0]))
+    assert out["nodes"][0]["label"] == graph.REDACTED
+    assert validate_extraction(out) == []
+    assert "AKIA" not in str(out), "a fragment of the key is still the key's shape"
+
+
 def test_a_graphify_option_reaches_graphify():
     """`build` takes `extract` for us and passes the rest on. The first version
     funnelled everything into `extraction`, so `directed=True` died on a

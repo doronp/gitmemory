@@ -957,13 +957,17 @@ MUTANTS = [
         "test_one_unparseable_generation_does_not_cost_the_others",
     ),
     (
+        # Re-anchored: the row used to span the loop *and* the summary line
+        # after it, so adding a counter to the summary retired the control. The
+        # `stats =` line stays in the anchor only because `_index` has a
+        # byte-identical loop and something has to say which one this is — the
+        # summary that churns is out of it now. [round 3, finding 3]
         "a skipped generation stops being reported",
         "__main__.py",
-        """    for line in stats.skipped:
-        print(f"skipped {line}", file=sys.stderr)
-    print(f"{stats.generations} generation(s)  {stats.ideas} idea(s)  {stats.marks} mark(s)")""",
-        '    print(f"{stats.generations} generation(s)  '
-        '{stats.ideas} idea(s)  {stats.marks} mark(s)")',
+        """    stats = derive.build(args.home, count=args.ideas)
+    for line in stats.skipped:
+        print(f"skipped {line}", file=sys.stderr)""",
+        "    stats = derive.build(args.home, count=args.ideas)",
         "test_a_skipped_generation_is_reported_on_stderr",
     ),
     (
@@ -1291,12 +1295,13 @@ MUTANTS = [
     ),
     # --- E5:4 an environment fault is not N pieces of bad data ---
     (
+        # Re-anchored: the row spanned the comment, the call and the next
+        # statement, so the local import that grew between them retired the
+        # control. The call is the whole mechanism. [round 3, finding 3]
         "a missing extra fails the build instead of skipping every generation",
         "derive.py",
-        """    # Before the loop, not inside it: see `_sumy`. [E5:4]
-    _sumy()
-    _sweep_temps(resolved)""",
-        """    _sweep_temps(resolved)""",
+        "    _sumy()\n",
+        "",
         "test_a_missing_derive_extra_fails_the_build_instead_of_skipping_everything",
     ),
     # --- E5:5 the cap that binds on the axis that costs ---
@@ -1681,6 +1686,56 @@ MUTANTS = [
         "    return build_from_json(extraction(sessions, extract=extract, **kw))",
         "test_a_graphify_option_reaches_graphify",
     ),
+    (
+        # Scanning the label instead of the block: the prefix is clean whenever
+        # the key sits past `LABEL_CHARS`, so this publishes the node and, if the
+        # cut lands mid-key, a fragment of the key with it.
+        "the secret scan runs on the label rather than on the block",
+        "graph.py",
+        '    if _leaks(text.encode("utf-8", "surrogatepass")):\n        return REDACTED\n'
+        '    flat = _WS.sub(" ", text).strip()',
+        '    flat = _WS.sub(" ", text).strip()\n'
+        '    if _leaks(flat[:LABEL_CHARS].encode("utf-8", "surrogatepass")):\n'
+        "        return REDACTED",
+        "test_a_key_past_the_cut_still_redacts_the_whole_label",
+    ),
+    (
+        # The emitter is the first thing to carry raw block text through the
+        # write door, and the door's answer to a secret is to refuse the whole
+        # artifact. Without the label rule a leaked key in one decision costs
+        # that generation its ideas and its timeline too.
+        "a leaked key in one decision block skips the whole generation",
+        "graph.py",
+        "        return REDACTED",
+        "        pass",
+        "test_a_key_in_a_decision_block_costs_its_label_and_not_the_generation",
+    ),
+    (
+        "the decision graph is emitted but never published",
+        "derive.py",
+        '            _write(os.path.join(out, "graph.json"), payload_graph)',
+        "            pass",
+        "test_the_decision_graph_is_published_beside_the_ideas",
+    ),
+    (
+        # Counting anything but the payload that was written is how a stat comes
+        # to disagree with the file it describes.
+        "the decision count is the number of transcripts, not of nodes",
+        "derive.py",
+        '        stats.decisions += len(payload_graph["nodes"])',
+        "        stats.decisions += 1",
+        "test_the_decision_count_stats_reports_is_the_count_on_disk",
+    ),
+    (
+        # A published graph.json that is not a function of the session: the file
+        # exists, it is canonical, it rebuilds identically, and it is empty. Both
+        # of the other guards on this artifact pass with this mutant in place.
+        "the published graph is not the one this session produced",
+        "derive.py",
+        "            payload_graph = graph.extraction([session])",
+        '            payload_graph = {"nodes": [], "edges": []}',
+        "test_the_decision_graph_is_published_beside_the_ideas",
+    ),
     # --- the dashboard -------------------------------------------------------
     (
         # The 2.79x over-count. A sum over turns instead of over requests is the
@@ -1872,11 +1927,13 @@ MUTANTS = [
         # a distance. "Back when I joined", "yesterday", "in older releases".
         "the past can be named as a period, not only as a distance",
         "derive.py",
+        # Re-anchored: the row used to end on the `in <det> <artefact>` frame,
+        # which round 4 moved out to `_RETRO_STAGE` because it points both ways.
+        # The three lines left are the period half of the finding and the whole
+        # of what this control was ever about. [round 4]
         r'''    r"|back when|when (?:we|i) (?:first|originally|initially|started|began)"
     r"|yesterday|the other (?:day|week|night|morning|afternoon)"
-    r"|started (?:out|off)|in the early days"
-    rf"|in (?:older|earlier|prior|previous|the original|the first|the early)"
-    rf" {_ARTEFACT}"''',
+    r"|started (?:out|off)|in the early days"''',
         r'''    r""''',
         "test_a_block_that_dates_itself_to_the_past_is_a_report",
     ),
@@ -1899,6 +1956,100 @@ MUTANTS = [
         r'''    r"|last (?:year|month|week|quarter|sprint|time|release|cycle|session"
     r"|iteration|night|day)"''',
         "test_a_block_that_dates_itself_to_the_past_is_a_report",
+    ),
+    # --- round 4: the pair review --------------------------------------------
+    (
+        # The largest of the round. Without the tense cue "We never had that
+        # problem." is a standing prohibition, and the dev gate says 1.0000
+        # either way.
+        "past-tense `never` is read as a prohibition",
+        "derive.py",
+        r'''    rf"\b(?:never(?!\s+{_PAST}\b)"''',
+        r'''    r"\b(?:never"''',
+        "test_a_report_of_what_never_happened_is_not_a_rule",
+    ),
+    (
+        # The exception, in the direction that costs recall: with the copula
+        # branch gone the tense cue eats the passive rule as well, because
+        # "allowed" is past-shaped wherever it sits.
+        "a passive rule is read as a report of the past",
+        "derive.py",
+        r'''    r"|(?:(?<=\bis )|(?<=\bare ))never"''',
+        r'''    r""''',
+        "test_a_report_of_what_never_happened_is_not_a_rule",
+    ),
+    (
+        # The other half of the same finding. `avoided` is the report in a
+        # different verb, and putting it back is a one-character edit.
+        "`we avoided threads` is read as a rule against threads",
+        "derive.py",
+        r'''    r"|shall not|should ?n[o']t|no longer|avoid(?:s|ing)?"''',
+        r'''    r"|shall not|should ?n[o']t|no longer|avoid(?:s|ed|ing)?"''',
+        "test_a_report_of_what_never_happened_is_not_a_rule",
+    ),
+    (
+        # The stage frame deciding on its own, in the direction it was wrong in
+        # before the round: every rule scoped to an early stage is suppressed.
+        "an early stage always dates a report",
+        "derive.py",
+        "        or (_RETRO_STAGE.search(text) and _PAST_FINITE.search(text))",
+        "        or _RETRO_STAGE.search(text)",
+        "test_an_early_stage_dates_a_report_and_scopes_a_rule",
+    ),
+    (
+        # And in the opposite direction, which is what deleting "the first" from
+        # the frame would have done: the report becomes a directive. Both
+        # mutants are one line and the test has to fail on each, or the conjunct
+        # is half held.
+        "an early stage never dates a report",
+        "derive.py",
+        "        or (_RETRO_STAGE.search(text) and _PAST_FINITE.search(text))",
+        "        or False",
+        "test_an_early_stage_dates_a_report_and_scopes_a_rule",
+    ),
+    (
+        "a question about a rule is read as the rule",
+        "derive.py",
+        "        or _QUESTION.search(text)",
+        "        or False",
+        "test_a_question_about_a_rule_is_not_the_rule",
+    ),
+    (
+        # Shape or mark. Keying on the mark alone suppresses the tag question —
+        # "use Parquet instead of CSV, ok?" — which is a directive with a
+        # question mark on the end, not a question.
+        "the question mark alone makes a block a question",
+        "derive.py",
+        r"""    r"\A\s*(?:who|what|when|where|why|how|which|whose|whom"
+    r"|do(?! not\b)|does|did|is|are|was|were|am|will|would|shall|should"
+    r"|can|could|may|might|must|have|has|had|any(?:one|body)?)\b"
+    r"[^.!?]*\?\s*\Z",""",
+        r"""    r"\?\s*\Z",""",
+        "test_a_question_about_a_rule_is_not_the_rule",
+    ),
+    (
+        "the protasis of a conditional is read as the rule",
+        "derive.py",
+        '    text = _PROTASIS.sub(" ", text)',
+        "    text = text",
+        "test_a_condition_is_not_the_rule_it_carries",
+    ),
+    (
+        # The cut has to reach a trailing protasis too. Stopping at the comma
+        # handles "if X, never Y" and leaves "the database hangs if we never
+        # release the lock" exactly as it was.
+        "only a fronted condition is cut out",
+        "derive.py",
+        r"""    r"|whenever|when)\b[^,.;:!?]*(?:,|(?=[.;:!?]|\Z))",""",
+        r"""    r"|whenever|when)\b[^,.;:!?]*,",""",
+        "test_a_condition_is_not_the_rule_it_carries",
+    ),
+    (
+        "`same request` is read as a back-reference",
+        "derive.py",
+        r'''    r"|same (?:as (?:before|above|last time)|rule|point|thing|deal)\b"''',
+        r'''    r"|same (?:as (?:before|above|last time)|rule|point|thing|request|deal)\b"''',
+        "test_the_same_request_is_not_the_same_rule",
     ),
     # --- the probes ----------------------------------------------------------
     (

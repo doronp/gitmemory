@@ -52,7 +52,7 @@ asserted.
 
 ## Status
 
-Under construction, epoch by epoch. 925 tests, plus one gated on the
+Under construction, epoch by epoch. 936 tests, plus one gated on the
 LongMemEval download (`-m corpus`).
 
 | | | |
@@ -61,7 +61,7 @@ LongMemEval download (`-m corpus`).
 | E2 | Segment store, contiguity proof, `verify`, redaction gate | passed |
 | E3 | Index + retrieval + CLI | passed — 470 LongMemEval instances, [gate report](docs/benchmarks/E3-longmemeval.md) |
 | E4 | Hook shim + watcher + git daemon | in review |
-| E5 | Derivation and decision graph | extractor passed — 1.0000/1.0000 on a blind split, [gate report](docs/benchmarks/E5-decision-gate.md); graph not wired |
+| E5 | Derivation and decision graph | passed — 1.0000/1.0000 on a blind split, [gate report](docs/benchmarks/E5-decision-gate.md); three artifacts per generation |
 | E6 | Dashboard | built — six views over the index, served read-only on loopback by Datasette |
 | E7 | RC1: security review, private repo | |
 
@@ -71,7 +71,7 @@ pre-registered before anything was measured. It is *not* evidence the extractor
 reads English: two probes in a third vocabulary, written by the reviewer, score
 the same code **26/32** and **27/32** ([`bench/probes.py`](bench/probes.py)).
 The corpus is one sample of the language, and the gate has now been at 1.0000
-through four rounds of real defects — every one of which the fixture scored
+through five rounds of real defects — every one of which the fixture scored
 identically with and without. Both numbers are in the report; the second is the
 one that has ever moved.
 

@@ -212,7 +212,10 @@ def _derive(args) -> int:
     stats = derive.build(args.home, count=args.ideas)
     for line in stats.skipped:
         print(f"skipped {line}", file=sys.stderr)
-    print(f"{stats.generations} generation(s)  {stats.ideas} idea(s)  {stats.marks} mark(s)")
+    print(
+        f"{stats.generations} generation(s)  {stats.ideas} idea(s)  "
+        f"{stats.marks} mark(s)  {stats.decisions} decision(s)"
+    )
     # Same rule as `index`: derived artifacts are rebuildable, so a generation
     # nothing can parse is reported and is not a failure of the store.
     return 0
