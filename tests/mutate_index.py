@@ -1442,9 +1442,36 @@ MUTANTS = [
     (
         "a skipped generation loses its stale artifacts",
         "derive.py",
-        """            shutil.rmtree(out, ignore_errors=True)""",
-        """            pass""",
+        """            try:
+                shutil.rmtree(out)
+            except FileNotFoundError:""",
+        """            try:
+                pass
+            except FileNotFoundError:""",
         "test_a_generation_that_stops_parsing_loses_its_stale_artifacts",
+    ),
+    (
+        "a symlink in the chain is already a directory",
+        "store.py",
+        "            mode = os.lstat(path).st_mode",
+        "            mode = os.stat(path).st_mode",
+        "test_a_symlinked_store_directory_is_refused_before_anything_is_written",
+    ),
+    (
+        "a symlinked derived leaf is followed, not refused",
+        "store.py",
+        "        if stat.S_ISDIR(mode):\n            break\n        kind =",
+        "        if stat.S_ISDIR(mode) or stat.S_ISLNK(mode):\n            break\n        kind =",
+        "test_a_symlinked_derived_leaf_is_written_through_not_followed",
+    ),
+    (
+        "a rollback that could not run is reported as if it had",
+        "derive.py",
+        """            except OSError as rm:
+                stats.skipped.append(f"{stored.key}: rollback left artifacts behind: {rm!r}")""",
+        """            except OSError:
+                pass""",
+        "test_a_rollback_that_cannot_run_says_so",
     ),
     # --- E5:8 the third temp shape, swept and ignored ---
     (

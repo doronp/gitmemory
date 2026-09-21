@@ -2265,3 +2265,31 @@ def test_an_abandoned_manifest_temp_is_swept(home, src):
     store.capture(src, "claude-code", "sess", home=home)
     assert not litter.exists()
     assert store.verify(home) == []
+
+
+def test_a_symlinked_store_directory_is_refused_before_anything_is_written(home, src, tmp_path):
+    """`_mkdir` tested with `os.path.isdir`, which follows symlinks: a symlink
+    anywhere in the chain was already "a directory", so everything below it went
+    to the link's target. Measured before the fix: a symlink at `raw/<agent>`
+    put a whole session's segments in `/tmp`. Every one of those names is
+    predictable from the store's own contents and none of them exists before the
+    first capture, so any process running as the user can plant one. [E7]"""
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    os.makedirs(os.path.join(home, "raw"), exist_ok=True)
+    os.symlink(victim, os.path.join(home, "raw", "claude-code"))
+
+    transcript(src, 5)
+    with pytest.raises(NotADirectoryError, match="symbolic link"):
+        store.capture(src, "claude-code", "sess", home=home)
+    assert sorted(p.name for p in victim.iterdir()) == [], "the store wrote outside itself"
+
+
+def test_a_store_the_daemon_really_made_is_not_caught_by_the_directory_check(home, src):
+    """The other half: the check must not refuse the ordinary layout. Two
+    captures into two generations, every directory made by `_mkdir` itself."""
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    transcript(src, 5, start=5)
+    store.capture(src, "claude-code", "sess", home=home)
+    assert store.verify(home) == []

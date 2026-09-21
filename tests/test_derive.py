@@ -873,6 +873,47 @@ def test_a_generation_that_stops_parsing_loses_its_stale_artifacts(home, src):
     assert not out.exists(), "stale artifacts survived a run that could not read the generation"
 
 
+def test_a_symlinked_derived_leaf_is_written_through_not_followed(home, src, tmp_path):
+    """`store._mkdir` tested with `os.path.isdir`, which follows symlinks, so a
+    leaf that was a symlink was "already a directory" and all three artifacts
+    went to the link's target — outside `$GITMEMORY_HOME`, with nothing skipped
+    and nothing reported. The leaf name is predictable from the store's own
+    contents and does not exist before the first derive, so any process running
+    as the user can plant one and wait. [E7]"""
+    write(src, conversation())
+    store.capture(src, "claude-code", "sess", home=home)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    out = Path(derive.derived_dir(home, next(iter(store.sessions(home)))))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.symlink_to(victim)
+
+    stats = derive.build(home)
+    assert sorted(p.name for p in victim.iterdir()) == [], "the artifacts left the store"
+    assert stats.generations == 0
+    assert any("symbolic link" in s for s in stats.skipped), stats.skipped
+
+
+def test_a_rollback_that_cannot_run_says_so(home, src, tmp_path):
+    """`ignore_errors=True` was doing two jobs. The wanted one: most skips happen
+    before anything is written and `rmtree` on an absent path raises. The other:
+    `rmtree` refuses a symlink outright, and the flag swallowed that — so stale
+    artifacts stayed on disk while the run reported the generation skipped,
+    which is the exact invariant the comment above the call asserts. [E7]"""
+    write(src, conversation())
+    store.capture(src, "claude-code", "sess", home=home)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    (victim / "ideas.json").write_text('{"stale": true}')
+    out = Path(derive.derived_dir(home, next(iter(store.sessions(home)))))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.symlink_to(victim)
+
+    stats = derive.build(home)
+    assert (victim / "ideas.json").exists(), "precondition: the rollback cannot clear this"
+    assert any("rollback left artifacts behind" in s for s in stats.skipped), stats.skipped
+
+
 # --- finding 8: the temp file, swept and ignored --- #
 
 

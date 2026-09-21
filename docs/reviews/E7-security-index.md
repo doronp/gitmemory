@@ -14,11 +14,11 @@ behaviour, the named test required to fail.
 
 ## Status
 
-**Ten findings; three closed so far.** This document grows as the round does.
+**Ten findings; four closed so far.** This document grows as the round does.
 
 | | Finding | Outcome |
 |---|---|---|
-| F1 | `derive.build` writes outside the store through a symlinked leaf | open |
+| F1 | `derive.build` writes outside the store through a symlinked leaf | **fixed** — `lstat` in `store._mkdir`, and a rollback that reports |
 | F2 | Two concurrent builds destroy each other's temp | **fixed** — one build at a time per directory |
 | F3 | `_sweep_partials` deletes files it does not own | **fixed** — the name the build writes, and `<` not `!=` |
 | F4 | A SQLite file the user did not create is trusted completely | **fixed** — read-only by default, and a step budget |
@@ -28,6 +28,54 @@ behaviour, the named test required to fail.
 | F8 | `derive.ideas` costs ~32 s of CPU for 284 KB of crafted text | open |
 | F9 | `index/` is created 0755 where the store is 0700 | open |
 | F10 | The truncation warning is announced once per process | open |
+
+---
+
+## F1 — a symlink was already a directory, everywhere
+
+`os.path.isdir` follows symlinks. `store._mkdir` asked `isdir` before creating
+each component, so a symlink anywhere in the chain was already "a directory":
+`_mkdir` stopped there, every write below it went to the link's target, and no
+call reported anything. The reviewer found it on the derived leaf. It is not
+confined to the derived leaf.
+
+Reproduced in three parts before anything was changed:
+
+| Planted | Before | After |
+|---|---|---|
+| `derived/<agent>/<session>/g00` → `/tmp/victim` | `graph.json`, `ideas.json`, `timeline.json` written into the victim; `stats.skipped == []` | victim empty; the skip names "a symbolic link" |
+| the same, then the rollback | `rmtree(ignore_errors=True)` refuses a symlink and says nothing; all three artifacts stay | the refusal is appended to `stats.skipped` |
+| `raw/<agent>` → `/tmp/victim2` (**not in the report**) | a whole session's segments written outside `$GITMEMORY_HOME` | `NotADirectoryError` before the first byte |
+
+The third row is why the fix is not where the report put it. Its smallest
+acceptable fix was "in `_write`, refuse a parent that is a symlink" — which
+guards one caller, and only the *immediate* parent, so a link one level higher
+still redirects the write. Every one of these names is predictable from the
+store's own contents and none of them exists before the first capture, so any
+process running as the user can plant one and wait. The check belongs in the
+one function that makes directories: `_mkdir` now `lstat`s each component,
+walks up past what is missing, and raises `NotADirectoryError` naming whether
+it found a symlink or a plain file. `derive`, the store and the index all
+inherit it.
+
+The rollback is the second half, and it failed in exactly the way the comment
+above it asserted it would not. `ignore_errors=True` was doing two jobs and
+only one was wanted: most skips happen before anything is written and `rmtree`
+on an absent path raises, which the flag correctly swallowed — and `rmtree` on
+a symlink refuses outright (`Cannot call rmtree on a symbolic link`), which it
+also swallowed, leaving artifacts on disk while the run reported the generation
+skipped. `FileNotFoundError` is now the ordinary skip; any other `OSError`
+becomes a `rollback left artifacts behind: …` line in `stats.skipped`.
+
+**What this does not fix.** `_mkdir` checks and then creates, so a swap between
+the `lstat` and the `mkdir` still wins. Closing that means `O_NOFOLLOW` on
+every final open; it is worth doing when something can show the race is
+reachable, and the shortcut is marked `ponytail:` in the source.
+
+Four tests carry this — two in `test_derive.py` for the leaf and the rollback,
+two in `test_store.py` for the capture path and for the ordinary case a real
+daemon produces, because a check that refuses everything would pass the first
+three.
 
 ---
 
@@ -133,7 +181,7 @@ asserts a wall-clock bound, because the defect is duration.
 
 ## Negative controls added this round
 
-Six rows, all run, **6/6 CAUGHT by their intended test**.
+Nine rows, all run, **9/9 CAUGHT by their intended test**.
 
 | Mutant | Verdict |
 |---|---|
@@ -143,6 +191,10 @@ Six rows, all run, **6/6 CAUGHT by their intended test**.
 | a newer schema's index is swept as a leftover | CAUGHT |
 | every reader opens the index for writing, creating it if absent | CAUGHT |
 | a hostile `meta` runs for as long as it likes | CAUGHT |
+| a symlink in the chain is already a directory | CAUGHT |
+| a symlinked derived leaf is followed, not refused | CAUGHT |
+| a rollback that could not run is reported as if it had | CAUGHT |
 
-One existing row — "an index from a superseded schema is left on disk forever" —
-had its anchor re-pointed at the rewritten line and was re-run: still CAUGHT.
+Two existing rows — "an index from a superseded schema is left on disk forever"
+and "a skipped generation loses its stale artifacts" — had their anchors
+re-pointed at the rewritten lines and were re-run: both still CAUGHT.

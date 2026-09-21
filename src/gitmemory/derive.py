@@ -1068,7 +1068,21 @@ def build(home: str | None = None, *, count: int = DEFAULT_IDEAS) -> Stats:
             # artifact beside a skip line is a `derived/` tree that has quietly
             # stopped being a function of the committed bytes, and `git diff`
             # shows clean while it happens. [E5:2, E5:7]
-            shutil.rmtree(out, ignore_errors=True)
+            #
+            # `ignore_errors=True` was doing two jobs and only one of them was
+            # wanted. The wanted one: most skips happen before anything is
+            # written, and `rmtree` on a path that is not there raises. The
+            # other one: when `out` is a symlink, `rmtree` refuses outright —
+            # "Cannot call rmtree on a symbolic link" — and the flag swallowed
+            # that, so the artifacts stayed on disk while the run reported the
+            # generation skipped. The invariant the comment above asserts is
+            # exactly the one that failed, and it failed in silence. [E7]
+            try:
+                shutil.rmtree(out)
+            except FileNotFoundError:
+                pass  # nothing was written yet, which is the ordinary skip
+            except OSError as rm:
+                stats.skipped.append(f"{stored.key}: rollback left artifacts behind: {rm!r}")
             stats.skipped.append(f"{stored.key}: {exc!r}")
             continue
         stats.generations += 1

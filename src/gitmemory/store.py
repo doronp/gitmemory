@@ -296,10 +296,37 @@ def _mkdir(path: str) -> None:
     # the leaf only and leaves every directory it had to create on the way at
     # 0777 & ~umask — so `sessions/` stayed world-readable while the manifest
     # inside it was 0600.
+    #
+    # `lstat`, not `os.path.isdir`, and the difference is the whole of [E7]
+    # index-F1: `isdir` follows symlinks, so a symlink anywhere in the chain was
+    # already "a directory" and everything below it was written to the link's
+    # target — outside `$GITMEMORY_HOME` entirely, with no error anywhere.
+    # Measured on this tree: a symlink at `raw/<agent>` put a whole session's
+    # segments in `/tmp`, and one at `derived/<agent>/<session>/g00` put all
+    # three artifacts there while `derive.build` reported nothing skipped. Every
+    # one of those names is predictable from the store's own contents and does
+    # not exist yet before the first write, so any process running as the user
+    # can plant one and wait.
+    #
+    # ponytail: check-then-create, so a fast enough swap between the `lstat` and
+    # the `mkdir` still wins. `O_NOFOLLOW` on every final open is the version
+    # that closes that, and it is worth doing when something can show the race
+    # is reachable.
     missing = []
-    while path and not os.path.isdir(path):
-        missing.append(path)
-        path = os.path.dirname(path)
+    while path:
+        try:
+            mode = os.lstat(path).st_mode
+        except OSError:
+            missing.append(path)
+            path = os.path.dirname(path)
+            continue
+        if stat.S_ISDIR(mode):
+            break
+        kind = "a symbolic link" if stat.S_ISLNK(mode) else "not a directory"
+        raise NotADirectoryError(
+            f"{path} is {kind}, so it is not somewhere gitmemory will write; "
+            "the store writes only into directories it made itself"
+        )
     for d in reversed(missing):
         with contextlib.suppress(FileExistsError):
             os.mkdir(d, 0o700)
