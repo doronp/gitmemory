@@ -106,6 +106,12 @@ class Tick:
     # it holds. Zero in a healthy pass, which is why it is worth printing when
     # it is not: an adapter or a race handed us an offset into nothing.
     boundaries_dropped: int = 0
+    # Segments this pass attested to without copying a byte — reclaimed from the
+    # generation directory rather than read out of the source. The manifest
+    # records them permanently; this is so the operator hears about it at the
+    # time, since a repair that shows up only as "+0B" reads like a quiet pass.
+    # Not an error: after a killed capture it is the correct outcome. [E7 fs-F4]
+    adopted: list[str] = field(default_factory=list)
 
 
 def load_watches(home: str, log=None) -> list[Watch]:
@@ -802,6 +808,9 @@ def tick(
             with contextlib.suppress(OSError):
                 os.utime(cap.manifest_path, (now, now))
         result.boundaries_dropped += cap.dropped_boundaries
+        result.adopted.extend(
+            f"{key[0]}/{key[1]}/g{cap.generation:02d}/{name}" for name in cap.adopted
+        )
         # Adoption changes the store without appending a byte, so it has to be
         # asked about separately or the repair never reaches git. Kept out of
         # `result.captured` because nothing was captured; it only says the pass
@@ -960,6 +969,15 @@ def run(
                     "hook record(s) were not a readable file, and were discarded"
                 )
             last_unreadable = result.spool_unreadable
+        # Before `captured`, and not folded into it: an adoption-only pass never
+        # reaches that branch, because nothing was captured. Unconditional
+        # rather than change-detected — this is rare by construction, and a
+        # repeat means it happened twice. [E7 fs-F4]
+        if result.adopted:
+            log(
+                f"adopted {len(result.adopted)} segment(s) found on disk, not copied "
+                f"from the source: {', '.join(result.adopted)}"
+            )
         if result.captured:
             dropped = (
                 f" ({result.boundaries_dropped} boundaries outside the bytes, dropped)"

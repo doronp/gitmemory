@@ -241,18 +241,26 @@ while it happens **[E5:2, E5:7]**.
 ### 2.5 The contiguity proof
 
 A manifest is `sessions/<agent>/<session_id>/g<NN>.json` — one per generation, `g00` first. It
-carries eleven fields **[E4, review: docs 1/4 — "exactly six" and `manifest.json` were both
+carries twelve fields **[E4, review: docs 1/4 — "exactly six" and `manifest.json` were both
 wrong, and they were wrong in the recipe below, which is the product's central claim]**:
 
 ```
 schema, session_id, agent, generation, size, source_path,
 file_sha256, prev_manifest_sha256, diverged_from,
 segments: [{path, start, end, sha256}, ...],
-compact_boundaries: [byte_offset, ...]
+compact_boundaries: [byte_offset, ...],
+adopted: [segment_name, ...]
 ```
 
 `segments[].path` is relative to `$GITMEMORY_HOME`, and `compact_boundaries` holds byte offsets
 into this generation, not `seq` numbers.
+
+`adopted` names the segments in this generation that were **reclaimed from the generation
+directory rather than copied out of the source** — the crash-recovery path, `_adopt_orphans`. They are
+attested like any other segment, and they are the only bytes in the store that this machine did
+not copy, so the proof states which they are instead of leaving the two indistinguishable. The
+list is per generation (a fork starts with none) and carried forward by every later capture in
+the same one. **[E7, security review: fs F4]**
 
 **Verification, by a stranger with only the repo and no access to this machine.** Run from the
 root of the checkout; this is copy-pasteable and was run to write it down:

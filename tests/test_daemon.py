@@ -1747,3 +1747,46 @@ def test_a_fifo_with_a_writer_is_not_a_record_even_though_it_reads(tmp_path):
 
     assert wanted == {}, "a live process fed the watcher a record and it took it"
     assert tick.spool_unreadable == 1
+
+
+# --- E7 fs-F4: a repair that reads as a quiet pass ---------------------------
+
+
+def test_an_adoption_only_pass_names_what_it_reclaimed(tmp_path):
+    """`result.captured` is empty and `+0B` is the headline, so nothing else says it.
+
+    Adoption attests to bytes found in the generation directory rather than
+    copied out of the source. The manifest records that permanently; this is so
+    the operator hears it at the time, because the pass that does it looks from
+    the outside exactly like a pass that did nothing. [E7 fs-F4]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    watches = daemon.load_watches(home)
+    daemon.tick(home, watches, interval=0)
+
+    base = os.path.getsize(src)
+    _write(src, TURN.replace("hello", "second"), append=True)
+    with open(src, "rb") as fh:  # the orphan a killed capture leaves behind
+        fh.seek(base)
+        tail = fh.read()
+    name = f"{base:012d}-{base + len(tail):012d}.jsonl"
+    sid = os.listdir(os.path.join(home, "raw", "claude-code"))[0]
+    _write(os.path.join(home, "raw", "claude-code", sid, "g00", name), "")
+    with open(os.path.join(home, "raw", "claude-code", sid, "g00", name), "wb") as fh:
+        fh.write(tail)
+
+    first: list[str] = []
+    daemon.run(home, once=True, poll=0, interval=0, log=first.append)
+    after: list[str] = []
+    daemon.run(home, once=True, poll=0, interval=0, log=after.append)
+
+    said = [line for line in first if "adopted" in line]
+    assert said == [
+        f"adopted 1 segment(s) found on disk, not copied from the source: "
+        f"claude-code/{sid}/g00/{name}"
+    ], first
+    assert not any("captured" in line for line in first), "this pass copies nothing out"
+    assert not any("adopted" in line for line in after), after

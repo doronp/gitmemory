@@ -2417,3 +2417,162 @@ def test_the_reader_says_how_many_bytes_it_stopped_short_of(tmp_path):
     assert isinstance(errors[0].cause, ValueError) and not isinstance(
         errors[0].cause, jsonl.LineTruncated
     ), "the original decode error is kept, not replaced"
+
+
+# --- E7 fs-F4: the proof has to say which bytes it only found ----------------
+
+
+def _plant(home: str, src: str, text: bytes, gen: int = 0) -> str:
+    """A segment on disk that no manifest names, as a killed capture leaves one."""
+    base = manifest(home, gen)["size"]
+    end = base + len(text)
+    name = f"{base:012d}-{end:012d}.jsonl"
+    Path(home, "raw", "claude-code", "sess", f"g{gen:02d}", name).write_bytes(text)
+    return name
+
+
+def test_an_adopted_segment_is_named_in_the_manifest(home, src):
+    """Adoption is the one path that attests to bytes nobody here copied.
+
+    An orphan's only tests are its name, its start offset and its length, so a
+    crash-written file and a planted one are indistinguishable — and adoption
+    runs at the head of every capture, not only after a crash. Measured end to
+    end before this test existed: plant a segment, `verify` reports an
+    unrecorded file, the very next `capture` adopts it, recomputes
+    `file_sha256` over it and `verify` goes clean, and `recall` serves the
+    planted line as transcript content. Turning a red proof green is the worst
+    direction for a proof to fail in.
+
+    Deleting orphans is not the answer — the orphan can hold pruned bytes that
+    exist nowhere else, which is what generations are for. So the manifest
+    states which bytes were reclaimed from disk rather than copied from the
+    source, and the caller is told at the time. [E7 fs-F4]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    forged = b'{"type":"assistant","uuid":"f1","message":{"content":"I never said this"}}\n'
+    name = _plant(home, src, forged)
+
+    cap = store.capture(src, "claude-code", "sess", home=home)
+
+    assert cap.adopted == (name,), "the caller is told a flag's worth of nothing"
+    assert manifest(home)["adopted"] == [name], "the proof does not say what it only found"
+    # And the distinction is legible without trusting this field: the named
+    # segment is in `segments` like any other, so the two lists together say
+    # "attested, and reclaimed rather than copied".
+    assert name in {os.path.basename(s["path"]) for s in manifest(home)["segments"]}
+
+
+def test_the_adopted_list_survives_the_next_ordinary_capture(home, src):
+    """A manifest replaces the previous one outright, so an uncarried field is deleted.
+
+    Without the carry-forward the record lasts exactly as long as nothing else
+    happens: one ordinary append rewrites the generation's manifest and the
+    adoption is gone from the proof, silently, while the bytes stay. [E7 fs-F4]
+    """
+    base = transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    end = transcript(src, 5, start=5)
+    with open(src, "rb") as fh:  # the orphan the killed capture left: real bytes
+        fh.seek(base)
+        name = _plant(home, src, fh.read())
+    assert store.capture(src, "claude-code", "sess", home=home).adopted == (name,)
+
+    transcript(src, 5, start=10)
+    cap = store.capture(src, "claude-code", "sess", home=home)
+
+    assert cap.appended and not cap.diverged, "this has to be an ordinary same-generation append"
+    assert manifest(home)["size"] > end
+    assert manifest(home)["adopted"] == [name], "the next capture erased the record"
+
+
+def test_a_forked_generation_adopts_nothing_from_the_one_it_sealed(home, src):
+    """The names address files in one generation's directory, so a fork starts empty.
+
+    Carrying them across would make g01 claim to have found a file that is not
+    in g01's directory — a false statement in the proof, in the safe-looking
+    direction. [E7 fs-F4]
+    """
+    base = transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    transcript(src, 5, start=5)
+    with open(src, "rb") as fh:  # corroborated bytes, so adoption itself cannot fork
+        fh.seek(base)
+        name = _plant(home, src, fh.read())
+    store.capture(src, "claude-code", "sess", home=home)
+    assert manifest(home)["adopted"] == [name]
+
+    Path(src).write_bytes(b"")  # a pruner rewrote it: the next capture must fork
+    transcript(src, 3)
+    cap = store.capture(src, "claude-code", "sess", home=home)
+
+    assert cap.generation == 1 and cap.diverged
+    assert manifest(home, 1)["adopted"] == []
+    assert manifest(home)["adopted"] == [name], "the sealed generation still states it"
+
+
+def test_the_adopted_list_is_filtered_not_copied(home, src):
+    """It is read out of a file on disk and written straight back out.
+
+    Same reason `_clean_boundaries` filters: the previous manifest is editable,
+    and everything taken from it here lands in the next one. A name that no
+    segment could have is not a name this store adopted. [E7 fs-F4]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    path = Path(home, "sessions", "claude-code", "sess", "g00.json")
+    man = json.loads(path.read_text())
+    man["adopted"] = ["../../../etc/passwd", 7, None, "000000000000-000000000005.jsonl"]
+    path.write_text(json.dumps(man))
+
+    transcript(src, 5, start=5)
+    store.capture(src, "claude-code", "sess", home=home)
+
+    assert manifest(home)["adopted"] == ["000000000000-000000000005.jsonl"]
+
+
+def test_a_manifest_whose_adopted_is_not_a_list_is_refused(home, src):
+    """`_FIELDS` types it, for the reason every other field there is typed.
+
+    Untyped, a string reaches `_seq` and a capture attests to fifty-odd
+    one-character names. [E7 fs-F4]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    path = Path(home, "sessions", "claude-code", "sess", "g00.json")
+    man = json.loads(path.read_text())
+    man["adopted"] = "000000000000-000000000005.jsonl"
+    path.write_text(json.dumps(man))
+
+    transcript(src, 5, start=5)
+    with pytest.raises(ValueError, match="'adopted' as str"):
+        store.capture(src, "claude-code", "sess", home=home)
+
+
+def test_cli_capture_says_when_it_only_found_the_bytes(tmp_path, capsys):
+    """A capture that reclaims an orphan reports `+0B` and is otherwise silent.
+
+    The manifest is where the fact lives for ever, but a person running
+    `gitmemory capture` after a crash is not reading manifests — and the
+    loudest thing about that pass, without this line, is how quiet it was.
+    On stderr beside `diverged`, because it is the same kind of fact: this
+    store is not in the ordinary case. [E7 fs-F4]
+    """
+    from gitmemory.__main__ import main
+
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    base = transcript(src, 5)
+    assert main(["--home", home, "capture", src, "--session-id", "sess"]) == 0
+    end = transcript(src, 5, start=5)
+    with open(src, "rb") as fh:
+        fh.seek(base)
+        name = f"{base:012d}-{end:012d}.jsonl"
+        Path(home, "raw", "claude-code", "sess", "g00", name).write_bytes(fh.read())
+    capsys.readouterr()
+
+    assert main(["--home", home, "capture", src, "--session-id", "sess"]) == 0
+
+    out = capsys.readouterr()
+    assert f"adopted 1 segment(s) found on disk, not copied from the source: {name}" in out.err
+    assert "+0B" in out.out, "the line has to be beside a result that looks like nothing happened"

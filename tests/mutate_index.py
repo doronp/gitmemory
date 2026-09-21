@@ -3433,6 +3433,63 @@ MUTANTS = [
         "                tick.spool_dropped += 1",
         "test_an_unusable_spool_record_is_consumed_anyway",
     ),
+    # --- E7 fs-F4 ---
+    (
+        "the proof does not say which bytes it only found",
+        "store.py",
+        '        "adopted": _adopted_names((man or {}).get("adopted"), tuple(taken)),',
+        '        "adopted": [],',
+        "test_an_adopted_segment_is_named_in_the_manifest",
+    ),
+    (
+        "the next ordinary capture deletes the adoption from the proof",
+        "store.py",
+        "                carried_adopted = _adopted_names(prev.get(\"adopted\"))",
+        "                carried_adopted = []",
+        "test_the_adopted_list_survives_the_next_ordinary_capture",
+    ),
+    (
+        # The fork branch's whole point is the line it does not have, so the
+        # mutation adds it: g01 would then claim to have found a file that is
+        # not in g01's directory. (An equivalent mutation inside
+        # `_adopt_orphans`' own fork rebuild was tried first and scored MISSED —
+        # caught by the suite, not by this test, because that path needs a
+        # *killed forked* capture, which this test does not stage.)
+        "a forked generation inherits the names of the one it sealed",
+        "store.py",
+        "                prev_manifest_sha = hashlib.sha256(prev_bytes).hexdigest()",
+        "                prev_manifest_sha = hashlib.sha256(prev_bytes).hexdigest()\n"
+        '                carried_adopted = _adopted_names(prev.get("adopted"))',
+        "test_a_forked_generation_adopts_nothing_from_the_one_it_sealed",
+    ),
+    (
+        "a name the previous manifest invented is copied forward",
+        "store.py",
+        "    names = {n for n in _seq(carried) if isinstance(n, str) and _SEG_RE.match(n)}",
+        "    names = {n for n in _seq(carried) if isinstance(n, str)}",
+        "test_the_adopted_list_is_filtered_not_copied",
+    ),
+    (
+        "a manifest may say adopted is a string",
+        "store.py",
+        '    "adopted": (list, True),',
+        '    "adopted": (object, True),',
+        "test_a_manifest_whose_adopted_is_not_a_list_is_refused",
+    ),
+    (
+        "the watcher repairs the store and says nothing",
+        "daemon.py",
+        "        if result.adopted:",
+        "        if False:",
+        "test_an_adoption_only_pass_names_what_it_reclaimed",
+    ),
+    (
+        "the cli repairs the store and says nothing",
+        "src/gitmemory/__main__.py",
+        "    if cap.adopted:",
+        "    if False:",
+        "test_cli_capture_says_when_it_only_found_the_bytes",
+    ),
 ]
 
 

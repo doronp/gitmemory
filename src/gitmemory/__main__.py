@@ -75,6 +75,16 @@ def _capture(args) -> int:
             parse=not args.no_parse,
             log=lambda m: print(m, file=sys.stderr),
         )
+    # Said before the result line and on stderr, beside `diverged`, because it
+    # is the same kind of fact: something about this store is not the ordinary
+    # case. A capture that reclaims an orphan reports `+0B`, so without this the
+    # loudest thing about the pass is how quiet it was. [E7 fs-F4]
+    if cap.adopted:
+        print(
+            f"adopted {len(cap.adopted)} segment(s) found on disk, not copied from "
+            f"the source: {', '.join(cap.adopted)}",
+            file=sys.stderr,
+        )
     if cap.diverged:
         print(f"diverged: {cap.diverged}", file=sys.stderr)
         print(f"sealed generation {cap.generation - 1}; now writing g{cap.generation:02d}")

@@ -245,7 +245,11 @@ class Capture:
     # the store on disk and the repair was never committed — and if the session
     # had ended, never would be. Reported by two reviewers independently.
     # [E4, review: store-contract 4 / concurrency 4]
-    adopted: bool = False
+    #
+    # Names rather than a flag since E7: a caller that is told *something* was
+    # reclaimed cannot say which bytes, and neither could the manifest. Empty
+    # is falsey, so every truthiness test on it still reads the same. [E7 fs-F4]
+    adopted: tuple[str, ...] = ()
     # Boundaries the caller offered that do not address a byte of this
     # generation, and so were not recorded. See the filter in `_capture`.
     dropped_boundaries: int = 0
@@ -348,6 +352,7 @@ _FIELDS = {
     "diverged_from": (dict, True),
     "prev_manifest_sha256": (str, True),
     "source_path": (str, True),
+    "adopted": (list, True),
 }
 
 
@@ -372,6 +377,21 @@ def _check_manifest(man: object) -> None:
             raise ValueError(
                 f"previous manifest has {field!r} as {type(val).__name__}, not {want.__name__}"
             )
+
+
+def _adopted_names(carried: object, added: tuple[str, ...] = ()) -> list[str]:
+    """This generation's adopted-segment names: what the manifest already said, plus new.
+
+    Adoption writes a manifest attesting to bytes it found on disk rather than
+    bytes it copied out of the source, and the two used to be indistinguishable
+    once written. Filtered against `_SEG_RE` rather than copied, for the reason
+    `_clean_boundaries` gives about the previous manifest: it is a file on disk,
+    it can be hand-edited, and everything read out of it here is written
+    straight back out. Zero-padded names sort chronologically, and a manifest
+    that lists one twice is a manifest, not two adoptions. [E7 fs-F4]
+    """
+    names = {n for n in _seq(carried) if isinstance(n, str) and _SEG_RE.match(n)}
+    return sorted(names | set(added))
 
 
 def _clean_boundaries(values: object, size: int) -> tuple[list[int], int]:
@@ -510,11 +530,24 @@ def _sweep_temps(session_dir: str) -> None:
                 _unlink(entry.path)
 
 
-def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> bool:
-    """Finish a capture that was killed after its segment landed. True if it did.
+def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> tuple[str, ...]:
+    """Finish a capture that was killed after its segment landed. The names it took.
 
     The return value is what tells the watcher a pass did something worth
     committing. [E4, review]
+
+    **Adoption is the one path that attests to bytes nobody here copied.** The
+    only tests an orphan passes are its name, that its start offset continues
+    the manifest, and that its length matches the name — none of which tie it
+    to a capture this machine performed, and adoption runs at the head of every
+    `_capture`, not only after a crash. So a file dropped into the generation
+    directory is adopted, hashed into `file_sha256`, and served as transcript
+    content, and `verify` — which reported it as an unrecorded file one command
+    earlier — goes quiet. Turning a red proof green is the worst direction for
+    a proof to fail in. The names are therefore written into the manifest
+    (`adopted`) and carried forward, so the proof states which bytes were
+    reclaimed from disk rather than copied from the source, and a reader can
+    tell "we found this here" from "we wrote this". [E7 fs-F4]
 
     Write ordering makes "segment on disk, manifest not written" the only crash
     state — for a process crash. Power loss can reorder the two publications,
@@ -550,7 +583,7 @@ def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> 
     forked = bool(prior) and os.path.isdir(os.path.join(raw_dir, _gen_dir(gen + 1)))
     seg_dir = os.path.join(raw_dir, _gen_dir(gen + 1 if forked else gen))
     if not os.path.isdir(seg_dir):
-        return False
+        return ()
 
     man: dict | None = None
     if prior:
@@ -599,7 +632,7 @@ def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> 
 
     segments = list((man or {}).get("segments", []))
     size = (man or {}).get("size", 0)
-    adopted = False
+    taken: list[str] = []
     while size in pending:
         end, name = pending.pop(size)
         full = os.path.join(seg_dir, name)
@@ -615,10 +648,11 @@ def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> 
                 "sha256": digest,
             }
         )
-        size, adopted = end, True
+        size = end
+        taken.append(name)
 
-    if not adopted:
-        return False
+    if not taken:
+        return ()
 
     whole = hashlib.sha256()
     for seg in segments:
@@ -652,9 +686,13 @@ def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> 
         # previous manifest's boundaries straight into `canonical_json`, which
         # is how one unusable element became permanent. [E4, review: store 3]
         "compact_boundaries": _clean_boundaries((man or {}).get("compact_boundaries"), size)[0],
+        # A fork rebuilt `man` above without this key, which is right: the names
+        # address files in *this* generation's directory, so a new generation
+        # starts with none. [E7 fs-F4]
+        "adopted": _adopted_names((man or {}).get("adopted"), tuple(taken)),
     }
     _write_atomic(os.path.join(session_dir, _gen_file(gen)), canonical_json(manifest))
-    return True
+    return tuple(taken)
 
 
 def capture(
@@ -693,6 +731,7 @@ def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting
     gen, base, segments, diverged_from, prev_manifest_sha = 0, 0, [], None, None
     diverged: str | None = None
     carried: list[int] = []
+    carried_adopted: list[str] = []
 
     with open(source_path, "rb") as fh:
         if prior:
@@ -739,6 +778,13 @@ def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting
                 diverged_from = prev["diverged_from"]
                 prev_manifest_sha = prev["prev_manifest_sha256"]
                 carried = list(prev["compact_boundaries"])
+                # Carried for the same reason the boundaries are: this manifest
+                # replaces the previous one outright, so a field the previous
+                # one stated and this one omits is a fact deleted by the next
+                # ordinary capture. Adoption would be recorded for exactly as
+                # long as nothing else happened. The fork branch above does not
+                # carry it — a new generation has adopted nothing. [E7 fs-F4]
+                carried_adopted = _adopted_names(prev.get("adopted"))
         else:
             whole = hashlib.sha256()
 
@@ -835,6 +881,7 @@ def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting
         "prev_manifest_sha256": prev_manifest_sha,
         "segments": segments,
         "compact_boundaries": kept_boundaries,
+        "adopted": carried_adopted,
     }
     manifest_path = os.path.join(session_dir, _gen_file(gen))
     # Invariant 2 (a sealed generation is immutable) was breakable by a slow
