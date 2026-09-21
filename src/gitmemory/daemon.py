@@ -33,6 +33,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import stat
 import subprocess
 import time
 import tomllib
@@ -95,6 +96,12 @@ class Tick:
     errors: list[str] = field(default_factory=list)
     spool_consumed: int = 0
     spool_dropped: int = 0  # records naming a path no watch covers
+    # Records that were not a usable file at all — a FIFO, a device, a symlink,
+    # a directory, bytes that are not JSON. A separate field because
+    # `spool_dropped` means one specific thing, says so above, and is reported
+    # as a *configuration* fact: sending someone to check their config because
+    # a FIFO appeared in the spool is worse than saying nothing. [E7 fs-F3]
+    spool_unreadable: int = 0
     # Compaction offsets the store refused because they fall outside the bytes
     # it holds. Zero in a healthy pass, which is why it is worth printing when
     # it is not: an adapter or a race handed us an offset into nothing.
@@ -400,12 +407,14 @@ def drain_spool(
         try:
             event = _event_of(name)
             try:
-                with open(path, "rb") as fh:
-                    payload = json.loads(fh.read())
+                payload = json.loads(_read_record(path))
             except (OSError, ValueError, RecursionError):
                 payload = None
             _unlink(path)
             tick.spool_consumed += 1
+            if payload is None:
+                tick.spool_unreadable += 1
+                continue
             source = _payload_path(payload)
             if source is None or _covers(watches, source) is None:
                 # Not a watched path. Dropping it is the whole reason the
@@ -464,6 +473,35 @@ def _payload_path(payload: object) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _read_record(path: str) -> bytes:
+    """One spool record's bytes, refusing anything that is not a plain file.
+
+    The floor above catches `(OSError, ValueError, RecursionError)` and then
+    everything, and it caught nothing here, because **blocking is not an
+    exception**. `open(path, "rb")` on a FIFO waits for a writer that never
+    comes. Measured: one `mkfifo $GITMEMORY_HOME/spool/1-Stop.json` and
+    `gitmemory watch --once` was still running after eight seconds having
+    written no log line, captured no session and made no commit — and since the
+    record is unlinked only after the read, the FIFO is still there on the next
+    start, for ever. That is the capture guarantee dying quietly, which is the
+    one failure this module exists to prevent; the docstring above says so in
+    those words about a different cause.
+
+    `O_NONBLOCK` so the open cannot wait, `O_NOFOLLOW` so a symlink cannot
+    redirect the read out of the spool, and an `fstat` because the flag only
+    stops the open from blocking — it does not make a FIFO a record. Anything
+    that is not a regular file raises, which routes it to the handling every
+    other unusable record already gets: unlinked, counted dropped, pass
+    continues. Both flags are no-ops on a regular file, so the ordinary path is
+    unchanged. [E7 fs-F3]
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+    with os.fdopen(fd, "rb") as fh:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(f"{path} is not a regular file, so it is not a spool record")
+        return fh.read()
 
 
 def _unlink(path: str) -> None:
@@ -825,6 +863,7 @@ def run(
     last_errors: list[str] = []
     last_notes: list[str] | None = None
     last_dropped = 0
+    last_unreadable = 0
     last_said = 0.0
     while True:
         # Inside the loop, because `init` is four `git config` calls and each
@@ -911,6 +950,16 @@ def run(
                     "named a path no watch covers"
                 )
             last_dropped = result.spool_dropped
+        # Same change-detection, different fact, different word: nothing here
+        # is the operator's config, and nothing here is fixed by editing it.
+        # [E7 fs-F3]
+        if result.spool_unreadable != last_unreadable:
+            if result.spool_unreadable:
+                log(
+                    f"spool: {result.spool_unreadable} of {result.spool_consumed} "
+                    "hook record(s) were not a readable file, and were discarded"
+                )
+            last_unreadable = result.spool_unreadable
         if result.captured:
             dropped = (
                 f" ({result.boundaries_dropped} boundaries outside the bytes, dropped)"

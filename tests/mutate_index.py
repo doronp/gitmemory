@@ -3399,6 +3399,40 @@ MUTANTS = [
         '    if not os.path.isdir(os.path.join(home, ".git")):\n        os.chmod(home, 0o700)',
         "test_the_home_mode_is_re_applied_on_every_start_not_just_the_first",
     ),
+    # --- E7 fs-F3 ---
+    (
+        "the spool open can wait for a writer again",
+        "daemon.py",
+        "    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)",
+        "    fd = os.open(path, os.O_RDONLY)",
+        "test_a_fifo_in_the_spool_does_not_wedge_the_pass",
+    ),
+    (
+        "a spool record can point at a file outside the spool",
+        "daemon.py",
+        "    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)",
+        "    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)",
+        "test_a_symlinked_spool_record_is_not_read_through",
+    ),
+    (
+        # Measured before this row was written: a FIFO with no writer reads
+        # `b""`, so `O_NONBLOCK` alone already defuses the wedge test and an
+        # `S_ISREG` mutant SURVIVES it. A FIFO with a live writer hands back
+        # the payload — that is the case this check is load-bearing for, and
+        # the case its own test uses.
+        "a fifo with a writer is read as a record",
+        "daemon.py",
+        "        if not stat.S_ISREG(os.fstat(fd).st_mode):",
+        "        if False:",
+        "test_a_fifo_with_a_writer_is_not_a_record_even_though_it_reads",
+    ),
+    (
+        "an unreadable record is reported as a misconfigured watch",
+        "daemon.py",
+        "                tick.spool_unreadable += 1",
+        "                tick.spool_dropped += 1",
+        "test_an_unusable_spool_record_is_consumed_anyway",
+    ),
 ]
 
 

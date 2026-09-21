@@ -256,14 +256,19 @@ def test_a_spool_record_naming_an_unwatched_path_is_dropped(tmp_path):
 
 
 def test_an_unusable_spool_record_is_consumed_anyway(tmp_path):
-    """Otherwise it is re-read on every tick for the life of the store."""
+    """Otherwise it is re-read on every tick for the life of the store.
+
+    Three records, two facts. Bytes that are not JSON are `spool_unreadable`;
+    JSON that carries no path is `spool_dropped`, which is reported as a
+    *configuration* fact and must therefore stay meaning only that. [E7 fs-F3]
+    """
     home = str(tmp_path / "home")
     _config(home, [tmp_path / "proj"])
     _spool(home, "1-2-Stop.json", "not json at all")
     _spool(home, "1-3-Stop.json", {"no_path_here": True})
     _spool(home, "1-4-Stop.json", ["a", "list"])
     _, tick = daemon.drain_spool(home, daemon.load_watches(home))
-    assert (tick.spool_consumed, tick.spool_dropped) == (3, 3)
+    assert (tick.spool_consumed, tick.spool_dropped, tick.spool_unreadable) == (3, 2, 1)
     assert os.listdir(os.path.join(home, daemon.SPOOL)) == []
 
 
@@ -935,7 +940,9 @@ def test_a_spool_record_that_cannot_be_parsed_at_all_is_dropped_not_replayed(tmp
     _spool(home, "1-2-Stop.json", "[" * 200_000)
 
     wanted, tick_result = daemon.drain_spool(home, daemon.load_watches(home))
-    assert wanted == {} and tick_result.spool_dropped == 1
+    # `spool_unreadable`, not `spool_dropped`: the record never became JSON, so
+    # nothing about it is a statement about the watch config. [E7 fs-F3]
+    assert wanted == {} and (tick_result.spool_dropped, tick_result.spool_unreadable) == (0, 1)
     assert os.listdir(os.path.join(home, daemon.SPOOL)) == [], "a replayed record is for ever"
     # Consumed as well as dropped, and the negative control is why it is
     # asserted: the outer floor catches a `RecursionError` too and produces the
@@ -1631,3 +1638,112 @@ def test_a_root_of_slash_is_refused_for_being_slash(tmp_path):
     said: list[str] = []
     assert daemon.load_watches(home, log=said.append) == []
     assert any("whole filesystem" in m for m in said), said
+
+
+# --- E7 fs-F3: blocking is not an exception ----------------------------------
+
+
+def _drain_within(home: str, seconds: float = 5.0):
+    """`drain_spool` on a thread, so a wedge is a failure and not a hung suite.
+
+    The bug under test is an `open()` that never returns. Calling it directly
+    would not fail this test, it would hang the whole run — and the mutation
+    harness scores a wedged mutant as BROKEN, not as caught. A daemon thread
+    that outlives the assertion is exactly right here: the interpreter will not
+    wait for it. [E7 fs-F3]
+    """
+    import threading
+
+    out: list = []
+    t = threading.Thread(
+        target=lambda: out.append(daemon.drain_spool(home, daemon.load_watches(home))),
+        daemon=True,
+    )
+    t.start()
+    t.join(seconds)
+    assert out, f"drain_spool did not return within {seconds}s — the pass is wedged"
+    return out[0]
+
+
+def test_a_fifo_in_the_spool_does_not_wedge_the_pass(tmp_path):
+    """One `mkfifo` used to stop every capture on the machine, for ever.
+
+    `open(path, "rb")` on a FIFO waits for a writer. The floor around the read
+    catches `(OSError, ValueError, RecursionError)` and then everything, and it
+    caught nothing, because blocking raises nothing. Measured through the CLI
+    before the fix: `gitmemory watch --once` with one FIFO in the spool was
+    still running after eight seconds, having logged nothing, captured nothing
+    and committed nothing — and the FIFO is unlinked only after the read, so
+    the next start does it again. Anything that can make a directory entry in
+    `spool/` triggers it. [E7 fs-F3]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    os.makedirs(os.path.join(home, daemon.SPOOL), exist_ok=True)
+    os.mkfifo(os.path.join(home, daemon.SPOOL, "1-Stop.json"))
+    _spool(home, "2-Stop.json", {"transcript_path": src})
+
+    wanted, tick = _drain_within(home)
+
+    assert tick.spool_unreadable == 1, "a FIFO is not a record"
+    assert os.listdir(os.path.join(home, daemon.SPOOL)) == [], "an unread record is for ever"
+    # The record behind it still rang the doorbell: one unusable entry must not
+    # cost the pass the records it could have used.
+    assert wanted == {_key(src): False}
+
+
+def test_a_symlinked_spool_record_is_not_read_through(tmp_path):
+    """`O_NOFOLLOW`, so a link cannot aim the read outside the spool.
+
+    Same open, same flags, and the reason it is here rather than assumed: a
+    FIFO check that used `os.stat` instead of an `fstat` on the opened
+    descriptor would pass the test above and still follow this link. [E7 fs-F3]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    target = _write(str(tmp_path / "elsewhere" / "real.json"), json.dumps({"path": src}))
+    os.makedirs(os.path.join(home, daemon.SPOOL), exist_ok=True)
+    os.symlink(target, os.path.join(home, daemon.SPOOL, "1-Stop.json"))
+
+    wanted, tick = _drain_within(home)
+
+    assert (tick.spool_consumed, tick.spool_unreadable) == (1, 1)
+    assert wanted == {}, "the watcher read a file the spool only pointed at"
+    assert os.path.exists(target), "the link was removed, not the file it named"
+
+
+def test_a_fifo_with_a_writer_is_not_a_record_even_though_it_reads(tmp_path):
+    """`O_NONBLOCK` stops the wait; only the `fstat` stops the injection.
+
+    A FIFO with a live writer attached hands back whatever that process wrote,
+    without blocking — measured: `read()` returned the payload whole. So the
+    flag alone leaves a spool record whose bytes come from a running process
+    rather than from a file a hook atomically renamed into place, which is a
+    different trust story and the one the record format exists to pin down.
+    The `fstat` is on the opened descriptor, not on the path, so there is no
+    window between the question and the read. [E7 fs-F3]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    src = _write(str(root / "a.jsonl"), TURN)
+    _config(home, [root])
+    os.makedirs(os.path.join(home, daemon.SPOOL), exist_ok=True)
+    fifo = os.path.join(home, daemon.SPOOL, "1-PreCompact.json")
+    os.mkfifo(fifo)
+
+    # Reader first: a writer-only open of a FIFO nobody is reading is ENXIO.
+    rfd = os.open(fifo, os.O_RDONLY | os.O_NONBLOCK)
+    wfd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+    try:
+        os.write(wfd, json.dumps({"transcript_path": src}).encode())
+        wanted, tick = _drain_within(home)
+    finally:
+        os.close(wfd)
+        os.close(rfd)
+
+    assert wanted == {}, "a live process fed the watcher a record and it took it"
+    assert tick.spool_unreadable == 1
