@@ -4,7 +4,10 @@ The cross-review in `E4-cross-review.md` is Gemini and me reading each other's
 half. This is the other thing: **independent review agents**, dispatched per
 module against the committed tree, told to find defects and not to fix them.
 Four reports came back — store, watcher, CLI/git layer, documentation — with
-thirty-four findings between them.
+thirty-four findings between them. A fifth pass came later and asked a different
+question: not *is this code wrong* but *is this test load-bearing*. It is
+written up under "The vacuity audit" below, and it is the one that found things
+no reviewer had.
 
 Two rules governed the round, and both of them changed the outcome:
 
@@ -22,6 +25,7 @@ Two rules governed the round, and both of them changed the outcome:
 | store | 8 | 8 | — | `201bda2` |
 | watcher | 10 | 9 | 1 already closed by a store fix | `5d38582` |
 | documentation | 16 | 16 | — | `b28c5ad`, `ad14979` |
+| vacuity audit | 24 | 7 | 15 mis-attributed, 1 equivalent, 2 false positives | `b6ccd87`, `3f1d1bf`, `8477339`, `6f427ad` |
 
 Negative controls: **24 tests were written against unfixed production code and
 21 of them failed.** The three that passed are each accounted for —
@@ -87,6 +91,84 @@ in §5 nobody was looking for on its first run.
 The unmeasurable half got measurements instead of edits — `tools/fsync_cost.py`,
 a load-stated re-run of the latency table, `repo@commit` citations — on the rule
 that a number you cannot repeat is a number you should not print.
+
+---
+
+## The vacuity audit
+
+`tests/mutate_index.py` asks one question: *does the named test catch its
+mutation?* It cannot ask the other one — *is there a mutation nobody named?* —
+because every entry in it was written by someone who already had a test in mind.
+A test whose assertion cannot fail is invisible to it by construction.
+
+So a separate pass went the other direction. Take a test, read the claim in its
+name and its docstring, mutate the production code so that claim is false, and
+run **the whole suite**. Three outcomes are interesting and one is not:
+
+- the named test fails → the claim is pinned, nothing to do;
+- **some other test fails** → the property is held, but not by the test that
+  advertises it;
+- **nothing fails** → the claim is decorative.
+
+Two rules made the results usable. The audit ran in an isolated worktree pinned
+at `a9ad664`, three commits behind HEAD, so **every finding was re-verified
+against HEAD before it was believed** — and two of them could not be, because
+the code they mutated had since been rewritten and their anchors no longer
+matched anything. Those two were re-derived by hand at HEAD and re-run. And
+where a fix was made, the mutation went into `tests/mutate_index.py`, so the
+second attempt at pinning a property is held the way the first one was not.
+
+**Twenty-four mutations were not caught by the test that named the property.**
+They are not twenty-four defects. They sort into four kinds, and only the first
+two cost anything:
+
+**Nothing at all failed — 7.** The suite went green with the behaviour removed.
+Six are fixed: the manifest no-op (`b6ccd87`, an inode witness, because the byte
+comparison it replaced was identical by construction); the never-seen-session
+bypass, whose test used an interval smaller than the age of the Unix epoch so
+the wrong clause answered; and three of `gitrepo`'s four hardening settings —
+`--template=`, `--no-verify`, `commit.gpgSign = false` — each of which is
+*unobservable while the config isolation in `_env` holds*, which it does in
+every other test in the file (`8477339`). Defence in depth that nothing
+distinguishes is defence in depth nobody will notice losing, so each is now
+pinned by a test that switches the outer lock off first. The seventh is
+`sqlite3.Error` in `main`'s handler (`6f427ad`): the test that claimed to pin it
+corrupts the database file outright, and `_check_schema` converts that to a
+`ValueError` several frames earlier, so the clause was never reached.
+
+**The named test is decorative; a different test holds the property — 15.** One
+was a real defect wearing this shape:
+`test_compact_boundaries_accumulate_within_a_generation` passed `[512, 128]` to
+its second capture, handing back the very offset it then asserted had been
+carried forward. Fixed. A second,
+`test_a_transcript_the_adapter_cannot_parse_is_still_captured`, rests on a false
+premise: `iter_records` skips a line JSON refuses, so the adapter does not fail
+on that input, it returns zero events. The remaining thirteen are the audit
+guessing the wrong owner — the property is pinned, precisely, by a test named
+for it (`test_the_tiling_check_is_not_deletable`,
+`test_a_colliding_segment_is_never_overwritten`,
+`test_an_unchanged_transcript_is_not_rehashed_on_every_pass`, and so on). No
+code changed for those; their docstrings now name the sibling that does the
+work, because the next person to read one will otherwise reach the audit's
+conclusion and the audit was wrong.
+
+**Equivalent mutant — 1.** `init`'s `if not is_repo(home):` deleted, so
+`git init` re-runs on an existing repository. Checked rather than assumed:
+reinit preserves history and `HEAD`, copies nothing (the template is empty),
+warns on a stderr that `_git` captures, and the config loop that follows runs
+either way. The cost is one subprocess per watcher start and the observable
+state is identical. Ruled equivalent; no test can distinguish it and contorting
+one to try would be worse than the mutant.
+
+**False positive — 2.** The audit suffixed two mutation ids to disambiguate
+(`…_FILEMODE`, `…_METADATA`) and then compared the suffixed name against pytest
+node ids, which of course never match. Both were caught by exactly their own
+test.
+
+The shape worth keeping: **an inner lock is unpinnable while the outer lock
+holds.** Four of the seven silent findings were that, and the mutation index
+could never have found them, because whoever wrote the index also believed the
+tests covered them.
 
 ---
 
