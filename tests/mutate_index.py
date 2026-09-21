@@ -301,8 +301,8 @@ MUTANTS = [
     (
         "segments are read in whatever order the manifest lists them",
         "store.py",
-        '            segs = sorted(_seq(man.get("segments")), key=_seg_start)',
-        '            segs = list(_seq(man.get("segments")))',
+        "            segs = sorted(raw_segments, key=_seg_start)",
+        "            segs = list(raw_segments)",
         "test_a_reordered_manifest_is_read_in_offset_order",
     ),
     (
@@ -322,8 +322,8 @@ MUTANTS = [
     (
         "adoption reads the last manifest before anyone has checked it",
         "store.py",
-        "        _check_manifest(man)",
-        "        pass",
+        "        _check_manifest(man)\n        if forked:",
+        "        if forked:",
         "test_a_manifest_field_of_the_wrong_type_is_refused_not_crashed_on",
     ),
     (
@@ -530,6 +530,104 @@ MUTANTS = [
         '        if item["question_id"] in seen:',
         "        if False:",
         "test_a_repeated_question_id_is_rejected_by_the_loader",
+    ),
+    # --- E4: the hook, the watcher, the git layer ---
+    #
+    # Every one of these reverts a fix from the E4 review round, so each is a
+    # defect that shipped once. The point of putting them here rather than
+    # trusting the tests written alongside them is attribution: a review fix
+    # whose test the *next* refactor deletes is a fix with nothing holding it,
+    # and the suite stays green either way.
+    (
+        "an absolute watch pattern is walked instead of refused",
+        "daemon.py",
+        "    if os.path.isabs(value) or os.pardir in value.split(os.sep):",
+        "    if False:",
+        "test_an_absolute_pattern_is_refused_rather_than_walked",
+    ),
+    (
+        "watches claim transcripts in config order, not deepest-root-first",
+        "daemon.py",
+        "    pairs.sort(key=lambda wr: wr[1].count(os.sep), reverse=True)",
+        "    pass",
+        "test_the_most_specific_watch_claims_a_transcript",
+    ),
+    (
+        "one session's failure suspends the whole pass again",
+        "daemon.py",
+        "        except Exception as exc:  # noqa: BLE001 - one session cannot suspend the rest",
+        "        except KeyboardInterrupt as exc:",
+        "test_one_unreadable_session_does_not_suspend_every_other_one",
+    ),
+    (
+        "the error log's repeat rate is the capture interval again",
+        "daemon.py",
+        "now - last_said >= ERROR_REPEAT",
+        "now - last_said >= interval",
+        "test_the_error_rate_limit_survives_interval_zero",
+    ),
+    (
+        "an unchanged transcript is rehashed every pass",
+        "daemon.py",
+        "                os.utime(cap.manifest_path, (now, now))",
+        "                pass",
+        "test_an_unchanged_transcript_is_not_rehashed_on_every_pass",
+    ),
+    (
+        "the / root check goes back below the store check, where it cannot run",
+        "daemon.py",
+        "            if resolved == os.sep:",
+        "            if False:",
+        "test_a_root_of_slash_is_refused_for_being_slash",
+    ),
+    (
+        "a config that is not UTF-8 is repr'd to the log",
+        "daemon.py",
+        "    except ValueError as exc:\n        # `tomllib.load` decodes as UTF-8",
+        "    except SystemExit as exc:\n        # `tomllib.load` decodes as UTF-8",
+        "test_a_config_that_is_not_utf8_is_reported_without_being_printed",
+    ),
+    (
+        "a root that cannot be resolved takes the whole config with it",
+        "daemon.py",
+        "            except ValueError as exc:\n                # An embedded NUL.",
+        "            except SystemExit as exc:\n                # An embedded NUL.",
+        "test_a_root_that_cannot_be_resolved_skips_only_itself",
+    ),
+    (
+        "a doorbell no watch covers is silent again",
+        "daemon.py",
+        "        if result.spool_dropped != last_dropped:",
+        "        if False:",
+        "test_a_hook_record_no_watch_covers_is_reported",
+    ),
+    (
+        "a .gitignore that is not UTF-8 makes the watcher unstartable",
+        "gitrepo.py",
+        "    except (OSError, ValueError):",
+        "    except OSError:",
+        "test_a_gitignore_that_is_not_utf8_does_not_make_the_watcher_unstartable",
+    ),
+    (
+        "the manifest-temp ignore is unanchored, so a filename can match it",
+        "gitrepo.py",
+        "sessions/*/*/*.tmp.*",
+        "*.tmp.*",
+        "test_a_session_named_like_the_stores_own_temp_files_still_reaches_history",
+    ),
+    (
+        "the shim's O_EXCL is dropped and only the [ -h ] test is left",
+        "hook/gitmemory-hook.sh",
+        "\nset -C\n",
+        "\nset +C\n",
+        "test_set_c_alone_stops_the_write_through",
+    ),
+    (
+        "the shim echoes an environment variable's control characters",
+        "hook/gitmemory-hook.sh",
+        "'$(printf '%s' \"$H\" | tr -d '\\000-\\037')'",
+        "'$H'",
+        "test_a_refusal_cannot_rewrite_the_agents_terminal",
     ),
 ]
 
