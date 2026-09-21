@@ -16,6 +16,7 @@ Retrieval difficulty is what the real corpus is for: `pytest -m corpus`.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import math
 import os
@@ -711,6 +712,37 @@ def test_an_arm_whose_dependency_is_absent_is_skipped_with_a_reason():
             close = getattr(built, "close", None)
             if close:
                 close()
+
+
+def test_an_arm_whose_dependency_is_absent_names_the_module_it_is_missing(monkeypatch):
+    """Both halves of that branch, on a machine that is in neither of them.
+
+    The full mutation pass reported `missing = []` SURVIVED, and the reason is
+    the environment rather than the assertion. The sibling above asks the
+    machine what is installed, so on a machine with the hybrid extras present
+    every arm registers, nothing is skipped, and `registered != reported` holds
+    whether the probe ran or not; on a machine without them the same test
+    catches the mutant easily. The worktree the mutation harness runs in has the
+    extras and the development environment does not, so the recorded verdict for
+    that row was a fact about a virtualenv.
+
+    So stop asking. `find_spec` is replaced outright: one named module absent,
+    every other name present, and the answer no longer depends on what `pip`
+    did. A sentinel is enough because `_optional_arms` only `getattr`s the
+    factory off an already-imported module — it does not import the dependency.
+    [E5, full mutation pass]
+    """
+    from bench.__main__ import _optional_arms
+
+    monkeypatch.setattr(
+        importlib.util, "find_spec", lambda name, *a, **k: None if name == "flashrank" else object()
+    )
+    arms, skipped = _optional_arms()
+    assert "rerank" not in arms, "an arm was registered without its dependency"
+    assert "dense" in arms, "the absent module took an unrelated arm down with it"
+    assert [line for line in skipped if line.startswith("rerank: no flashrank")], (
+        f"the skip has to name the module and the extra that supplies it: {skipped}"
+    )
 
 
 def test_the_store_the_arm_builds_is_cleaned_up():

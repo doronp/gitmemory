@@ -410,7 +410,12 @@ MUTANTS = [
         "bench/__main__.py",
         "        missing = [m for m in modules if importlib.util.find_spec(m) is None]",
         "        missing = []",
-        "test_an_arm_whose_dependency_is_absent_is_skipped_with_a_reason",
+        # Was `..._is_skipped_with_a_reason`, which SURVIVED here and would have
+        # been CAUGHT in the development virtualenv: that test asks the machine
+        # what is installed, and this worktree has the hybrid extras while the
+        # main tree does not. The replacement forces the absence instead of
+        # hoping for it. [E5, full mutation pass]
+        "test_an_arm_whose_dependency_is_absent_names_the_module_it_is_missing",
     ),
     (
         "the derangement maps each instance to itself",
