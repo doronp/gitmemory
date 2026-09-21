@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import builtins
+import ipaddress
 import os
+import socket
 import sqlite3
 import sys
 
@@ -222,17 +224,51 @@ def _index(args) -> int:
     return 0
 
 
+def _is_loopback(host: str) -> bool:
+    """Does every address `host` resolves to stay on this machine?
+
+    Resolution, not a string set, in both directions.
+
+    The set said `127.0.0.2` and `127.1` and `[::1]` and `::ffff:127.0.0.1` were
+    not loopback — six spellings, all of them this machine, all of them warned
+    about. E6's own reason for adding `localhost` to the set was that a warning
+    which cries wolf on the safe spelling is one people learn to click past
+    before they meet `0.0.0.0`; that reasoning stopped at one spelling.
+
+    And it can be wrong the *unsafe* way, which matters more now that the answer
+    is a refusal rather than a warning: `localhost` is a name resolved through
+    `/etc/hosts` and NSS, so on a machine where it has been pointed somewhere
+    routable, a string set says loopback and the socket says otherwise. This
+    asks the resolver the same question the bind will ask. [E7 dashboard-F3]
+
+    False for anything that does not resolve, including `""` — which binds
+    every interface — so the refusal is the default for everything unrecognised.
+    """
+    try:
+        infos = socket.getaddrinfo(host.strip("[]"), None)
+    except (OSError, ValueError, UnicodeError):
+        return False
+    return bool(infos) and all(
+        ipaddress.ip_address(info[4][0].split("%")[0]).is_loopback for info in infos
+    )
+
+
 def _dashboard(args) -> int:
-    if args.host not in dashboard.LOOPBACK:
-        # The store is the most sensitive file on the machine. Binding it to
-        # anything but loopback is a deliberate act and is reported as one.
-        #
-        # Against the set, not against the default: `--host localhost` used to
-        # print "serving the store on localhost, not loopback", which is false —
-        # localhost *is* loopback — and a warning that cries wolf on the safe
-        # spelling is one people learn to click past before they meet 0.0.0.0.
-        # [E6 review]
-        print(f"warning: serving the store on {args.host}, not loopback", file=sys.stderr)
+    if not _is_loopback(args.host) and not args.expose:
+        # A refusal, not a warning. The store is the most sensitive file on the
+        # machine, and the control in front of publishing every transcript the
+        # developer owns to the LAN was one line on *stderr* while the URL went
+        # to stdout — so in a pipe or a log the warning was not even next to the
+        # thing it warned about, and the server came up either way with exit 0.
+        # [E7 dashboard-F3]
+        print(
+            f"refusing: --host {args.host} is not loopback. Pass --expose to serve the "
+            "store to the network anyway.",
+            file=sys.stderr,
+        )
+        return 2
+    if args.expose and not _is_loopback(args.host):
+        print(f"serving the store on {args.host}, which is not loopback", file=sys.stderr)
     return dashboard.serve(args.home, db=args.db, host=args.host, port=args.port)
 
 
@@ -329,6 +365,11 @@ def main(argv: list[str] | None = None) -> int:
     dash.add_argument("--db", default=None)
     dash.add_argument("--host", default=dashboard.HOST, help="default: %(default)s (loopback)")
     dash.add_argument("--port", type=int, default=dashboard.PORT)
+    dash.add_argument(
+        "--expose",
+        action="store_true",
+        help="allow a --host that is not loopback (serves the store to the network)",
+    )
     dash.set_defaults(fn=_dashboard)
 
     rec = sub.add_parser("recall", help="search the index; one line per turn, best first")

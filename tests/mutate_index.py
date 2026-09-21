@@ -2199,7 +2199,7 @@ MUTANTS = [
         # read-only look at a local file. The range is what makes it reviewable.
         "the uvx fallback runs an unpinned datasette",
         "dashboard.py",
-        'UVX_SPEC = "datasette<2"',
+        'UVX_SPEC = "datasette>=0.65,<1"',
         'UVX_SPEC = "datasette"',
         "test_the_command_is_immutable_and_loopback",
     ),
@@ -2218,18 +2218,18 @@ MUTANTS = [
         # `--host localhost` warned "not loopback", which is false — and a
         # warning that cries wolf on the safe spelling is one people learn to
         # click past before they ever meet 0.0.0.0.
-        "a loopback alias is warned about as if it were public",
+        "a loopback alias is refused as if it were public",
         "__main__.py",
-        "    if args.host not in dashboard.LOOPBACK:",
-        "    if args.host != dashboard.HOST:",
-        "test_a_bind_outside_loopback_warns_and_a_loopback_alias_does_not",
+        "    if not _is_loopback(args.host) and not args.expose:",
+        "    if args.host != dashboard.HOST and not args.expose:",
+        "test_a_bind_outside_loopback_is_refused_and_every_spelling_of_here_is_not",
     ),
     (
-        "a public bind is not warned about at all",
+        "a public bind is not noticed at all",
         "__main__.py",
-        "    if args.host not in dashboard.LOOPBACK:",
+        "    if not _is_loopback(args.host) and not args.expose:",
         "    if False:",
-        "test_a_bind_outside_loopback_warns_and_a_loopback_alias_does_not",
+        "test_a_bind_outside_loopback_is_refused_and_every_spelling_of_here_is_not",
     ),
     (
         # LOW-1. Datasette holds the file open and `--immutable` entitles SQLite
@@ -3029,6 +3029,75 @@ MUTANTS = [
         "sum(tf1[t] * tf2[t] * idf_metrics[t] ** 2 for t in common)",
         "sum(tf1[t] * tf2[t] * idf_metrics[t] for t in common)",
         "test_the_hoisted_lexrank_is_the_same_matrix_sumy_computes",
+    ),
+    # --- E7 dashboard-F1..F6: the controls, not the flag list --------------- #
+    (
+        "the instance allows anyone again",
+        "dashboard.py",
+        '        "allow": {"id": "root"},',
+        '        "allow_anyone_instead": {"id": "root"},',
+        "test_nothing_reads_the_store_without_the_sign_in_url",
+    ),
+    (
+        # Without `--root` datasette prints no sign-in URL at all, which is why
+        # `_serving` polls a file for it instead of blocking on a pipe.
+        "no sign-in url is offered, so nobody can get in",
+        "dashboard.py",
+        '        "--root",',
+        '        "--metadata",\n        metadata_path,',
+        "test_nothing_reads_the_store_without_the_sign_in_url",
+    ),
+    (
+        "a bind outside loopback warns instead of refusing",
+        "__main__.py",
+        '            file=sys.stderr,\n        )\n        return 2',
+        "            file=sys.stderr,\n        )",
+        "test_a_bind_outside_loopback_is_refused_and_every_spelling_of_here_is_not",
+    ),
+    (
+        "loopback is a string set again, not a resolution",
+        "__main__.py",
+        "    if not _is_loopback(args.host) and not args.expose:",
+        "    if args.host not in dashboard.LOOPBACK and not args.expose:",
+        "test_a_bind_outside_loopback_is_refused_and_every_spelling_of_here_is_not",
+    ),
+    (
+        "--expose stops being the way past the refusal",
+        "__main__.py",
+        "    if not _is_loopback(args.host) and not args.expose:",
+        "    if not _is_loopback(args.host):",
+        "test_a_bind_outside_loopback_is_refused_and_every_spelling_of_here_is_not",
+    ),
+    (
+        "uvx resolves a wider range than the project declares",
+        "dashboard.py",
+        'UVX_SPEC = "datasette>=0.65,<1"',
+        'UVX_SPEC = "datasette<2"',
+        "test_uvx_runs_the_range_the_project_declares",
+    ),
+    (
+        "the address is printed before datasette has it",
+        "dashboard.py",
+        '        rc = subprocess.call(argv)',
+        '        print(f"http://{host}:{port}/  (ctrl-c to stop)")\n'
+        "        rc = subprocess.call(argv)",
+        "test_no_address_is_printed_before_datasette_has_it",
+    ),
+    (
+        "a failed bind is left to uvicorn to explain",
+        "dashboard.py",
+        "        if rc != 0:",
+        "        if False:",
+        "test_no_address_is_printed_before_datasette_has_it",
+    ),
+    (
+        # The shape F6 is about: something store-derived reaching a key
+        # datasette renders as trusted HTML.
+        "something derived from the store reaches the metadata",
+        "dashboard.py",
+        "            json.dump(metadata(name), fh, indent=2)",
+        '            json.dump(metadata(name) | {"title": _digest(path)}, fh, indent=2)',
+        "test_the_metadata_is_the_same_whatever_the_store_holds",
     ),
 ]
 

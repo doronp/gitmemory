@@ -535,8 +535,13 @@ hooks' `additionalContext` outputs concatenate or last-wins.
 
 ### 2.9 Dashboard
 
-`uvx datasette --immutable $GITMEMORY_HOME/index/gitmemory.db -m dashboard.yml --host 127.0.0.1`
-— immutable so the dashboard can never mutate the store. Vega is vendored in the wheel, so it is
+`uvx datasette --immutable $GITMEMORY_HOME/index/gitmemory.db -m dashboard.yml --host 127.0.0.1
+--root` — immutable so the dashboard can never mutate the store, and `--root` against an
+`allow: {id: root}` metadata block so that nothing reads it without the single-use sign-in URL
+Datasette prints at start-up. Loopback alone is not a boundary: a socket has no owner check, and
+a page the user visits can reach one by re-resolving its own name to 127.0.0.1, at which point
+the request is same-origin and CORS never applies. A non-loopback `--host` is refused rather
+than warned about, and `--expose` is the way past it. Vega is vendored in the wheel, so it is
 genuinely offline.
 
 Panels: **Corpus** (sessions, turns, tokens, growth, unique-vs-total bytes) · **Contiguity**

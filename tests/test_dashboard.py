@@ -18,9 +18,19 @@ exactly why the name is computed rather than checked in.
 
 from __future__ import annotations
 
+import contextlib
+import http.cookiejar
+import importlib.util
 import json
 import os
+import socket
 import sqlite3
+import subprocess
+import sys
+import time
+import tomllib
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -616,17 +626,35 @@ def test_serving_a_store_with_no_index_says_so(home):
         dashboard.serve(home)
 
 
-def test_a_bind_outside_loopback_warns_and_a_loopback_alias_does_not(capsys, home, src):
-    """MEDIUM-8. The warning tested the default value, not the set, so `--host
-    localhost` printed "serving the store on localhost, not loopback" — which is
-    false, and a false warning is how a true one stops being read."""
-    built(home, src, [user("u1", "hello")])
-    for host, expect in [("localhost", False), ("::1", False), ("0.0.0.0", True)]:  # noqa: S104
+def test_a_bind_outside_loopback_is_refused_and_every_spelling_of_here_is_not(capsys, home, src):
+    """MEDIUM-8 said the warning tested the default value rather than the set, so
+    `--host localhost` printed "serving the store on localhost, not loopback",
+    which is false. E7 finished the job in both directions.
+
+    **A refusal, not a warning.** The control in front of publishing every
+    transcript the developer owns to the LAN was one line on stderr while the
+    URL went to stdout — separated in any pipe or log — and the server came up
+    with exit 0 regardless.
+
+    **Resolved, not matched.** The set held three spellings and there are at
+    least six more that mean this machine; each one warned, and a warning that
+    cries wolf is the one people learn to click past. `127.0.0.2` is a normal
+    way to give a local service its own address. [E7 dashboard-F3]"""
+    built(home, src, [user("u1", "hello")]).close()
+    here = ["127.0.0.1", "localhost", "::1", "[::1]", "127.0.0.2", "127.1", "::ffff:127.0.0.1"]
+    away = ["0.0.0.0", "::", "", "192.168.1.50", "example.invalid"]  # noqa: S104
+    served = {}
+    for host in here + away:
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(dashboard.subprocess, "call", lambda _argv: 0)
-            assert main(["--home", home, "dashboard", "--host", host]) == 0
-        warned = "not loopback" in capsys.readouterr().err
-        assert warned is expect, f"--host {host}"
+            served[host] = main(["--home", home, "dashboard", "--host", host])
+    capsys.readouterr()
+    assert served == {**dict.fromkeys(here, 0), **dict.fromkeys(away, 2)}, served
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(dashboard.subprocess, "call", lambda _argv: 0)
+        assert main(["--home", home, "dashboard", "--host", "0.0.0.0", "--expose"]) == 0  # noqa: S104
+    assert "not loopback" in capsys.readouterr().err
 
 
 def test_the_start_up_line_names_the_build_being_served(capsys, home, src, monkeypatch):
@@ -671,3 +699,214 @@ def test_serve_hands_datasette_a_metadata_file_that_exists(home, src, monkeypatc
     assert dashboard.serve(home, port=9999) == 0
     assert seen["meta"]["title"] == "gitmemory"
     assert seen["argv"][seen["argv"].index("--port") + 1] == "9999"
+
+
+# --------------------------------------------------------------------------- #
+# E7 dashboard: the controls, asserted against a running server where the
+# property lives in Datasette's behaviour rather than in our argv
+# --------------------------------------------------------------------------- #
+
+
+def _free_port() -> int:
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def _get(url: str, *, host: str | None = None, opener=None) -> tuple[int, bytes]:
+    """`(status, body)`, with an HTTP error read as a status and not an exception.
+
+    `host` sets the `Host` header without changing where the socket goes, which
+    is the server-side half of a DNS rebind: a page at `attacker.example` whose
+    name has just been re-pointed at 127.0.0.1 sends exactly this request.
+    """
+    request = urllib.request.Request(url, headers={"Host": host} if host else {})
+    fn = opener.open if opener else urllib.request.urlopen
+    try:
+        response = fn(request, timeout=10)
+        return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, b""
+
+
+@contextlib.contextmanager
+def _serving(db: str, tmp_path):
+    """The real Datasette, on a free port, with the argv `command()` produces.
+
+    `sys.executable -m datasette` rather than `command()`'s own `argv[0]`: the
+    executable is on the venv's `bin`, which is not on `PATH` under
+    `python -m pytest`, and the `uvx` fallback would fetch from PyPI in the
+    middle of a unit test. Everything after argv[0] is ours, unmodified — the
+    flags are what is under test.
+
+    Yields `(base_url, token_url)`, and `token_url` is `""` if Datasette never
+    printed one. Stdout goes to a file rather than a pipe, deliberately: the
+    sign-in URL is the *first* line only when `--root` is passed, so a
+    `readline()` on a pipe is a test that hangs for the one mutation it most
+    needs to fail on.
+    """
+    port = _free_port()
+    meta = tmp_path / "metadata.json"
+    log = tmp_path / "datasette.log"
+    name = os.path.splitext(os.path.basename(db))[0]
+    meta.write_text(json.dumps(dashboard.metadata(name)), encoding="utf-8")
+    argv = dashboard.command(db, port=port, metadata_path=str(meta))
+    head = argv.index("--immutable")
+    with open(log, "w", encoding="utf-8") as fh:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "datasette", *argv[head:]],
+            stdout=fh,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                try:
+                    socket.create_connection(("127.0.0.1", port), 0.2).close()
+                    break
+                except OSError:
+                    time.sleep(0.05)
+            else:
+                raise AssertionError("datasette never bound")
+            printed = log.read_text(encoding="utf-8").splitlines()
+            token = next((ln for ln in printed if "/-/auth-token?token=" in ln), "")
+            yield f"http://127.0.0.1:{port}", token.strip()
+        finally:
+            proc.terminate()
+            proc.wait(10)
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("datasette") is None,
+    reason="needs the real server: pip install -e '.[serve]'",
+)
+def test_nothing_reads_the_store_without_the_sign_in_url(home, src, tmp_path):
+    """The whole corpus, unauthenticated, in one request. Measured before the
+    fix on a synthetic store: `GET /gitmemory-v2/blocks.csv?_stream=1` returned
+    200 and every one of 1500 canaries, past `max_returned_rows`, with
+    `allow_download off` set — that flag removed the tidiest way to take the
+    store, not the ability to take it.
+
+    Loopback is not the boundary it reads as. A socket has no owner check, and
+    a web page can reach one by re-resolving its own name to 127.0.0.1, at
+    which point the request is same-origin and CORS never applies. `Host:` is
+    the server-side half and Datasette validates it against nothing — so this
+    test asserts the *other* half: anonymous is 403 whatever the `Host` says,
+    and the cookie that lifts that is scoped to the host in the sign-in URL.
+
+    Argv-shaped assertions cannot carry this. The property is Datasette's
+    behaviour, not our flag list, and `--root` without `metadata()["allow"]`
+    denies nobody at all. [E7 dashboard-F1/F2]
+    """
+    built(home, src, [user("u1", "the peculiar marmoset")]).close()
+    with _serving(index.db_path(home), tmp_path) as (base, token):
+        anon = {
+            "/": _get(base + "/")[0],
+            "/blocks.csv": _get(f"{base}/gitmemory-v{index.SCHEMA}/blocks.csv?_stream=1")[0],
+            "/blocks.json": _get(f"{base}/gitmemory-v{index.SCHEMA}/blocks.json")[0],
+            # The index's absolute path, no SQL needed.
+            "/-/databases.json": _get(base + "/-/databases.json")[0],
+            "rebound": _get(
+                f"{base}/gitmemory-v{index.SCHEMA}/blocks.csv?_stream=1", host="evil.example"
+            )[0],
+        }
+        assert anon == dict.fromkeys(anon, 403), anon
+
+        jar = urllib.request.build_opener(
+            urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
+        )
+        assert token.startswith(base + "/-/auth-token?token="), token
+        assert _get(token, opener=jar)[0] == 200, "the sign-in URL is the way back in"
+        status, body = _get(f"{base}/gitmemory-v{index.SCHEMA}/blocks.csv?_stream=1", opener=jar)
+        assert status == 200 and b"marmoset" in body, "signed in, the dashboard still works"
+        # E6's control, re-asserted where it lives rather than in the flag list.
+        assert _get(f"{base}/gitmemory-v{index.SCHEMA}.db", opener=jar)[0] == 403
+        # Single-use: a token in a shell history is not a standing key.
+        assert _get(token)[0] == 403
+
+
+def test_the_instance_denies_everyone_who_is_not_root(monkeypatch):
+    """`--root` and the `allow` block are one control in two places. Either one
+    alone is nothing: `--root` without `allow` offers a sign-in nobody needs,
+    and `allow` without `--root` locks the owner out too. [E7 dashboard-F1]"""
+    assert dashboard.metadata("db")["allow"] == {"id": "root"}
+    for present in ("datasette", "uvx"):
+        monkeypatch.setattr(
+            dashboard.shutil, "which", lambda n, p=present: f"/bin/{n}" if n == p else None
+        )
+        assert "--root" in dashboard.command("/tmp/x.db", metadata_path="/tmp/m.json")
+
+
+def test_the_metadata_is_the_same_whatever_the_store_holds(home, src, tmp_path, monkeypatch):
+    """`description_html` is inserted unescaped — that is Datasette's contract
+    for the key. So nothing store-derived may reach it, and the way that breaks
+    is an f-string in a caption: "Currently {n} agents: {names}", where `names`
+    comes from a manifest, which comes from a transcript. That is stored XSS on
+    the origin serving every secret the developer has typed at an agent.
+
+    Through `serve`, against two different stores, on the file Datasette
+    actually reads — not `metadata(name) == metadata(name)`, which takes no
+    store and so cannot fail. What is pinned is that the store is not an input:
+    the day it becomes one, these two files stop matching. Byte-identical, not
+    "contains the right substrings", because an injected caption satisfies
+    presence too. [E7 dashboard-F6]"""
+    seen = []
+    monkeypatch.setattr(
+        dashboard.subprocess,
+        "call",
+        lambda argv: seen.append(Path(argv[argv.index("--metadata") + 1]).read_text("utf-8")) or 0,
+    )
+    built(home, src, [user("u1", "<script>alert(1)</script> <img src=x onerror=1> $$$")]).close()
+    dashboard.serve(home)
+    other = tmp_path / "other"
+    other.mkdir()
+    built(str(other), str(tmp_path / "other.jsonl"), [user("u1", "nothing")]).close()
+    dashboard.serve(str(other))
+
+    assert len(seen) == 2 and seen[0] == seen[1], "the store reached the metadata"
+    assert "<script>" not in seen[0] and "onerror" not in seen[0], seen[0][:400]
+
+
+def test_uvx_runs_the_range_the_project_declares(monkeypatch):
+    """`UVX_SPEC` was `datasette<2` while `pyproject.toml`'s `serve` extra said
+    `datasette>=0.65,<1`. Two ranges for one product, and the tested one was the
+    narrower one while the path most users take is the wider one: the day 1.0
+    ships final, `uvx datasette<2` silently starts running a major version with
+    a POST write API and `/-/create-token`.
+
+    Against the declared extra, not against a literal typed twice — the old test
+    asserted only that the string contained one of `<=>`, which `datasette<99`
+    also satisfies. [E7 dashboard-F4]"""
+    declared = [
+        spec
+        for spec in tomllib.loads(
+            (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text(encoding="utf-8")
+        )["project"]["optional-dependencies"]["serve"]
+        if spec.startswith("datasette>") or spec.startswith("datasette<") or spec == "datasette"
+    ]
+    assert declared == [dashboard.UVX_SPEC], f"pyproject says {declared}, UVX_SPEC is not in it"
+
+    monkeypatch.setattr(
+        dashboard.shutil, "which", lambda n: None if n == "datasette" else f"/bin/{n}"
+    )
+    assert dashboard.command("/tmp/x.db", metadata_path="/tmp/m.json")[1] == dashboard.UVX_SPEC
+
+
+def test_no_address_is_printed_before_datasette_has_it(capsys, home, src, monkeypatch):
+    """`serve` printed `http://127.0.0.1:8081/` and *then* called Datasette, so a
+    local process squatting the port — 8081 is a published constant above 1024 —
+    was handed the user's browser on an origin it could fill with fabricated
+    corpus and spend numbers. The bind error arrived four lines later, under
+    three green `INFO` lines saying startup was complete.
+
+    Uvicorn prints the address when it has actually bound. Ours said it either
+    way, so ours is gone. [E7 dashboard-F5]"""
+    built(home, src, [user("u1", "hello")]).close()
+    monkeypatch.setattr(dashboard.subprocess, "call", lambda _argv: 3)
+    assert dashboard.serve(home, port=8081) == 3
+    out = capsys.readouterr()
+    assert "http://127.0.0.1:8081" not in out.out, out.out
+    assert "nothing is serving 127.0.0.1:8081" in out.err, out.err

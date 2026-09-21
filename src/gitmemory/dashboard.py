@@ -13,9 +13,16 @@ that can write to it is a dashboard that can silently become the only copy of
 something. Datasette opens it read-only and, with `--immutable`, promises SQLite
 nothing else will write either.
 
-**`127.0.0.1`.** A transcript store is the most sensitive file a developer owns.
-The default bind is loopback and the flag to change it is `--host`, which is a
-thing somebody has to type.
+**`127.0.0.1`, and a sign-in.** A transcript store is the most sensitive file a
+developer owns. The default bind is loopback and the flag to change it is
+`--host`, which is a thing somebody has to type — but loopback is not a
+boundary. It has no uid check, so any process that can `connect()` reads the
+store; and a web page the user visits can reach a loopback port by DNS
+rebinding, because the origin it was served from never changes. So the
+instance denies anonymous access (`allow: {id: root}`) and Datasette prints a
+single-use sign-in URL at start-up. That cookie is scoped to the host in the
+URL, which is what closes the rebinding route: a page at `attacker.example`
+does not get it. [E7 dashboard-F1/F2]
 
 **The metadata is generated, not shipped.** Datasette keys table descriptions by
 database *name*, and the name carries the schema version (`gitmemory-v2.db`), so
@@ -36,6 +43,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 
 from . import index
@@ -116,8 +124,10 @@ _DESCRIPTION = """
 <p>Built from a gitmemory store: agent transcripts, captured verbatim, committed
 to git, indexed here. The database is opened <b>immutable</b> — nothing on this
 page can change the store, and the store is not the only copy of anything.
-Loopback is not authentication: anything running as you on this machine can read
-this page.</p>
+You reached it through a one-time sign-in link, because loopback is not a
+boundary: a socket on this machine has no owner check — anything that can
+connect, not only what runs as you — and a web page you visit can reach a
+loopback port by re-resolving its own name to 127.0.0.1.</p>
 <p><b>Frugality, stated exactly.</b> Cache-served share is a real saving, against
 the same prompt sent uncached and against nothing else. There is no <i>tokens
 saved</i> tile, because the comparison it would need — the same work without
@@ -132,9 +142,28 @@ def metadata(db_name: str) -> dict:
 
     Split out from `command` so a test can assert the descriptions land on the
     right database without starting a server.
+
+    Two contracts here, both load-bearing.
+
+    `allow` denies everyone who is not `root`, and `command` passes `--root` so
+    that Datasette prints one sign-in URL. Measured before it was added, on a
+    1500-block synthetic store: `curl -H 'Host: evil.example'
+    '…/blocks.csv?_stream=1'` returned 200 and 1500 of 1500 canaries in a single
+    request. With it, every endpoint is 403 until the token is used — including
+    `/-/databases.json`, which publishes the index's absolute path.
+    [E7 dashboard-F1/F2]
+
+    `description_html` is inserted into the page *unescaped* — that is
+    Datasette's contract for the key, not an oversight here. Nothing derived
+    from a transcript may reach it. Every value is a module-level literal, and
+    `test_the_metadata_is_the_same_whatever_the_store_holds` is what keeps it
+    that way: the day a caption grows an f-string over `generations.agent`,
+    that is stored XSS on the origin holding every secret the developer has
+    typed at an agent. [E7 dashboard-F6]
     """
     return {
         "title": "gitmemory",
+        "allow": {"id": "root"},
         "description_html": _DESCRIPTION.strip(),
         "license": "Apache-2.0",
         "license_url": "https://www.apache.org/licenses/LICENSE-2.0",
@@ -146,7 +175,15 @@ def metadata(db_name: str) -> dict:
     }
 
 
-UVX_SPEC = "datasette<2"  # a version range, so what runs is a reviewable line
+# The same range `pyproject.toml` declares for the `serve` extra, and a test
+# asserts they stay equal. They used to differ — `datasette<2` here against
+# `datasette>=0.65,<1` there — which meant the version most users ran was the
+# one nobody had tested: the day 1.0 ships final, `<2` starts resolving to a
+# major version with a POST write API, `/-/create-token`, and permission
+# defaults this review never looked at. A range, not a pin, so a patch release
+# (which is where security fixes land) does not need an edit here.
+# [E7 dashboard-F4]
+UVX_SPEC = "datasette>=0.65,<1"
 
 
 def command(db: str, *, host: str = HOST, port: int = PORT, metadata_path: str) -> list[str]:
@@ -164,6 +201,15 @@ def command(db: str, *, host: str = HOST, port: int = PORT, metadata_path: str) 
     `allow_download` off: `--immutable` constrains writes and says nothing about
     reads, and Datasette otherwise offers the whole `.db` — every transcript byte,
     unredacted, `redact` having never run on the index — as a single file link.
+    It was also the only control this module had, and it is a small one: it
+    removed the *tidiest* way to take the store, not the ability to take it.
+    `blocks.csv?_stream=1` returned the whole table in one unauthenticated
+    request. `--root` is the control; this is tidiness. [E7 dashboard-F1]
+
+    Arbitrary SQL stays *on*. It is behind the sign-in now, and it is the thing
+    a person opens a database for; switching it off would have cost the owner
+    the console and bought nothing an attacker could have used, since every
+    path it discloses is 403 without the token. [E7 dashboard-F7]
     """
     args = [
         "datasette",
@@ -171,6 +217,9 @@ def command(db: str, *, host: str = HOST, port: int = PORT, metadata_path: str) 
         db,
         "--metadata",
         metadata_path,
+        # Pairs with `metadata()["allow"]`, and is useless without it: `--root`
+        # alone only *offers* a root sign-in, it denies nobody.
+        "--root",
         "--setting",
         "allow_download",
         "off",
@@ -209,9 +258,20 @@ def serve(home: str | None = None, *, db: str | None = None, host: str = HOST, p
         # serves the old inode forever, confidently, with no sign that it is
         # stale. Printing the digest does not fix that; it makes it checkable
         # against `gitmemory index`'s own output. [E6 review]
-        print(f"http://{host}:{port}/  (ctrl-c to stop)")
         print(f"content {_digest(path)} — restart after a rebuild; the page will not notice one")
-        return subprocess.call(argv)
+        print("open the one-time sign-in URL datasette prints below, not the bare address")
+        # No `http://host:port/` line of our own any more. It was printed
+        # *before* `subprocess.call`, so a local process squatting the port —
+        # 8081 is a published constant above 1024, so no scanning is needed —
+        # got handed the user's browser on an origin it could then fill with
+        # fabricated corpus and spend numbers. The bind failure arrived four
+        # lines later, after three green `INFO` lines. Uvicorn prints
+        # "Uvicorn running on http://…" when it has actually bound, which is
+        # the same fact and is true when it says it. [E7 dashboard-F5]
+        rc = subprocess.call(argv)
+        if rc != 0:
+            print(f"datasette exited {rc}; nothing is serving {host}:{port}", file=sys.stderr)
+        return rc
 
 
 def _digest(path: str) -> str:
