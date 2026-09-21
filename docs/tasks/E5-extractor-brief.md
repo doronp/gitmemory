@@ -12,7 +12,7 @@ looking for it. Details under "Why your worktree is missing things".
 ```python
 @dataclass(frozen=True, slots=True)
 class Decision:
-    kind: str        # "directive" | "reversal"
+    kind: str  # "directive" | "reversal"
     source_ref: str  # a Block.block_id belonging to this session
 
 
