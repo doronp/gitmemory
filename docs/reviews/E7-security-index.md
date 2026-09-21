@@ -14,7 +14,7 @@ behaviour, the named test required to fail.
 
 ## Status
 
-**Ten findings; nine closed so far.** This document grows as the round does.
+**Ten findings, ten closed.** The round is done.
 
 | | Finding | Outcome |
 |---|---|---|
@@ -25,7 +25,7 @@ behaviour, the named test required to fail.
 | F5 | Lone surrogates reach the committed artifacts | **fixed** — one transform, at the one door |
 | F6 | One oversized block aborts the whole build | **fixed** — the guard now covers the writes, under a savepoint |
 | F7 | Control characters and bidi overrides reach `graph.json` labels | **fixed** — same transform, and it was not only `graph.json` |
-| F8 | `derive.ideas` costs ~32 s of CPU for 284 KB of crafted text | open |
+| F8 | `derive.ideas` costs ~32 s of CPU for 284 KB of crafted text | **fixed** — two sumy loops hoisted, bit for bit; 31 s → 1.4 s |
 | F9 | `index/` is created 0755 where the store is 0700 | **fixed** — `_mkdir` here too, and it unbroke `--db /tmp/x.db` |
 | F10 | The truncation warning is announced once per process | **fixed** — the count is on the result, and `recall` prints it first |
 
@@ -365,9 +365,71 @@ future caller can still ignore `.dropped`. That is a caller choosing to, which
 is the distinction the fix is for: the fact is now *available* per query rather
 than announced once per process and discarded.
 
+## F8 — the caps bounded the input, not the cost
+
+Two caps already stood in front of `derive.ideas`: `MAX_SENTENCES = 2000` and
+`MAX_WORDS = 50_000`. Neither bounds *time*, which is the third cost and the
+one nobody had measured. A document sitting exactly on both — 2 000 sentences
+of 25 all-distinct words, **333 KB** — cost **30.64 s of CPU**. It is 333 KB of
+text in a transcript; nothing about it is exotic.
+
+**The report's diagnosis was wrong, and profiling is what said so.** It named
+`_compute_idf` and prescribed: *"override `_compute_idf` to build a `set` per
+sentence once — the latter is a few lines and removes the quadratic entirely."*
+cProfile on the reproduction:
+
+| | cumulative |
+|---|---|
+| `_create_matrix` | 39.5 s |
+| `_compute_idf` | 10.5 s |
+
+The prescribed fix alone would have gone 30 s → about 23 s and been written up
+as closed. sumy has two quadratics, not one:
+
+- `_compute_idf` does `sum(1 for s in sentences if term in s)` for every
+  distinct term, against a *list* (`_to_words_set` returns one, despite the
+  name) — O(distinct × sentences × length).
+- `_create_matrix` rebuilds `frozenset(sentence1)`, `frozenset(sentence2)` and
+  both vector norms inside each of the n² pairs — 2n times each — then runs a
+  *second* n² loop only to divide each row by its degree.
+
+The fix is a `LexRankSummarizer` subclass inside `_sumy()` overriding both: one
+`Counter` pass for document frequencies, the frozensets and norms hoisted out
+of the pair loop, the degree division folded into a row loop. Measured:
+
+| document | before | after |
+|---|---|---|
+| 2000 × 25, all distinct (both caps) | 29.80 s | 1.37 s |
+| 2000 × 25, one repeated vocabulary | 23.10 s | 9.11 s |
+| 2000 × 5, one repeated vocabulary | 7.31 s | 2.70 s |
+
+The worst case is now **9.1 s** and it is *derived*, not argued: cost is
+`Σ over pairs of min(len_i, len_j)`, maximised at equal lengths, which at the
+caps is `n × MAX_WORDS` = 10⁸ term-multiplications. Raising `MAX_SENTENCES`
+raises it superlinearly. The caps themselves are unchanged — they were not what
+was wrong.
+
+**An optimisation or a fork, and the difference is a test.**
+`test_the_hoisted_lexrank_is_the_same_matrix_sumy_computes` runs eight random
+documents through both classes and compares the idf dicts, the similarity
+matrices **element-wise**, and the picks. Not the picks alone: a matrix that
+differs in the last bit only changes a ranking near a threshold, which is
+exactly the case a picks-only test would miss.
+
+A further 2× is available from the matrix's symmetry and was declined. `u1 & u2`
+and `u2 & u1` iterate in different orders, so the two sums round differently in
+the last bit, and a pair either side of the threshold would then depend on which
+triangle computed it. Bit-identical to sumy is worth more than the 2×; it is
+what lets this go upstream as a patch rather than live here as a divergence.
+
+**What this does not fix.** 9.1 s is still 9.1 s — this is a bound on the
+damage, not a denial of it, and `derive` has no time budget of its own. A
+document that wants to be slow can still be slow, just not thirty seconds slow,
+and the number is now one a reader can predict from the caps.
+
 ## Negative controls added this round
 
-Twenty-one rows, all run, **21/21 CAUGHT by their intended test**.
+Twenty-five rows, all run, **25/25 CAUGHT by their intended test**.
 
 | Mutant | Verdict |
 |---|---|
@@ -392,6 +454,10 @@ Twenty-one rows, all run, **21/21 CAUGHT by their intended test**.
 | the symlink refusal is skipped for `<home>/index` too | CAUGHT |
 | the truncation count is remembered, so only the first query says so | CAUGHT |
 | `recall` does not mention that it dropped terms | CAUGHT |
+| sumy's own quadratic idf is used again | CAUGHT |
+| sumy's own per-pair frozensets and norms are rebuilt again | CAUGHT |
+| the hoisted idf smooths the document frequency differently | CAUGHT |
+| the hoisted numerator weights idf once, not squared | CAUGHT |
 
 Five existing rows had their anchors re-pointed at rewritten lines and were
 re-run — "an index from a superseded schema is left on disk forever", "a
@@ -402,3 +468,9 @@ segmented leaves no trace in the digest". All five still CAUGHT.
 Two more were re-pointed for F10 and re-run: "truncation goes silent", whose
 anchor was the `if dropped:` that no longer exists, and "MAX_TERMS never
 actually drops a term". Both still CAUGHT.
+
+A fifth F8 row was written and thrown away: `>` for `>=` on the threshold
+comparison. A cosine landing on 0.1 exactly is a float coincidence no fixture
+can arrange, so the mutant is inert and the row could only ever score CAUGHT on
+the harness's own anchor self-test. A control that cannot fail is worse than no
+control, because it counts.

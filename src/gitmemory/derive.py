@@ -24,10 +24,12 @@ from __future__ import annotations
 import contextlib
 import glob as _glob
 import json
+import math
 import os
 import re
 import shutil
 import tempfile
+from collections import Counter
 from dataclasses import dataclass, field
 
 from . import records, redact, store
@@ -49,6 +51,14 @@ DEFAULT_IDEAS = 8
 # terminator-free block: 64 000 words 8.5 s, 128 000 words 33 s, 256 000 words
 # 133 s — clean x4 per doubling, so ~9 hours at 48 MB, which one agent
 # transcript can reach. MAX_WORDS is the cap on that axis. [E5:5]
+#
+# Neither cap bounded the *time*, which is the third cost and the one nobody
+# had measured: 2 000 sentences of 25 all-distinct words sits exactly on both
+# caps, is 333 KB, and cost 30 s of CPU. The caps were not wrong — the loops
+# under them were, and `_sumy`'s `LexRank` subclass hoists them. Worst case at
+# these same numbers is now 9.1 s, and it is a *measured* ceiling rather than
+# an argued one. Raising MAX_SENTENCES raises it superlinearly; read the note
+# on the subclass before touching either number. [E7 index-F8]
 #
 # ponytail: two hard caps, and the shortfall is reported rather than hidden
 # (`sentences_seen` vs `sentences_ranked`, `words_ranked`). Raise them by
@@ -96,11 +106,93 @@ def _sumy():
         raise RuntimeError(
             "derivation needs the `derive` extra: pip install -e '.[derive]'"
         ) from exc
+
+    class LexRank(LexRankSummarizer):
+        """sumy's LexRank with two loops hoisted. Same matrix, bit for bit.
+
+        Not an improvement on the algorithm — the same algorithm, with the
+        work that does not depend on the loop variable moved out of the loop.
+        Both overrides are checked against the originals by
+        `test_the_hoisted_lexrank_is_the_same_matrix_sumy_computes`, which
+        compares the matrices element-wise and the picks, on random documents.
+
+        The caps above bound the *shape* of the input; without these they did
+        not bound its *cost*, because the cost is in two places neither cap
+        could see. Measured on this tree, worst case at each cap:
+
+            2000 sentences x 25 all-distinct words   29.80 s -> 1.37 s
+            2000 sentences x 25 identical words      23.10 s -> 9.11 s
+            2000 sentences x 5 identical words        7.31 s -> 2.70 s
+
+        `_compute_idf` asks `sum(1 for s in sentences if term in s)` once per
+        distinct term, and `s` is a *list* despite `_to_words_set`'s name — so
+        it is O(distinct x sentences x length) where a document-frequency
+        count is O(total words). That is the first column above.
+
+        `_create_matrix` calls `cosine_similarity`, which builds
+        `frozenset(sentence)` for both arguments and recomputes both vector
+        norms, for every one of the n^2 pairs — so each sentence's set is
+        rebuilt 2n times and its norm 2n times. Hoisting both leaves the
+        genuinely pairwise part: the intersection and the dot product over it,
+        which is what LexRank is. That is the residue in the second column,
+        and it is the real ceiling: at the caps, `sum over pairs of
+        min(len_i, len_j)` maximises at equal lengths, 2000^2 x 25 = 10^8
+        term-multiplications, which is the 9.11 s.
+
+        ponytail: the symmetry is not exploited. `cos(i,j) == cos(j,i)`, so
+        half the loop is redundant and 9.11 s could be 4.6 s — but the two
+        intersections iterate in different orders, so the sums round
+        differently in the last bit, and a pair either side of the threshold
+        would then depend on which triangle computed it. Bit-identical to
+        sumy is worth more than the 2x. [E7 index-F8]
+        """
+
+        @staticmethod
+        def _compute_idf(sentences):
+            df = Counter()
+            for sentence in sentences:
+                df.update(set(sentence))
+            count = len(sentences)
+            return {term: math.log(count / (1 + n_j)) for term, n_j in df.items()}
+
+        def _create_matrix(self, sentences, threshold, tf_metrics, idf_metrics):
+            count = len(sentences)
+            unique = [frozenset(s) for s in sentences]
+            # sumy's `denominator1`/`denominator2`, square-rooted once here
+            # rather than 2n times each inside the loop.
+            norms = [
+                math.sqrt(sum((tf[t] * idf_metrics[t]) ** 2 for t in u))
+                for u, tf in zip(unique, tf_metrics, strict=True)
+            ]
+            matrix = numpy.zeros((count, count))
+            degrees = numpy.zeros((count,))
+            for row in range(count):
+                u1, tf1, norm1 = unique[row], tf_metrics[row], norms[row]
+                if norm1 <= 0:  # sumy's `denominator1 > 0`, which returns 0.0
+                    continue
+                for col in range(count):
+                    norm2 = norms[col]
+                    if norm2 <= 0:
+                        continue
+                    common = u1 & unique[col]
+                    if not common:  # a zero numerator never exceeds a positive
+                        continue    # threshold, and this is the common case
+                    tf2 = tf_metrics[col]
+                    numerator = sum(tf1[t] * tf2[t] * idf_metrics[t] ** 2 for t in common)
+                    if numerator / (norm1 * norm2) > threshold:
+                        matrix[row, col] = 1.0
+                        degrees[row] += 1
+            for row in range(count):
+                # `or 1` is sumy's `if degrees[row] == 0: degrees[row] = 1`,
+                # which it does inside a second n^2 loop.
+                matrix[row] /= degrees[row] or 1
+            return matrix
+
     return (
         ObjectDocumentModel,
         Paragraph,
         Sentence,
-        LexRankSummarizer,
+        LexRank,
         get_stop_words("english"),
         numpy,
     )

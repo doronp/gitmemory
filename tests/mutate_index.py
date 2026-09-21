@@ -2995,6 +2995,41 @@ MUTANTS = [
         "    if False:",
         "test_recall_says_a_query_was_truncated_before_it_says_no_matches",
     ),
+    # --- E7 index-F8: the caps bound the shape of the input, not its cost -- #
+    (
+        "sumy's own quadratic idf is used again",
+        "derive.py",
+        "        def _compute_idf(sentences):",
+        "        def _compute_idf_not_an_override(sentences):",
+        "test_a_document_that_sits_exactly_on_both_caps_is_ranked_in_seconds",
+    ),
+    (
+        "sumy's own per-pair frozensets and norms are rebuilt again",
+        "derive.py",
+        "        def _create_matrix(self, sentences, threshold, tf_metrics, idf_metrics):",
+        "        def _create_matrix_not_an_override(self, sentences, threshold, "
+        "tf_metrics, idf_metrics):",
+        "test_a_document_that_sits_exactly_on_both_caps_is_ranked_in_seconds",
+    ),
+    (
+        # The overrides are an optimisation or they are a fork, and these two
+        # rows are what says which. Not the threshold comparison: `>` for `>=`
+        # is very nearly inert, because a cosine landing on 0.1 exactly is a
+        # float coincidence no fixture can arrange, and a row that cannot fail
+        # is worse than no row.
+        "the hoisted idf smooths the document frequency differently",
+        "derive.py",
+        "return {term: math.log(count / (1 + n_j)) for term, n_j in df.items()}",
+        "return {term: math.log(count / n_j) for term, n_j in df.items()}",
+        "test_the_hoisted_lexrank_is_the_same_matrix_sumy_computes",
+    ),
+    (
+        "the hoisted numerator weights idf once, not squared",
+        "derive.py",
+        "sum(tf1[t] * tf2[t] * idf_metrics[t] ** 2 for t in common)",
+        "sum(tf1[t] * tf2[t] * idf_metrics[t] for t in common)",
+        "test_the_hoisted_lexrank_is_the_same_matrix_sumy_computes",
+    ),
 ]
 
 

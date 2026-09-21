@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -1870,3 +1871,104 @@ def test_a_key_in_a_decision_block_costs_its_label_and_not_the_generation(home, 
     blob = b"".join(p.read_bytes() for p in Path(home, "derived").rglob("*.json"))
     assert blob, "derived nothing, so the scan below is vacuous"
     assert key.encode() not in blob, "the key reached the committed artifact tree"
+
+
+# --------------------------------------------------------------------------- #
+# E7 index-F8: the caps bound the shape of the input, not its cost
+# --------------------------------------------------------------------------- #
+
+
+def _ranked(n: int, per: int, *, distinct: bool = True) -> str:
+    """`n` sentences of `per` words, every word distinct unless told otherwise.
+
+    All-distinct is the shape that costs `_compute_idf`; identical is the shape
+    that costs the pairwise loop. Both sit inside the caps.
+    """
+    out, seen = [], 0
+    for _ in range(n):
+        words = [f"w{seen + j}" if distinct else f"v{j}" for j in range(per)]
+        seen += per
+        out.append(" ".join(words) + ".")
+    return " ".join(out)
+
+
+def test_the_hoisted_lexrank_is_the_same_matrix_sumy_computes():
+    """The two overrides are an optimisation or they are a fork, and the
+    difference is this test. Element-wise on the matrix, not just the picks: a
+    matrix can differ in a cell that no threshold comparison reaches on a
+    particular document, and then the picks agree by luck. [E7 index-F8]
+    """
+    import random
+
+    from sumy.models.dom import ObjectDocumentModel, Paragraph, Sentence
+    from sumy.summarizers.lex_rank import LexRankSummarizer
+
+    hoisted = derive._sumy()[3]
+    assert hoisted is not LexRankSummarizer, "the subclass is not in the seam"
+    tok = derive._Tok()
+    vocab = ["alpha", "beta", "gamma", "delta", "lock", "await", "the", "held"]
+    rng = random.Random(42)
+
+    for trial in range(8):
+        texts = [
+            " ".join(rng.choice(vocab) for _ in range(rng.randint(1, 12))) + "."
+            for _ in range(rng.randint(2, 40))
+        ]
+        document = ObjectDocumentModel([Paragraph([Sentence(t, tok) for t in texts])])
+        stock, fast = LexRankSummarizer(), hoisted()
+        for s in (stock, fast):
+            s.stop_words = ()
+        words = [stock._to_words_set(s) for s in document.sentences]
+        tf = stock._compute_tf(words)
+        assert fast._compute_idf(words) == stock._compute_idf(words), trial
+        stock_matrix = stock._create_matrix(words, stock.threshold, tf, stock._compute_idf(words))
+        fast_matrix = fast._create_matrix(words, fast.threshold, tf, fast._compute_idf(words))
+        assert (stock_matrix == fast_matrix).all(), f"trial {trial}: the matrices differ"
+        assert [str(x) for x in fast(document, 5)] == [str(x) for x in stock(document, 5)], trial
+
+
+def test_a_document_that_sits_exactly_on_both_caps_is_ranked_in_seconds():
+    """800 sentences of 25 all-distinct words is inside both caps and cost
+    4.60 s in the summariser before the loops were hoisted, 0.22 s after. At
+    the caps themselves — 2000 sentences — it was 31 s, which is the finding.
+
+    All-distinct, because that is the shape that stresses *both* overrides at
+    once: 20 000 distinct terms is what made sumy's per-term `_compute_idf`
+    scan quadratic, and 800 sentences is what made its per-pair frozensets
+    quadratic. Reverting one override costs 1.86 s through `ideas`, reverting
+    the other 3.26 s, against 0.39 s with both — which is the separation the
+    bound has to sit inside.
+
+    The bound is 1 s: 2.5x the measured 0.39 s, under the cheaper of the two
+    reverts. Tighter than a timing test would like, and `process_time` rather
+    than wall clock for exactly that reason — it counts this process's CPU, so
+    a busy machine slows the test without failing it. If it ever does flake,
+    widen the *fixture* and not the bound; 1200 sentences roughly doubles the
+    gap. [E7 index-F8]
+    """
+    text = _ranked(800, 25)
+    session = records.Session(
+        session_id="s1",
+        agent="claude-code",
+        source_path="/x/s1.jsonl",
+        turns=[
+            records.Turn(
+                session_id="s1",
+                seq=0,
+                role="assistant",
+                byte_offset=0,
+                byte_len=len(text),
+                turn_id="t" * 12,
+                blocks=[
+                    records.Block(
+                        turn_id="t" * 12, seq=0, kind="text", text=text, block_id="b" * 12
+                    )
+                ],
+            )
+        ],
+    )
+    started = time.process_time()
+    out = derive.ideas(session)
+    spent = time.process_time() - started
+    assert out["sentences_ranked"] == 800, out
+    assert spent < 1.0, f"ranking 800 sentences took {spent:.2f} s of CPU"
