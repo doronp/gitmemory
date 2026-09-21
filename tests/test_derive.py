@@ -914,6 +914,66 @@ def test_a_rollback_that_cannot_run_says_so(home, src, tmp_path):
     assert any("rollback left artifacts behind" in s for s in stats.skipped), stats.skipped
 
 
+# --- E7 index F5/F7: what the artifacts may carry --- #
+
+
+def _artifact_strings(home: str) -> dict[str, str]:
+    """Every string in every derived artifact, keyed by artifact name."""
+    out = {}
+    for path in sorted(Path(home, "derived").rglob("*.json")):
+        out[path.name] = json.dumps(json.loads(path.read_bytes()), ensure_ascii=False)
+    return out
+
+
+def test_a_non_utf8_byte_in_a_transcript_does_not_reach_the_artifacts(home, src):
+    """A lone surrogate in `derived/` is a file our own consumers cannot re-encode.
+
+    The capture path keeps non-UTF-8 bytes on purpose — `jsonl` decodes with
+    `surrogateescape` so offsets stay true — and the index neutralises them at
+    its door with `_encodable`. `derived/` had no equivalent, so `\\xff\\xfe` in
+    a tool result reached `graph.json` and `ideas.json` as `\\udcff\\udcfe`. The
+    files are valid ASCII (canonical JSON escapes them), so nothing fails at
+    write time; the break lands on whoever loads the JSON and re-encodes it. [E7]
+    """
+    bad = b"Never use \xff\xfe pickle for untrusted input, decided we switch to json."
+    write(
+        src,
+        [
+            user("u1", bad.decode("utf-8", "surrogateescape")),
+            assistant("a1", [text(PROSE[1])]),
+            user("u2", PROSE[2]),
+        ],
+    )
+    store.capture(src, "claude-code", "sess", home=home)
+    assert derive.build(home).skipped == []
+
+    for name, blob in _artifact_strings(home).items():
+        assert not any(0xD800 <= ord(c) <= 0xDFFF for c in blob), f"{name} carries a surrogate"
+        blob.encode("utf-8")  # what a strict consumer does, and what used to raise
+
+
+def test_a_terminal_escape_in_a_transcript_does_not_reach_the_artifacts(home, src):
+    """`derived/` is rendered by a second tool, so it gets the terminal's rules.
+
+    `graph._label` collapsed whitespace and `\\s` matches none of these, so an
+    ANSI erase-line, a bidi override, NUL, DEL and a zero-width space all went
+    into the committed artifacts verbatim. `ideas.json` never passed through
+    `_label` at all. Both are fixed at the one door they share. [E7]
+    """
+    hostile = "We decided \x1b[2K to ‮esrever‬ the order \x00 and drop\x7f the ​cache."
+    write(src, [user("u1", PROSE[0]), assistant("a1", [text(hostile)]), user("u2", PROSE[2])])
+    store.capture(src, "claude-code", "sess", home=home)
+    assert derive.build(home).skipped == []
+
+    strings = _artifact_strings(home)
+    assert any("esrever" in blob for blob in strings.values()), "the hostile block was dropped"
+    for name, blob in strings.items():
+        for ch in "\x1b‮‬\x00\x7f​":
+            assert ch not in blob, f"{name} carries U+{ord(ch):04X}"
+    # Spelled out, not deleted: a reader can still see what was there.
+    assert any("\\u202e" in blob for blob in strings.values()), strings
+
+
 # --- finding 8: the temp file, swept and ignored --- #
 
 

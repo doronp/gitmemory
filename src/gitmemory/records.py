@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 
 __all__ = [
@@ -22,6 +23,7 @@ __all__ = [
     "Session",
     "Turn",
     "canonical_json",
+    "safe_text",
     "sha256_text",
 ]
 
@@ -33,6 +35,44 @@ __all__ = [
 # and aborts the parse of an entire transcript. `surrogatepass` is total over
 # every str CPython can hold, which is the only property hashing needs.
 _ENC = ("utf-8", "surrogatepass")
+
+# Transcript text an attacker chose reaches two surfaces that *render* it: the
+# terminal, via `recall`, and the committed artifacts under `derived/`, which a
+# second tool reads and draws. Neither an ANSI escape nor a bidi override is
+# ever meaningful in a transcript. `\x1b[2K\r` erases the line it was found on,
+# which is how one recall hit hides the hit above it; U+202E reverses the
+# apparent order of whatever is left; the zero-width characters hide a
+# difference between two labels that look identical.
+UNSAFE = re.compile(
+    "[\u0000-\u0008\u000b-\u001f\u007f-\u009f"  # C0 except tab and newline, DEL, C1
+    "\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069"  # zero-width, bidi marks, overrides
+    "\u2028\u2029]"  # line and paragraph separators
+)
+
+
+def safe_text(text: str) -> str:
+    r"""`text` with lone surrogates dropped and every control spelled out.
+
+    Two transforms, because the two problems arrive together and a caller that
+    remembers one forgets the other. Surrogates first: `jsonl` decodes with
+    `surrogateescape` and `records` hashes with `surrogatepass`, so text that
+    caught a binary `cat` in a tool result holds bytes no strict-UTF-8 consumer
+    can re-encode — including `print` to a UTF-8 terminal. Then the controls,
+    spelled out rather than deleted, so a reader can see what was there.
+
+    Tab and newline survive because the CLI's own layout uses them; `\r` does
+    not, because carriage return is the erase. `\x`-notation below U+0100 and
+    `\u` above it — `\x202e` for U+202E reads as a space followed by `2e`.
+
+    This is *not* a redaction gate and does not pretend to be one: `redact`
+    scans for secrets, this makes what survives that scan safe to render. [E7]
+    """
+    return UNSAFE.sub(
+        lambda m: (
+            f"\\x{ord(m.group()):02x}" if ord(m.group()) < 0x100 else f"\\u{ord(m.group()):04x}"
+        ),
+        text.encode("utf-8", "replace").decode("utf-8"),
+    )
 
 
 def canonical_json(obj: object) -> bytes:

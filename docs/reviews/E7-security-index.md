@@ -14,7 +14,7 @@ behaviour, the named test required to fail.
 
 ## Status
 
-**Ten findings; four closed so far.** This document grows as the round does.
+**Ten findings; six closed so far.** This document grows as the round does.
 
 | | Finding | Outcome |
 |---|---|---|
@@ -22,9 +22,9 @@ behaviour, the named test required to fail.
 | F2 | Two concurrent builds destroy each other's temp | **fixed** — one build at a time per directory |
 | F3 | `_sweep_partials` deletes files it does not own | **fixed** — the name the build writes, and `<` not `!=` |
 | F4 | A SQLite file the user did not create is trusted completely | **fixed** — read-only by default, and a step budget |
-| F5 | Lone surrogates reach the committed artifacts | open |
+| F5 | Lone surrogates reach the committed artifacts | **fixed** — one transform, at the one door |
 | F6 | One oversized block aborts the whole build | open |
-| F7 | Control characters and bidi overrides reach `graph.json` labels | open |
+| F7 | Control characters and bidi overrides reach `graph.json` labels | **fixed** — same transform, and it was not only `graph.json` |
 | F8 | `derive.ideas` costs ~32 s of CPU for 284 KB of crafted text | open |
 | F9 | `index/` is created 0755 where the store is 0700 | open |
 | F10 | The truncation warning is announced once per process | open |
@@ -178,6 +178,50 @@ on a clean `sqlite3.Error`.
 Two tests carry this: `test_a_reader_cannot_create_or_scribble_on_an_index` and
 `test_a_meta_that_is_not_a_table_cannot_run_forever`, the second of which
 asserts a wall-clock bound, because the defect is duration.
+
+## F5 and F7 — the artifacts had no door, and the terminal's door was a copy
+
+Two findings, one cause. `derived/` is committed to git *and* read by a second
+tool that draws it, so it is a rendering surface with the same problem the
+terminal has — and `index._encodable` and `__main__._safe_str` each solve half
+of it, for their own surface only.
+
+Reproduced together, from one capture: `\xff\xfe` in a user turn and an ANSI
+erase-line, a bidi override pair, NUL, DEL and a zero-width space in an
+assistant block.
+
+| In the artifact | Before | After |
+|---|---|---|
+| `graph.json` node label | `Never use \udcff\udcfe pickle…` | `Never use ?? pickle…` |
+| `ideas.json` idea text | `We decided \x1b[2K to \u202eesrever\u202c … \x00 … \x7f … \u200b` | `We decided \x1b[2K to \u202eesrever\u202c …` (literal, six characters) |
+| A consumer re-encoding either file | `UnicodeEncodeError: surrogates not allowed` | clean |
+| `stats.skipped` | `[]` — nothing reported, either way | `[]` |
+
+**The report's fix location was wrong, and the reproduction is what showed it.**
+F7 asked for `graph._WS` to be widened. The control characters landed in
+`ideas.json`, which never passes through `_label`; in this run they did not
+reach `graph.json` at all, because that block was not extracted as a decision.
+Fixing `_label` would have produced a clean `graph.json`, a still-hostile
+`ideas.json`, and a third artifact next month with neither. The transform goes
+in `derive._write`, which the docstring already calls the single door, and it
+runs **before** the redaction scan so the bytes scanned are the bytes written.
+
+The transform itself is `records.safe_text`: lone surrogates replaced, then
+every control, bidi and separator character spelled out as `\xNN` or `\uNNNN`.
+It is `__main__._safe_str` moved down a layer and given the surrogate half —
+`__main__` now imports it and its own copy is gone, so there is one character
+class in the codebase instead of two that can drift. Two incidental
+corrections came with the move: the class gained `\u200b`–`\u200d` (zero-width
+characters, which hide a difference between two labels that render identically),
+and U+202E now prints as `\u202e` rather than `\x202e`, which reads as a space
+followed by `2e`.
+
+**What this does not fix.** `safe_text` is not a redaction gate and does not
+pretend to be one — a ZWSP planted inside a credential still breaks the
+detector's `\b` anchor both before and after, because the scan runs on text in
+which the ZWSP has become six ASCII characters rather than none. Closing that
+means normalising *before* scanning, which is a different change with a
+different risk, and nothing in this round showed it reachable.
 
 ## Negative controls added this round
 

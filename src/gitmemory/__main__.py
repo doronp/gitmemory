@@ -11,31 +11,12 @@ from __future__ import annotations
 import argparse
 import builtins
 import os
-import re
 import sqlite3
 import sys
 
 from . import daemon, dashboard, derive, gitrepo, index, redact, store
 from .adapters import get as get_adapter
-
-# Everything this module prints is bytes an attacker may have chosen: a recall
-# hit is transcript content verbatim. `\x1b[2K\r` erases the line it was found
-# on, which is how one hit hides the hit above it, and U+202E reverses the
-# apparent order of what is left. Neither is ever meaningful in a transcript.
-_UNSAFE = re.compile(
-    "[\u0000-\u0008\u000b-\u001f\u007f-\u009f"  # C0 except tab and newline, DEL, C1
-    "\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069"  # bidi marks and overrides
-    "\u2028\u2029]"  # line and paragraph separators
-)
-
-
-def _safe_str(text: str) -> str:
-    r"""`text` with every control, bidi, and separator character spelled out.
-
-    Tab and newline survive because the CLI's own layout uses them; `\r` does
-    not, because carriage return is the erase.
-    """
-    return _UNSAFE.sub(lambda m: f"\\x{ord(m.group()):02x}", text)
+from .records import safe_text
 
 
 def print(*args, sep=" ", end="\n", file=None, flush=False):  # noqa: A001 - see below
@@ -46,7 +27,7 @@ def print(*args, sep=" ", end="\n", file=None, flush=False):  # noqa: A001 - see
     the vulnerability. `end` and `sep` are the caller's own, never transcript
     content, so they pass through.
     """
-    builtins.print(*(_safe_str(str(a)) for a in args), sep=sep, end=end, file=file, flush=flush)
+    builtins.print(*(safe_text(str(a)) for a in args), sep=sep, end=end, file=file, flush=flush)
 
 
 def _safe_exc(exc: BaseException) -> str:

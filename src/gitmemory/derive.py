@@ -30,7 +30,7 @@ import shutil
 import tempfile
 from dataclasses import dataclass, field
 
-from . import redact, store
+from . import records, redact, store
 from .index import parse_generation
 from .records import Session, canonical_json
 
@@ -971,6 +971,23 @@ def decisions(session: Session) -> list[Decision]:
     return out
 
 
+def _renderable(obj):
+    """Every string in `obj`, run through `records.safe_text`. See `_write`.
+
+    Keys are left alone: today every key in every artifact is a field name this
+    module wrote or a block id, which is hex. ponytail: an artifact that keys a
+    dict on transcript text wants them scrubbed too, and then it wants the
+    collision check that scrubbing two near-identical keys into one needs.
+    """
+    if isinstance(obj, str):
+        return records.safe_text(obj)
+    if isinstance(obj, dict):
+        return {k: _renderable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_renderable(v) for v in obj]
+    return obj
+
+
 def _write(path: str, payload: object) -> None:
     """Canonical JSON, published by rename.
 
@@ -982,7 +999,14 @@ def _write(path: str, payload: object) -> None:
     single door into `derived/`: every artifact this module grows later goes
     through it too, and an artifact that reaches this point carrying a key is a
     bug upstream, not a sentence to quietly drop. [E5:3]
+
+    **Rendering safety is here for the same reason, and only here.** `graph`
+    could clean its labels and `ideas` could clean its sentences, and then the
+    next artifact would arrive without either. One door, one transform — and
+    the transform runs *before* the redaction scan, so the bytes scanned are the
+    bytes written, which is the property that makes the scan mean anything. [E7]
     """
+    payload = _renderable(payload)
     data = canonical_json(payload)
     # Scanned twice, and the second scan is the one that catches things. The
     # bytes written have to be canonical, and canonical means `ensure_ascii`,
