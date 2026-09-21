@@ -3161,6 +3161,53 @@ MUTANTS = [
         '    if t.request_id:\n        return ("req", path, t.request_id)',
         "test_rollup_dedups_a_request_id_seen_in_two_files",
     ),
+    # --- E7 parsing-F3 ---
+    (
+        "message.role outranks the line type again",
+        "src/gitmemory/adapters/claude_code.py",
+        "            role=role,",
+        "            role=(\n"
+        "                message.get('role')\n"
+        "                if isinstance(message.get('role'), str)\n"
+        "                else role\n"
+        "            ),",
+        "test_the_line_type_decides_the_role_not_the_message",
+    ),
+    (
+        # The same revert, scored against the money surface rather than the
+        # role, because the two are different claims: one says the field is
+        # wrong, the other says the bill is.
+        "a user line can declare itself a model call again",
+        "src/gitmemory/adapters/claude_code.py",
+        "            role=role,",
+        "            role=(\n"
+        "                message.get('role')\n"
+        "                if isinstance(message.get('role'), str)\n"
+        "                else role\n"
+        "            ),",
+        "test_a_user_line_cannot_declare_itself_a_model_call",
+    ),
+    (
+        # ...and against the adapter, which is the oracle the view is checked
+        # against, so fixing only the SQL would have left the wrong answer
+        # holding the tiebreak.
+        "the adapter's own bill trusts message.role again",
+        "src/gitmemory/adapters/claude_code.py",
+        "            role=role,",
+        "            role=(\n"
+        "                message.get('role')\n"
+        "                if isinstance(message.get('role'), str)\n"
+        "                else role\n"
+        "            ),",
+        "test_the_adapter_bill_is_not_spoofable_either",
+    ),
+    (
+        "role is whatever string the file supplied, at whatever length",
+        "src/gitmemory/adapters/claude_code.py",
+        "            role=role,",
+        "            role=str(message.get('role', role)),",
+        "test_role_is_one_of_three_literals_this_module_writes",
+    ),
 ]
 
 

@@ -311,7 +311,6 @@ def parse(path: str) -> Session:
     for seq, (rec, obj, message, content, line_type, role, uuid, ref_uuid, sid) in enumerate(kept):
         turn_sid = sid if isinstance(sid, str) and sid else session.session_id
         raw_usage = message.get("usage")
-        role_field = message.get("role")
         blocks = [
             Block(turn_id="", seq=i, kind=k, text=t, tool_name=n, native=nat)
             for i, (k, t, n, nat) in enumerate(_blocks(content))
@@ -319,7 +318,25 @@ def parse(path: str) -> Session:
         turn = Turn(
             session_id=turn_sid,
             seq=seq,
-            role=role_field if isinstance(role_field, str) else role,
+            # The line type, never `message.role`. That override let a
+            # `type: "user"` line declaring `message.role: "assistant"` be
+            # billed as a model call — measured 9,000,000 tokens through
+            # `dash_spend` with `dash_unbilled` empty, i.e. the panel whose job
+            # is to show what spend refused showed nothing. `index.py`'s
+            # `role = 'assistant'` filter exists for exactly this and was
+            # reading the spoofable value, so the guard sat one layer below the
+            # hole. So do `billable_usage` and `rollup_usage`.
+            #
+            # Deleted rather than reconciled, because it was measured to carry
+            # no information: over claude-code-log's 162 fixtures `message.role`
+            # is present on 4,189 of 4,571 records and agrees with the line type
+            # on every one, and is absent from all 382 records whose type is not
+            # user/assistant. It could only ever restate `type` or contradict it.
+            #
+            # `role` is now one of three literals this module writes, so the
+            # unbounded length and charset it used to inherit from the file are
+            # gone with it. [E7 parsing-F3]
+            role=role,
             byte_offset=rec.offset,
             byte_len=rec.length,
             model=_str_or_none(message.get("model")),

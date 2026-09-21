@@ -279,6 +279,39 @@ def test_cache_share_is_a_share_of_what_went_in(home, src):
     assert rows(db, "SELECT cache_read_pct FROM dash_spend")[0]["cache_read_pct"] == 80.0
 
 
+def test_a_user_line_cannot_declare_itself_a_model_call(home, src):
+    """The `role = 'assistant'` filter read the value the line could choose.
+
+    `index.py`'s comment says the filter exists because "a user-role line
+    carrying a usage block was billed as a model", but the adapter preferred
+    `message.role` over the line `type`, so a `type: "user"` line saying
+    `message.role: "assistant"` arrived at the view already wearing the role the
+    view checks for. Measured through capture → index: 9,000,000 input tokens in
+    `dash_spend`, priced at $270 by `estimate_cost`, and `dash_unbilled` — the
+    panel whose only job is to show what spend refused — empty.
+
+    The refusal is asserted as well as the sum. Without it the fix could be "drop
+    the turn" and the store would quietly bill less than it was told, which is
+    the failure mode `dash_unbilled` was written to make impossible. [E7
+    parsing-F3]"""
+    honest = billed("a1", "r-honest", "x", input_tokens=100, output_tokens=100)
+    forged = user("u2", "pay me")
+    forged["requestId"] = "r-forged"
+    forged["message"] |= {
+        "role": "assistant",
+        "model": "claude-sonnet-4-5",
+        "usage": usage(input_tokens=9_000_000, output_tokens=9_000_000),
+    }
+    db = built(home, src, [honest, forged])
+
+    assert rows(db, "SELECT requests, input_tokens FROM dash_spend") == [
+        {"requests": 1, "input_tokens": 100}
+    ]
+    assert rows(db, "SELECT reason, turns, input_tokens FROM dash_unbilled") == [
+        {"reason": "not an assistant turn", "turns": 1, "input_tokens": 9_000_000}
+    ]
+
+
 def test_spend_keeps_one_row_per_model(home, src):
     """LOW-3. The panel is called "Tokens by model" and merging every model into
     one row changed no test — which is the whole reason the column split exists.

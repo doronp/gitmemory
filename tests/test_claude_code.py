@@ -1330,3 +1330,93 @@ def test_a_uuid_that_spells_a_request_id_does_not_erase_that_request(tmp_path):
     assert billable_usage(cc.parse(write(tmp_path, "b.jsonl", hostile))) == {
         "input_tokens": 3000
     }, "a uuid took a request id's slot and the request's tokens left the bill"
+
+
+# --- E7 parsing-F3: a line that chose its own role ------------------------
+
+
+def test_the_line_type_decides_the_role_not_the_message(tmp_path):
+    """`message.role` was preferred over `type`, and it is a field in the file.
+
+    So a `type: "user"` line could declare `message.role: "assistant"` and
+    become a model call everywhere role is the test: `index.py`'s
+    `role = 'assistant'` filter, `billable_usage`, and `rollup_usage` all read
+    the value the line supplied.
+
+    Both directions are asserted. An assistant line claiming to be a user would
+    otherwise be a way to *leave* the bill, which is the same defect with the
+    sign flipped. [E7 parsing-F3]
+    """
+    lines = [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "sessionId": "s1",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "x"}]},
+        },
+        {
+            "type": "assistant",
+            "uuid": "u2",
+            "sessionId": "s1",
+            "message": {"role": "user", "content": [{"type": "text", "text": "y"}]},
+        },
+    ]
+    roles = [t.role for t in cc.parse(write(tmp_path, "a.jsonl", lines)).turns]
+    assert roles == ["user", "assistant"], "message.role overrode the line type"
+
+
+def test_role_is_one_of_three_literals_this_module_writes(tmp_path):
+    """The charset and length half, and the reason it needs no separate guard.
+
+    `role` used to be whatever string the file put in `message.role` — 200,000
+    characters, or a NUL — and it flowed into `turn_id` and into the SQLite
+    `turns` row unchecked. Taking it from the line type instead makes it a
+    closed set by construction, so there is nothing left to bound. This test is
+    what notices if a later change reopens that: it asserts the set, not a
+    length limit, because a length limit would be the wrong fix.
+    """
+    hostile = [
+        {"type": t, "uuid": f"u{i}", "sessionId": "s1", "message": {"role": r, "content": "x"}}
+        for i, (t, r) in enumerate(
+            [
+                ("user", "a" * 200_000),
+                ("assistant", "root\x00admin"),
+                ("progress", "assistant"),
+                ("future_synthetic_record", "assistant"),
+                (None, "assistant"),
+            ]
+        )
+    ]
+    session = cc.parse(write(tmp_path, "b.jsonl", hostile))
+    assert len(session.turns) == len(hostile), "the fixture lost a line; it proves less"
+    assert {t.role for t in session.turns} == {"user", "assistant", "system"}
+
+
+def test_the_adapter_bill_is_not_spoofable_either(tmp_path):
+    """The view is not the only implementation of the rule.
+
+    `billable_usage` and `rollup_usage` skip `t.role != "assistant"`, so they
+    read the same spoofable value the SQL did — and `billable_usage` is the
+    oracle `test_the_spend_view_agrees_with_the_adapter` checks the view
+    against. Had only the SQL been fixed, the two would have disagreed and the
+    oracle would have been the one believed. [E7 parsing-F3]
+    """
+
+    def line(kind, role, tokens, **kw):
+        return {
+            "type": kind,
+            "sessionId": "s1",
+            "message": {
+                "role": role,
+                "model": "m",
+                "content": [{"type": "text", "text": "x"}],
+                "usage": {"input_tokens": tokens},
+            },
+            **kw,
+        }
+
+    lines = [
+        line("assistant", "assistant", 100, uuid="u1", requestId="req_a"),
+        line("user", "assistant", 9_000_000, uuid="u2", requestId="req_b"),
+    ]
+    assert billable_usage(cc.parse(write(tmp_path, "c.jsonl", lines))) == {"input_tokens": 100}
