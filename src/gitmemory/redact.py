@@ -35,7 +35,15 @@ import urllib.parse
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-__all__ = ["Finding", "gate", "push_allowed", "scan_bytes", "scan_group", "scan_path"]
+__all__ = [
+    "Finding",
+    "gate",
+    "push_allowed",
+    "safe_path",
+    "scan_bytes",
+    "scan_group",
+    "scan_path",
+]
 
 # How far a credential may straddle a segment boundary and still be seen.
 # ponytail: a fixed carry, not a full re-stream. A single secret longer than
@@ -149,7 +157,7 @@ def scan_bytes(data: bytes, path: str = "-") -> list[Finding]:
     return sorted(found, key=lambda f: (f.offset, f.detector))
 
 
-def _safe_path(path: str) -> str:
+def safe_path(path: str) -> str:
     """`path` with any credential inside it masked, the rest left readable.
 
     `scan_path` exists precisely because the path can *be* the credential, and
@@ -192,7 +200,7 @@ def scan_path(path: str) -> list[Finding]:
     accept one that is a 103-character API key. Scanning only contents would
     push that key in the tree object names. [E2]
     """
-    label = _safe_path(path)
+    label = safe_path(path)
     found = scan_bytes(path.encode("utf-8", "surrogateescape"), label)
     with open(path, "rb") as fh:
         return found + scan_bytes(fh.read(), label)
@@ -222,7 +230,7 @@ def scan_group(paths: list[str]) -> list[Finding]:
         if tail:
             # Both halves masked: a seam label names two paths, so it leaks a
             # credential-shaped filename twice over. [E7]
-            seam = f"{_safe_path(first)} + {_safe_path(path)}"
+            seam = f"{safe_path(first)} + {safe_path(path)}"
             found += [
                 Finding(seam, f.offset, f.detector, f.tier, f.shape, f.length)
                 for f in scan_bytes(tail + head, seam)
@@ -271,7 +279,7 @@ def gate(
     seen_objects = False
     for label, data in objects or ():
         seen_objects = True
-        findings += scan_bytes(data, f"history:{_safe_path(label)}")
+        findings += scan_bytes(data, f"history:{safe_path(label)}")
     if not paths and not groups and not seen_objects and not allow_empty:
         raise ValueError("the redaction gate was given nothing to scan; refusing to attest")
     return not any(f.tier == "high" for f in findings), findings

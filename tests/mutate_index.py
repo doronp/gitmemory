@@ -2429,7 +2429,7 @@ MUTANTS = [
         "the gate reads the object graph and scans none of it",
         "redact.py",
         """        seen_objects = True
-        findings += scan_bytes(data, f"history:{_safe_path(label)}")""",
+        findings += scan_bytes(data, f"history:{safe_path(label)}")""",
         """        seen_objects = True""",
         "test_a_credential_deleted_from_the_worktree_still_blocks_the_push",
     ),
@@ -2495,7 +2495,7 @@ MUTANTS = [
         # it caught has filed a second permanent copy of it.
         "findings wear the unmasked path they were found in",
         "redact.py",
-        "    label = _safe_path(path)",
+        "    label = safe_path(path)",
         "    label = path",
         "test_a_finding_whose_match_is_the_path_does_not_print_the_path",
     ),
@@ -2602,6 +2602,108 @@ MUTANTS = [
 """,
         "",
         "test_the_shapes_a_transcript_actually_contains_are_seen and jwt",
+    ),
+    # S1: a manifest the gate cannot read used to opt its generation out of the
+    # seam scan while `push` went on printing "gate passed". Four rows, because
+    # the fix is four independently deletable pieces and three of them fail
+    # silently. [E7]
+    (
+        # The one that restores the original bug exactly: `strict` still exists,
+        # `segment_groups` still asks for it, and the raise is gone.
+        "an unreadable manifest goes back to being a skip",
+        "store.py",
+        "            if strict:",
+        "            if False:",
+        "test_a_manifest_the_gate_cannot_read_refuses_the_push_instead_of_passing_it",
+    ),
+    (
+        # The same bug from the caller's side, and the one that reads most
+        # innocent in a diff: the machinery is all present, nobody asks for it.
+        "the gate reads the store as leniently as a reader does",
+        "store.py",
+        "    return [list(s.segments) for s in sessions(home, strict=True)]",
+        "    return [list(s.segments) for s in sessions(home)]",
+        "test_a_manifest_the_gate_cannot_read_refuses_the_push_instead_of_passing_it",
+    ),
+    (
+        # `_Skip` exists so the two hand-written rejections leave by the same
+        # door as a `JSONDecodeError`. Returning instead is how the `strict`
+        # check gets added to one path and forgotten on the others.
+        "a non-list segments field skips without telling the gate",
+        "store.py",
+        "                raise _Skip(f\"'segments' is {type(raw_segments).__name__}, not a list\")",
+        "                continue",
+        "test_a_manifest_the_gate_cannot_read_refuses_the_push_instead_of_passing_it "
+        "and segments as a dict",
+    ),
+    (
+        # The lenience `strict` is carved out of. A reader that raised would make
+        # one half-written manifest — what a full disk leaves behind —
+        # un-indexable for the whole store, which is the E2 sweep bug.
+        "the readers become as strict as the gate",
+        "store.py",
+        "def sessions(home: str, *, strict: bool = False) -> list[Stored]:",
+        "def sessions(home: str, *, strict: bool = True) -> list[Stored]:",
+        "test_the_readers_still_skip_what_the_gate_refuses",
+    ),
+    (
+        # A `JSONDecodeError` says "line 1 column 2" and names nothing. Without
+        # the prefix the refusal sends an operator to `verify` with no idea which
+        # of a thousand manifests to look for.
+        "the refusal stops naming which manifest it cannot read",
+        "store.py",
+        '                raise UnreadableManifest(f"{path}: {exc}") from exc',
+        "                raise UnreadableManifest(str(exc)) from exc",
+        "test_the_readers_still_skip_what_the_gate_refuses",
+    ),
+    (
+        # F3's rule reaching the channel F3 did not exist for: the refusal prints
+        # a path, a generation is named after a session id, and a session id can
+        # be the token.
+        "the refusal prints a session id that is itself a credential",
+        "__main__.py",
+        '        print(f"refusing to push: {_safe_exc(exc)}", file=sys.stderr)',
+        '        print(f"refusing to push: {exc}", file=sys.stderr)',
+        "test_the_refusal_masks_a_session_id_that_is_itself_a_credential",
+    ),
+    (
+        # Found by this round's own mutation run: the last mutant's captured
+        # stderr read `error: <the whole path>`. An `OSError` carries the path it
+        # failed on, and nobody asked to see it.
+        "the top-level handler prints an exception's credential",
+        "__main__.py",
+        '        print(f"error: {_safe_exc(exc)}", file=sys.stderr)',
+        '        print(f"error: {exc}", file=sys.stderr)',
+        "test_a_credential_in_an_exception_message_is_masked_on_the_way_out",
+    ),
+    (
+        # And the helper itself, which is where forgetting one call site would
+        # otherwise still leave the other two green.
+        "exception text stops being masked at all",
+        "__main__.py",
+        "    return redact.safe_path(str(exc))",
+        "    return str(exc)",
+        "test_a_credential_in_an_exception_message_is_masked_on_the_way_out",
+    ),
+    (
+        # The third call site, and the one that fires first: a missing source
+        # prints the parse failure before the error. Both lines carried the path.
+        "the parse-failure warning prints the path it could not read",
+        "__main__.py",
+        'f"parse failed ({_safe_exc(exc)}); capturing bytes without boundaries",',
+        'f"parse failed ({exc}); capturing bytes without boundaries",',
+        "test_a_credential_in_an_exception_message_is_masked_on_the_way_out",
+    ),
+    (
+        # Uncaught, it reaches the CLI's top-level handler and prints `error:`
+        # with a traceback's vocabulary. The store still does not push, so this
+        # one is cosmetic — but "error" and "refusing to push" are different
+        # sentences to the person reading them at 3am.
+        "an unreadable manifest leaves by the traceback handler",
+        "__main__.py",
+        "    except (store.EscapingSegment, store.UnreadableManifest) as exc:",
+        "    except store.EscapingSegment as exc:",
+        "test_push_names_the_unreadable_manifest_instead_of_tracebacking",
     ),
 ]
 

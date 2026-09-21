@@ -49,6 +49,24 @@ def print(*args, sep=" ", end="\n", file=None, flush=False):  # noqa: A001 - see
     builtins.print(*(_safe_str(str(a)) for a in args), sep=sep, end=end, file=file, flush=flush)
 
 
+def _safe_exc(exc: BaseException) -> str:
+    """An exception's message with any credential in it masked. [E7]
+
+    An `OSError` carries the path it failed on, and a session directory is named
+    after a session id, which whoever called `capture` chose and may well be the
+    token they were holding. F3's rule — the gate does not publish what it
+    caught — is really about diagnostics: nobody *asked* to see this string, so
+    masking costs the reader nothing and the path stays readable either side.
+
+    Not in `print` itself, deliberately. `recall` prints transcript content
+    because that is what it is for, and a store on the owner's own disk is not
+    an egress; masking there would make the tool withhold the user's own bytes
+    from them. Egress is `push` and `serve`, and an exception is neither — it is
+    the third case, and it is the one that leaks by accident.
+    """
+    return redact.safe_path(str(exc))
+
+
 def _capture(args) -> int:
     home = store.resolve_home(args.home)
     if args.session_id:
@@ -59,7 +77,10 @@ def _capture(args) -> int:
                 session = get_adapter(args.agent).parse(args.source)
                 boundaries = [e.byte_offset for e in session.events if e.kind == "compaction"]
             except (OSError, RecursionError, ValueError) as exc:
-                print(f"parse failed ({exc}); capturing bytes without boundaries", file=sys.stderr)
+                print(
+                    f"parse failed ({_safe_exc(exc)}); capturing bytes without boundaries",
+                    file=sys.stderr,
+                )
         cap = store.capture(
             args.source, args.agent, args.session_id, home=home, boundaries=boundaries
         )
@@ -178,7 +199,21 @@ def _push(args) -> int:
     # And the object graph, which is what `git push` actually transmits. A
     # credential committed and then deleted is absent from every walk of the
     # checkout and present in the push. [E7]
-    groups = store.segment_groups(home)
+    try:
+        groups = store.segment_groups(home)
+    except (store.EscapingSegment, store.UnreadableManifest) as exc:
+        # Not an `error:` traceback out of the top-level handler. A manifest the
+        # gate cannot read is a store the gate cannot attest to, and the reason
+        # belongs on the same line as the refusal — `verify` is what says which
+        # manifest and how, and this is the sentence that sends you to it. [E7]
+        #
+        # Masked on the way out, because the message carries the manifest path
+        # and a generation is named after a session id, which can itself be a
+        # token. F3's rule — the gate does not publish what it caught — reaches
+        # every channel that prints a path, and this is a new one.
+        print(f"refusing to push: {_safe_exc(exc)}", file=sys.stderr)
+        print("run `gitmemory verify` — the gate cannot scan seams it cannot find", file=sys.stderr)
+        return 1
     grouped = {p for g in groups for p in g}
     files = [p for p in gitrepo.tracked(home) if os.path.realpath(p) not in grouped]
     clean, findings = redact.gate(files, groups, objects=gitrepo.pushable_objects(home))
@@ -331,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         ValueError,
         sqlite3.Error,
     ) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {_safe_exc(exc)}", file=sys.stderr)
         return 2
 
 

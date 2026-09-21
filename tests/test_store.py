@@ -722,6 +722,139 @@ def test_a_hostile_manifest_field_cannot_opt_a_segment_run_out_of_the_seam_scan(
     assert ok is False
 
 
+def _straddling(home, src):
+    """A store whose credential is cut in half by a segment boundary.
+
+    The seam join is the only scan that can see it: each segment on its own
+    holds a fragment no detector matches.
+    """
+    transcript(src, 4)
+    with open(src, "ab") as fh:
+        fh.write(b'{"k":"' + AKIA[:10])
+    store.capture(src, "claude-code", "sess", home=home)
+    with open(src, "ab") as fh:
+        fh.write(AKIA[10:] + b'"}\n')
+    store.capture(src, "claude-code", "sess", home=home)
+    groups = store.segment_groups(home)
+    assert [f.detector for f in redact.scan_group(groups[0])] == ["aws_access_key_id"]
+    assert redact.gate([p for g in groups for p in g])[0], "each half alone is clean"
+    return groups
+
+
+@pytest.mark.parametrize(
+    "shape,mutate",
+    [
+        ("a start that is a string", lambda m: m["segments"][0].update(start="0")),
+        ("segments as a dict", lambda m: m.update(segments={"a": m["segments"]})),
+        ("json that does not parse", None),
+    ],
+)
+def test_a_manifest_the_gate_cannot_read_refuses_the_push_instead_of_passing_it(
+    home, src, shape, mutate
+):
+    """[E7] The residual of E3 #2. The *escaping* path was made to raise; three
+    other shapes still `continue`, and a `continue` in the gate's feed is not a
+    skip — it drops that generation's seams out of the scan while every segment
+    is still scanned individually, so exactly the straddling secret is lost.
+
+    One byte does it: `"start": 0` to `"start": "0"`, by anything that can write
+    inside the store. `verify` reports the same manifest as broken; `_push` does
+    not call `verify`.
+    """
+    _straddling(home, src)
+    path = Path(home, "sessions", "claude-code", "sess", "g00.json")
+    if mutate is None:
+        path.write_text('{"segments": [{"path": "x", "start')
+    else:
+        man = json.loads(path.read_text())
+        mutate(man)
+        path.write_text(json.dumps(man))
+
+    with pytest.raises(store.UnreadableManifest):
+        store.segment_groups(home)
+    # The readers keep their lenience: one bad manifest must not cost the store.
+    assert store.sessions(home) == [], "this store has exactly the one generation"
+
+
+def test_the_readers_still_skip_what_the_gate_refuses(home, src):
+    """[E7] `strict` is `segment_groups`'s alone. A reader that raised would make
+    one half-written manifest — what a full disk leaves behind — un-indexable for
+    the whole store, which is the E2 sweep bug that put the skip there."""
+    transcript(src, 4)
+    store.capture(src, "claude-code", "sess", home=home)
+    transcript(src, 4, start=4)
+    store.capture(src, "claude-code", "other", home=home)
+    Path(home, "sessions", "claude-code", "sess", "g00.json").write_text("{trunc")
+
+    assert [s.session_id for s in store.sessions(home)] == ["other"]
+    with pytest.raises(store.UnreadableManifest, match="sess"):
+        store.sessions(home, strict=True)
+
+
+def test_a_stray_file_named_like_a_manifest_does_not_block_the_gate(home, src):
+    """[E7] `strict` raises for a generation that claims segments nobody looked
+    at. `gfoo.json` claims nothing — it is a stray file, which `verify` reports
+    and the file walk scans. Refusing over it would be the over-refusal F4a was
+    about, one directory down."""
+    transcript(src, 4)
+    store.capture(src, "claude-code", "sess", home=home)
+    Path(home, "sessions", "claude-code", "sess", "gfoo.json").write_text("{not json")
+
+    assert len(store.segment_groups(home)) == 1
+
+
+def test_push_names_the_unreadable_manifest_instead_of_tracebacking(tmp_path, capsys):
+    """[E7] `UnreadableManifest` out of `segment_groups` would reach the CLI's
+    top-level handler and print `error:` with a traceback's vocabulary. The
+    refusal and its reason belong on one line, next to the command that explains
+    it."""
+    from gitmemory.__main__ import main
+
+    home = _pushable(tmp_path)
+    Path(home, "sessions", "claude-code", "sess", "g00.json").write_text("{trunc")
+    capsys.readouterr()
+
+    assert main(["--home", str(home), "push"]) == 1
+    err = capsys.readouterr().err
+    assert "refusing to push" in err
+    assert "gate passed" not in err
+    assert "gitmemory verify" in err
+    # And which manifest. A `json.JSONDecodeError` says "line 1 column 2" and
+    # nothing else; without the path prefix the operator is sent to `verify`
+    # with no idea what they are looking for.
+    assert "sess" in err and "g00.json" in err
+
+
+def test_the_refusal_masks_a_session_id_that_is_itself_a_credential(tmp_path, capsys):
+    """[E7] F3's rule reaching the channel F3 did not exist for. A generation's
+    path is `sessions/<agent>/<session-id>/g00.json`, a session id is chosen by
+    whoever calls `capture`, and an agent that names a session after the token it
+    is holding is exactly the case `scan_path` exists for. This refusal prints
+    that path into a terminal a transcript then records."""
+    from gitmemory.__main__ import main
+
+    home = tmp_path / ".gitmemory"
+    home.mkdir()
+    (home / "config.toml").write_text(
+        '[remote.origin]\nurl = "git@github.com:me/p.git"\nallow_push = true\n'
+    )
+    source = tmp_path / "s.jsonl"
+    transcript(str(source), 8)
+    sid = GHP.decode()
+    assert main(["--home", str(home), "capture", str(source), "--session-id", sid]) == 0
+    gitrepo.init(str(home))
+    Path(home, "sessions", "claude-code", sid, "g00.json").write_text("{trunc")
+    capsys.readouterr()
+
+    assert main(["--home", str(home), "push"]) == 1
+    err = capsys.readouterr().err
+    assert "refusing to push" in err
+    assert sid not in err, "the gate published the credential it refused over"
+    # Masked, not swallowed: the mask leaves the prefix and the byte count, and
+    # the rest of the path readable, so the operator can still find the file.
+    assert "ghp_…[40 bytes]" in err and "g00.json" in err
+
+
 def test_a_seam_finding_is_not_reported_twice(home, src):
     """Only matches that genuinely span a cut belong to the seam."""
     transcript(src, 4)
@@ -1603,6 +1736,26 @@ def test_a_terminal_escape_in_a_transcript_does_not_reach_the_terminal(home, src
     assert "needle" in out
     assert "\x1b" not in out and "\r" not in out
     assert "\\x1b" in out
+
+
+def test_a_credential_in_an_exception_message_is_masked_on_the_way_out(home, capsys):
+    """[E7] Found by the S1 mutation run: the last mutant's captured stderr read
+    `error: <the whole path>`, unmasked, out of the top-level handler.
+
+    An `OSError` carries the path it failed on. Nobody asked to see that string
+    — it is a diagnostic — and `recall`, which prints transcript content because
+    that is what it is for, is deliberately not masked. Only exception text is.
+    """
+    from gitmemory.__main__ import main
+
+    missing = str(Path(home).parent / (GHP.decode() + ".jsonl"))
+    capsys.readouterr()
+
+    assert main(["--home", home, "capture", missing, "--session-id", "x"]) == 2
+    err = capsys.readouterr().err
+    assert "error:" in err
+    assert GHP.decode() not in err
+    assert "ghp_…[40 bytes]" in err and "No such file" in err
 
 
 def test_the_store_is_owner_only_on_disk(home, src):

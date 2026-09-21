@@ -44,7 +44,9 @@ from .records import canonical_json
 
 __all__ = [
     "Capture",
+    "EscapingSegment",
     "Stored",
+    "UnreadableManifest",
     "capture",
     "resolve_home",
     "segment_groups",
@@ -826,6 +828,30 @@ class EscapingSegment(RuntimeError):
     """
 
 
+class UnreadableManifest(RuntimeError):
+    """A manifest `segment_groups` could not turn into a segment run. [E7]
+
+    `EscapingSegment`'s sibling, and raised for the same reason one field
+    further out. `sessions` skips a manifest it cannot read, because a reader
+    that raised would make one bad manifest un-indexable for the whole store.
+    But the *gate* reads through `segment_groups`, and a skip there is not a
+    skip: it removes that generation's seams from the scan, and the seam join is
+    the only thing that sees a credential cut in half by a segment boundary.
+
+    So one byte — `"start": 0` to `"start": "0"`, or a `segments` dict instead
+    of a list, or a truncated write leaving unparseable JSON — used to take a
+    generation out of the gate's feed while `push` went on printing "gate
+    passed". The segments were still scanned individually; exactly the
+    straddling secret was lost, which is the one the group scan exists for.
+    """
+
+
+class _Skip(Exception):
+    """A manifest shape `sessions` declines, raised so it joins the same path a
+    `json.JSONDecodeError` takes. Two ways out of one loop body is how the
+    `strict` check gets added to one of them and forgotten on the other."""
+
+
 def _seg_start(seg: object) -> int:
     """The start offset a segment entry claims, or -1 if it claims nothing usable.
 
@@ -860,7 +886,7 @@ def _segment_path(home: str, seg: object) -> str | None:
     return full
 
 
-def sessions(home: str) -> list[Stored]:
+def sessions(home: str, *, strict: bool = False) -> list[Stored]:
     """Every readable generation in the store, in a stable order.
 
     A generation, not a session, is the unit: a fork seals one byte history and
@@ -871,6 +897,13 @@ def sessions(home: str) -> list[Stored]:
     one bad manifest un-indexable for the whole store, which is the E2 sweep bug.
     An *escaping* segment path is the exception and fails the call: see
     `EscapingSegment`.
+
+    `strict=True` turns every one of those skips into `UnreadableManifest`. It
+    is what `segment_groups` passes, and nothing else should: a reader wants as
+    much of the store as it can get, and the gate wants all of it or nothing.
+    A file matching `g*.json` that is not a generation name at all is still
+    skipped under `strict` — it is a stray file, which `verify` reports and the
+    file walk scans, not a generation claiming segments nobody looked at. [E7]
     """
     out = []
     for path in sorted(glob(os.path.join(home, "sessions", "*", "*", "g*.json"))):
@@ -893,14 +926,18 @@ def sessions(home: str) -> list[Stored]:
             # `segment_groups` feeds the egress gate. [E4, review: store 6]
             raw_segments = man.get("segments")
             if not isinstance(raw_segments, list):
-                continue
+                raise _Skip(f"'segments' is {type(raw_segments).__name__}, not a list")
             segs = sorted(raw_segments, key=_seg_start)
             run = [_segment_path(home, s) for s in segs]
+            if not all(run):
+                raise _Skip("a segment entry names no usable path")
         except EscapingSegment:
             raise
-        except Exception:  # noqa: BLE001 - a manifest is untrusted data
-            continue
-        if not all(run):
+        except Exception as exc:  # noqa: BLE001 - a manifest is untrusted data
+            if strict:
+                # The path, always: a `json.JSONDecodeError` says "line 1 column
+                # 2" and nothing about which of a thousand manifests it read.
+                raise UnreadableManifest(f"{path}: {exc}") from exc
             continue
         # Everything below is best-effort. A row is never dropped for a bad
         # *metadata* field, only for an unreadable or escaping segment list:
@@ -937,8 +974,12 @@ def segment_groups(home: str) -> list[list[str]]:
 
     The egress gate needs these because a credential can straddle a cut: what
     leaves the machine is the concatenation, not any one file. [E2]
+
+    `strict=True`, because this is the gate's feed and not a reader's: raises
+    `UnreadableManifest` rather than returning a store with a generation's seams
+    quietly missing from it. [E7]
     """
-    return [list(s.segments) for s in sessions(home)]
+    return [list(s.segments) for s in sessions(home, strict=True)]
 
 
 def span(stored: Stored, offset: int, length: int) -> bytes:
