@@ -132,13 +132,26 @@ def test_a_decision_is_never_joined_to_itself():
 
 
 def test_a_label_is_one_line_and_ends_on_a_word():
-    long = "alpha bravo charlie delta echo foxtrot golf hotel india juliet " * 4
+    """Cut *on a word boundary*, not at the character limit.
+
+    The first version of this test asserted only that the label was short
+    enough, ended in an ellipsis, and had no trailing space — all three of
+    which a hard cut at `LABEL_CHARS` also satisfies whenever the limit happens
+    to land mid-word, which is most of the time. A mutation row that replaced
+    the word search with `cut = -1` survived it. So the assertion has to name
+    the boundary: the source character immediately after the body is the space
+    the label stopped at.
+    """
     assert "\n" not in graph._label("first line\nsecond line")
     assert graph._label("first line\nsecond line") == "first line second line"
+
+    long = ("alpha bravo charlie delta echo foxtrot golf hotel india juliet " * 4).strip()
     label = graph._label(long)
-    assert len(label) <= graph.LABEL_CHARS + 1  # the ellipsis
     assert label.endswith("…")
-    assert not label[:-1].endswith(" ")
+    assert len(label) <= graph.LABEL_CHARS + 1  # the ellipsis
+    body = label[:-1]
+    assert not body.endswith(" ")
+    assert long[len(body)] == " ", f"cut mid-word: ...{long[len(body) - 6 : len(body) + 6]!r}"
 
 
 def test_a_label_with_no_space_in_range_is_still_cut():

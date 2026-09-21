@@ -1613,10 +1613,16 @@ MUTANTS = [
         "test_a_decision_naming_a_block_from_somewhere_else_is_an_error",
     ),
     (
+        # The first version of this row swapped `setdefault` for `__setitem__`
+        # and SURVIVED, which is the row being wrong rather than the test: both
+        # write the same key, and two transcripts that share a `block_id` share
+        # the text by construction, so first-wins and last-wins are the same
+        # bytes. Dedup lives in the dict *key*, so that is what the mutant has
+        # to break. [E5]
         "a replayed turn is drawn as two decisions",
         "graph.py",
-        "            nodes.setdefault(",
-        "            nodes.__setitem__(",
+        "                d.source_ref,",
+        "                (session.source_path, d.source_ref),",
         "test_the_same_block_replayed_into_a_second_transcript_is_one_node",
     ),
     (
