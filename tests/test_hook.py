@@ -68,16 +68,22 @@ def test_exits_0_unconditionally(clean_env):
     env_unwritable = env.copy()
     env_unwritable["GITMEMORY_HOME"] = str(unwritable)
 
-    res = subprocess.run(
-        run_shim_cmd() + ["PreCompact"],
-        env=env_unwritable,
-        input=b"test payload",
-        capture_output=True,
-    )
-    assert res.returncode == 0, "shim must exit 0 even if spool is unwritable"
-
-    # Restore permission so tmp_path cleanup works
-    os.chmod(unwritable, 0o700)
+    # `finally`, because the restore used to sit after the assertion and so ran
+    # only when the assertion passed. A run that failed here — any `-x` mutation
+    # pass, which is how this was found — left a mode-000 directory under
+    # pytest's shared basetemp that `rm_rf` cannot enter, and pytest warns about
+    # it on every session afterwards. Cleanup that only happens on the happy
+    # path is not cleanup. [E4, review: vacuity audit]
+    try:
+        res = subprocess.run(
+            run_shim_cmd() + ["PreCompact"],
+            env=env_unwritable,
+            input=b"test payload",
+            capture_output=True,
+        )
+        assert res.returncode == 0, "shim must exit 0 even if spool is unwritable"
+    finally:
+        os.chmod(unwritable, 0o700)
 
     # 2. Closed stdin
     res = subprocess.run(
