@@ -244,6 +244,14 @@ discriminator was safe. All three moved onto `_on_pass`. Measured on six busy
 cores, 30 runs of the two affected tests: **17 failed without the
 discriminator, 30 passed with it.**
 
+One sighting after that fix went unexplained, so it was hunted rather than
+assumed away: **36 full-suite runs and 40 isolated runs of
+`test_a_repository_deleted_under_a_running_watcher_comes_back`, 76 in all, zero
+failures.** Closed as unreproducible. That is not a proof of absence — a
+one-in-twenty flake would have shown roughly four times in 76 — so it is
+recorded here rather than forgotten, and the next sighting starts from this
+number instead of from scratch. [E5]
+
 **The `TZ` finding — confirmed as behaviour, ruled not a defect.** `git` bakes
 the local UTC offset into commit metadata, so the same tree committed under
 different `TZ` produces different commit SHAs. True, and not a claim this
