@@ -40,13 +40,18 @@ not agree with each other, and neither agrees with shipping inside an Apache-2.0
 project without argument. An ambiguous licence is a reason on its own; we are
 not going to be the ones who resolve it.
 
-**Open decision for E5:** key *phrases* may simply not ship. Key *ideas* —
-extractive sentences via LexRank — cover most of what the phrase list was for,
-and the honest move when a feature costs a gigabyte is to ask whether anyone
-wanted it. If it does ship, `model2vec` alone (MIT, 23 packages, already earned
-its place in the `hybrid` extra) plus the ~20 lines of MMR that KeyBERT's value
-actually consists of is the shape to consider — and that is one of the few
-places in this project where writing the code beats taking the library.
+**Decided: key phrases do not ship.** Key *ideas* — extractive sentences via
+LexRank — cover what the phrase list was for, and a list of noun phrases next to
+the sentences they were extracted from is a worse version of the sentences. The
+honest move when a feature costs a gigabyte is to ask whether anyone wanted it,
+and the answer here is that nothing downstream consumes a phrase list: the
+dashboard shows key ideas, the decision graph takes nodes from graphify, and
+retrieval is BM25 over the raw bytes.
+
+If that turns out to be wrong, the shape to reconsider is `model2vec` alone
+(MIT, 23 packages, already earned its place in the `hybrid` extra) plus the ~20
+lines of MMR that KeyBERT's value actually consists of — one of the few places
+in this project where writing the code beats taking the library. Not now.
 
 ## sumy runs offline — but only if we keep nltk out of the path
 
@@ -94,13 +99,19 @@ ValueError: LexRank summarizer requires NumPy. Please, install it by command 'pi
 not a new dependency — but `derive` has to declare it rather than inherit it by
 luck.
 
-**Open decision for E5:** twenty-one packages for two summarizers is still a lot,
-and the two we want are a few hundred lines of Apache-2.0 we are entitled to
-vendor with attribution — which this project has done once already, for
-`jsonl.py` from fable (§2.5b, THIRD_PARTY.md). Vendoring LexRank and TextRank
-would leave `derive` needing only `numpy`. Against that: a vendored copy stops
-receiving upstream fixes, and `jsonl.py` was vendored because we needed to
-*change* it, which is a better reason than size. Not decided here.
+**Decided: `sumy` is a dependency, not a vendored copy.** Twenty-one packages
+for two summarizers is still a lot, and the two we want are a few hundred lines
+of Apache-2.0 we are entitled to vendor with attribution — which this project has
+done once already, for `jsonl.py` from fable (§2.5b, THIRD_PARTY.md). What
+settles it is the standard this file already set two paragraphs up: `jsonl.py`
+was vendored because we needed to *change* it. We do not need to change LexRank.
+Size alone buys a copy that stops receiving upstream fixes and a THIRD_PARTY.md
+entry that has to be re-verified by hand every time, in exchange for twenty
+packages of pure Python with no heavy members and no network at import.
+
+The custom tokenizer above is the part that would have justified a fork, and it
+does not need one — sumy's summarizers take the document, so our `Tok` lives in
+`derive.py` and `nltk` stays installed-but-unimported.
 
 ## graphify: checked against the artifact, not the note — and it holds
 
@@ -130,5 +141,14 @@ graphifyy-0.9.65.dist-info/licenses/{LICENSE, LICENSE-MIT, NOTICE}
 
 ## What this changes in DESIGN.md
 
-Nothing yet — the table is corrected when E5 lands and the choices are made, not
-in advance of them. This file is the evidence those choices will be made from.
+The table is corrected when E5 lands, not in advance of it — but the two open
+decisions are now closed, so §2.6 has three edits waiting rather than two:
+
+1. **"KeyBERT + Model2Vec backend, fixed seed" is struck.** No keyphrase
+   extractor ships. Key ideas are extractive sentences, by LexRank.
+2. **`sumy` is a declared dependency of the `derive` extra, with `numpy`**,
+   which the table omitted and LexRank hard-requires.
+3. **graphify is Apache-2.0 by `License-Expression` in the wheel**, and gets a
+   THIRD_PARTY.md entry carrying its NOTICE the moment `derive` imports it.
+
+This file is the evidence those edits will be made from.
