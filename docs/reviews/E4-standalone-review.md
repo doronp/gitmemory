@@ -170,6 +170,42 @@ holds.** Four of the seven silent findings were that, and the mutation index
 could never have found them, because whoever wrote the index also believed the
 tests covered them.
 
+### What the audit actually covered
+
+The denominator, from the audit's own final accounting: **242 mutations, each
+run against the whole suite**, producing 277 verdict rows over 263 distinct
+tests. 252 rows CAUGHT, 24 VACUOUS — the same 24 triaged above, with nothing
+found after the point this document was first written.
+
+Two things in that accounting are worth more than the totals.
+
+**One row was silently skipped, and the harness did not say so.** An anchor for
+`test_synthetic_model_rows_are_not_billed` — `if t.role != "assistant" or
+t.model == "<synthetic>":` at eight spaces of indent — is also a substring of the
+twelve-space copy inside `rollup_usage`, so it matched twice and the mutation
+never ran. The harness recorded BAD-ANCHOR and printed nothing. A skip that
+looks like a pass is the one failure mode capable of hiding a finding from the
+person reading the output, and it took the audit's own re-read of its results
+file to surface it. Re-run with the loop header prepended to disambiguate:
+CAUGHT.
+
+**48 tests were never audited**, and they are uncovered rather than judged safe:
+33 of 49 in `tests/test_claude_code.py`, all of `test_end_to_end.py` (9),
+`test_no_owner_data.py` (4), and `test_conformance_can_fail.py` (3). Four files
+were audited to completion — `test_store.py` 85/85, `test_daemon.py` 65/65,
+`test_index.py` 48/48, `test_hook.py` 19/19 — and `test_gitrepo.py` 27/28.
+
+Two tests were deliberately not mutated, and both rulings hold:
+`test_gc_is_safe_on_a_fresh_repository` asserts only that a call does not raise,
+which no mutation can falsify without breaking collection, and the call is
+pinned by `test_gc_actually_invokes_git`; `test_corpus_is_present_or_explicitly_absent`
+is about a third-party fixture's presence and has no production line to mutate.
+
+A second pass covers the 48, at HEAD rather than at `a9ad664`. **E4 is not
+signed off until it returns** — the audited files gave up seven silent findings,
+so declaring the unaudited ones clean on the strength of the audited ones is the
+inference this whole round exists to distrust.
+
 ---
 
 ## Rulings against Gemini, recorded because they went the other way
