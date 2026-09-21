@@ -1237,7 +1237,7 @@ def test_a_citation_keeps_its_shape_when_words_are_added(home, src):
         src,
         [
             user("u1", "As we have already discussed, never commit secrets."),
-            user("u2", "As you flagged earlier, no raw SQL in the handlers."),
+            user("u2", "As you kindly flagged, no raw SQL in the handlers."),
             user("u3", "As I explicitly spelled out, avoid global mutable state."),
             user("u4", "As they specified, only the scheduler may write to that table."),
             user("u5", control),
@@ -1388,6 +1388,132 @@ def test_a_compound_noun_is_still_a_prohibition(home, src):
     ]
     session = parsed(home, src, [user(f"u{i}", t) for i, t in enumerate(lines)])
     assert labelled(session) == [("directive", t) for t in lines]
+
+
+def test_a_restatement_is_one_wherever_its_sentence_starts(home, src):
+    """The guard was pinned to offset 0, and chat does not oblige.
+
+    A block is several sentences. The speaker thanks you and *then* restates the
+    rule; or concedes something and restates it after the "but". The frame was
+    there every time and the guard could not reach it, so the commonest
+    distractor in a long session came back as a fresh directive.
+
+    The other half of this is what must not change: the frame still has to
+    *open* something — the block, a sentence, a clause after its punctuation, or
+    the concessive that joins one. A saying-verb loose in the middle of a clause
+    is reporting, not restating, and the control below is that sentence.
+    """
+    control = "Write the ADR that records what we agreed, and never merge red."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "Thanks for the patch. As we agreed, never touch the vendored tree."),
+            user("u2", "Sorry to keep on about it, but as I said, no raw SQL in the handlers."),
+            user("u3", "That reads well! For the record, we never ship on a Friday."),
+            user("u4", "Fine by me; per the spec, avoid global mutable state."),
+            user("u5", "Looks right — as you flagged in review, never edit the generated files."),
+            user("u6", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_a_reminder_is_a_frame_and_not_a_noun(home, src):
+    """Reaching into the middle of a block put two ordinary words one comma away
+    from deleting a rule: this project is measured in precision and *recall*, and
+    a *reminder* is a thing a scheduler sends. A reminder frame introduces what
+    it restates — a colon, a comma, "that", "to" — and with nothing following it
+    the word is only a word.
+    """
+    kept = [
+        "The reminder job must never fire twice; use the idempotency key.",
+        "Report precision, recall and F1; never round them to two places.",
+        "Set a reminder and never skip the nightly backup.",
+    ]
+    session = parsed(
+        home,
+        src,
+        [
+            user("u0", "Nice. A gentle reminder that we never ship on a Friday."),
+            user("u1", "Right. Keep in mind we never log the raw token."),
+            *(user(f"u{i + 2}", t) for i, t in enumerate(kept)),
+        ],
+    )
+    assert labelled(session) == [("directive", t) for t in kept]
+
+
+def test_a_hedge_is_a_hedge_on_either_side_of_the_auxiliary(home, src):
+    """English takes the modifier before the auxiliary as readily as after it:
+    "I really don't think" and "I don't really think" are one sentence written
+    twice. The slot was open on one side only, so the frame missed, the negation
+    was left sitting there on its own, and the hedge was filed as a rule.
+    """
+    control = "Don't add a cache in the request path."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "I really don't think that buys us anything."),
+            user("u2", "We honestly don't want another moving part."),
+            user("u3", "I'm genuinely not convinced we should forbid the cache."),
+            user("u4", "We are not at all sure, so no rewrite this week."),
+            user("u5", "I honestly have never needed that flag."),
+            user("u6", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
+
+
+def test_preferring_one_thing_to_another_is_not_one_verb(home, src):
+    """ "X over Y" names a winner and a loser whichever verb takes it, and only
+    one verb could reach the frame. Two of the rest were worse off than missing:
+    a verb of choosing followed by "over" was read as *deliberation*, so a
+    decision already taken was filed as a decision still open. The control is the
+    sentence that really is still open, and it shares the verb.
+    """
+    kept = [
+        "Favour composition over inheritance in the new module.",
+        "Pick Parquet over CSV for anything we keep.",
+        "Prioritise correctness over throughput here.",
+        "Recommend uv over pip in the contributor guide.",
+    ]
+    session = parsed(
+        home,
+        src,
+        [
+            user("u0", "I am still choosing between a queue and a lock."),
+            *(user(f"u{i + 1}", t) for i, t in enumerate(kept)),
+        ],
+    )
+    assert labelled(session) == [("directive", t) for t in kept]
+
+
+def test_a_block_that_dates_itself_to_the_past_is_a_report(home, src):
+    """Tense needs a parser and the adjunct that says *when* does not.
+
+    A block that dates itself and then describes a practice is a report about
+    that date, and it was being read as a rule on the strength of whatever
+    contrast word the description happened to carry. This does not lift the
+    tense ceiling; it takes the subset of it that announces itself out loud.
+    """
+    control = "From now on, write Parquet instead of CSV."
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "A year ago we swapped the writer for pyarrow instead of fixing it."),
+            user("u2", "Back when I joined, the team used a spinlock rather than a mutex."),
+            user("u3", "Yesterday we dropped the cache, not the queue."),
+            user("u4", "In older releases we avoided threads entirely."),
+            user("u5", "Three sprints back the loader read JSON, not Parquet."),
+            user("u6", "We started out with a flat file instead of a database."),
+            user("u7", "Earlier, we swapped the lock for a queue rather than fixing the load."),
+            user("u8", "Last Tuesday we moved the runner to podman instead of docker."),
+            user("u9", control),
+        ],
+    )
+    assert labelled(session) == [("directive", control)]
 
 
 def test_a_decision_is_frozen_and_hashable(home, src):

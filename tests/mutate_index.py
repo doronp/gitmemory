@@ -1466,7 +1466,7 @@ MUTANTS = [
     (
         "a back-reference is a restatement, not a new decision",
         "derive.py",
-        """        _BACKREF.match(text)""",
+        """        _BACKREF.search(text)""",
         """        False""",
         "test_restating_an_agreed_rule_is_not_a_new_decision",
     ),
@@ -1536,7 +1536,9 @@ MUTANTS = [
     (
         "asking to remember is restating",
         "derive.py",
-        r'''    r"|(?:please |just )?(?:remember|recall|bear in mind|keep in mind)\b"
+        r'''    r"|(?:please |just )?(?:remember|recall|bear in mind|keep in mind)"
+    r"(?=\s*[:,;—–]|\s+(?:that|to|we|you|i|it|this|these|the|our|your|what"
+    r"|when|how|why|never|no|always)\b)"
     r"|(?:please )?(?:do ?n[o']t|never) forget\b"''',
         r'''    r"|remember(?:,| that\b)"''',
         "test_being_asked_to_remember_a_rule_is_not_a_new_rule",
@@ -1544,9 +1546,10 @@ MUTANTS = [
     (
         "any verb of comparing leaves the set open",
         "derive.py",
-        r'''    r"|(?:choos|select|pick|decid|deliberat|debat|compar|evaluat|assess|mull"
-    r"|agonis|agoniz|wonder|think)\w* (?:\w+ )?(?:between|among|amongst|over"
-    r"|about whether|whether)"''',
+        r'''    r"|(?:choos|select|pick|decid)\w* (?:\w+ )?(?:between|among|amongst"
+    r"|about whether|whether)"
+    r"|(?:deliberat|debat|compar|evaluat|assess|mull|agonis|agoniz|wonder|think"
+    r"|ponder)\w* (?:\w+ )?(?:between|among|amongst|over|about whether|whether)"''',
         r'''    r"|(?:choos|decid|pick|deliberat)ing between"''',
         "test_an_unsettled_comparison_is_not_a_decision",
     ),
@@ -1570,7 +1573,7 @@ MUTANTS = [
     (
         "an opinion may be hedged",
         "derive.py",
-        r'''    rf" (?:(?:\w+ly|quite|even|much|all that|so|too|just) )?{_MIND}\b"''',
+        r'''    rf" (?:{_ADV} )?{_MIND}\b"''',
         r'''    rf" {_MIND}\b"''',
         "test_a_hedged_opinion_is_still_an_opinion",
     ),
@@ -1591,14 +1594,14 @@ MUTANTS = [
         # never use it", which is the difference between a memory and a rule.
         "the perfect reports, the present orders",
         "derive.py",
-        r'''    r"|\b(?:i|we)(?:'?ve| have|'?d| had) never\b"''',
+        r'''    rf"|\b(?:i|we)(?: {_ADV})?(?:'?ve| have|'?d| had)(?: {_ADV})? never\b"''',
         r'''    r""''',
         "test_reporting_never_having_seen_it_is_not_forbidding_it",
     ),
     (
         "an attitude is held, not forbidden",
         "derive.py",
-        r"""    r"|\b(?:i|we)(?:'?ve| have| had|'?d) no (?:\w+ )?"
+        r"""    rf"|\b(?:i|we)(?: {_ADV})?(?:'?ve| have| had|'?d) no (?:\w+ )?"
     r"(?:view|opinion|preference|objection|idea|clue|issue|problem|feelings?"
     r"|thoughts?|comment|complaint|doubt|memory|recollection|experience"
     r"|visibility|insight|say|stake|context|sense)\b",""",
@@ -1731,6 +1734,171 @@ MUTANTS = [
         '    if shutil.which("datasette"):\n        return args',
         "    if True:\n        return args",
         "test_uvx_is_the_fallback_not_the_default",
+    ),
+    # ======================================================================= #
+    # E5: the guards against hand-written chat.
+    #
+    # A reviewer ran the extractor over two probes written in registers the
+    # corpus generator does not produce — multi-sentence blocks, hedges, dated
+    # anecdotes. Four mechanisms failed, and every row below reverts one of the
+    # fixes to the shape it had when it failed. They matter more than most rows
+    # here because the dev fixture scores 1.0000 either way: none of these can
+    # be noticed by the gate.
+    # ======================================================================= #
+    (
+        # The restatement guard was `.match`, so the frame had to be the first
+        # thing in the block. Chat puts it in the second sentence or the fifth,
+        # and each one came back as a fresh directive.
+        "a restatement may open any sentence, not only the block",
+        "derive.py",
+        """        _BACKREF.search(text)""",
+        """        _BACKREF.match(text)""",
+        "test_a_restatement_is_one_wherever_its_sentence_starts",
+    ),
+    (
+        # The other half of unanchoring: a connective opens a unit, and a
+        # concession is a unit-opener with no punctuation of its own. Without it
+        # "sorry to nag, but as we agreed" has its comma one word too early.
+        "a concession opens a unit the punctuation does not",
+        "derive.py",
+        r'''_OPENS_A_UNIT = rf"(?:\A|[.!?;:,\n)]|[—–]|\s-\s|\b{_CONCESSIVE}\b)"''',
+        r'''_OPENS_A_UNIT = r"(?:\A|[.!?;:,\n)]|[—–]|\s-\s)"''',
+        "test_a_restatement_is_one_wherever_its_sentence_starts",
+    ),
+    (
+        # Unanchoring made two ordinary words dangerous, and this is the cost of
+        # getting that wrong: a scheduler's reminder job stops being a directive.
+        "a reminder is a frame and not a noun",
+        "derive.py",
+        r'''    r"remind(?:er|ing)(?=\s*[:,;—–]|\s+(?:that|to)\b)"''',
+        r'''    r"remind(?:er|ing)\b"''',
+        "test_a_reminder_is_a_frame_and_not_a_noun",
+    ),
+    (
+        # The same hole on the other word, and worse, because this project
+        # reports a recall figure in half its sentences about itself.
+        "recall is a frame and not a noun",
+        "derive.py",
+        r'''    r"|(?:please |just )?(?:remember|recall|bear in mind|keep in mind)"
+    r"(?=\s*[:,;—–]|\s+(?:that|to|we|you|i|it|this|these|the|our|your|what"
+    r"|when|how|why|never|no|always)\b)"''',
+        r'''    r"|(?:please |just )?(?:remember|recall|bear in mind|keep in mind)\b"''',
+        "test_a_reminder_is_a_frame_and_not_a_noun",
+    ),
+    (
+        # Finding 2, the frame it was reported against. Without the slot the
+        # hedge misses, the negation is left standing, and `_PROHIBIT` files an
+        # opinion as a rule.
+        "a hedge may sit between the subject and the auxiliary",
+        "derive.py",
+        r'''    rf"\b(?:i|we)(?: {_ADV})? ?{_NOT}"''',
+        r'''    rf"\b(?:i|we) ?{_NOT}"''',
+        "test_a_hedge_is_a_hedge_on_either_side_of_the_auxiliary",
+    ),
+    (
+        # The third position, which a list of whole contracted forms cannot
+        # hold: "I'm genuinely not convinced" puts the adverb inside `_NOT`.
+        "a hedge may sit inside the negated auxiliary",
+        "derive.py",
+        r'''    rf"|am|'?m|'?re|'?ve|'?d|'?ll) ?(?:{_ADV} )?n[o']t)"''',
+        r'''    r"|am|'?m|'?re|'?ve|'?d|'?ll) ?n[o']t)"''',
+        "test_a_hedge_is_a_hedge_on_either_side_of_the_auxiliary",
+    ),
+    (
+        # The same asymmetry in the certainty branch. Checking one frame and not
+        # its siblings is how the slot came to exist in one place only.
+        "the certainty frame takes the same two slots",
+        "derive.py",
+        r'''    rf"|\b(?:i|we)(?: {_ADV})? ?{_NOT} (?:{_ADV} )?"''',
+        r'''    rf"|\b(?:i|we) ?{_NOT} "''',
+        "test_a_hedge_is_a_hedge_on_either_side_of_the_auxiliary",
+    ),
+    (
+        "the perfect frame takes the same two slots",
+        "derive.py",
+        r'''    rf"|\b(?:i|we)(?: {_ADV})?(?:'?ve| have|'?d| had)(?: {_ADV})? never\b"''',
+        r'''    r"|\b(?:i|we)(?:'?ve| have|'?d| had) never\b"''',
+        "test_a_hedge_is_a_hedge_on_either_side_of_the_auxiliary",
+    ),
+    (
+        # `-ly` is productive, and a list of the six that turned up is a list of
+        # six. The citation slot and all four hedge frames read it.
+        "the adverb class is productive, not the literals that turned up",
+        "derive.py",
+        r'''    r"(?:\w+ly|quite|rather|somewhat|even|much|all that|at all|so|too|just|ever"''',
+        r'''    r"(?:clearly|explicitly|repeatedly|specifically|originally|initially"
+    r"|quite|rather|somewhat|even|much|all that|at all|so|too|just|ever"''',
+        "test_a_citation_keeps_its_shape_when_words_are_added",
+    ),
+    (
+        # Finding 3. One verb reached the frame, and the frame means the same
+        # with any verb that ranks one thing above another.
+        "preference is not one verb",
+        "derive.py",
+        r"""_PREFER = (
+    r"(?:prefer\w*|favou?r\w*|choos\w*|chose|chosen|pick(?:s|ed|ing)?"
+    r"|select\w*|opt(?:s|ed|ing)?|prioriti[sz]\w*|privileg\w*|recommend\w*"
+    r"|advocat\w*|rank\w*)"
+)""",
+        r'''_PREFER = r"(?:prefer\w*)"''',
+        "test_preferring_one_thing_to_another_is_not_one_verb",
+    ),
+    (
+        # The collision that made Finding 3 a no-op until it was split: with the
+        # two verb groups merged, a verb of choosing takes "over" as deliberation
+        # and "pick Parquet over CSV" is a decision taken, filed as one deferred.
+        "after a verb of choosing, `over` names the loser",
+        "derive.py",
+        r'''    r"|(?:choos|select|pick|decid)\w* (?:\w+ )?(?:between|among|amongst"
+    r"|about whether|whether)"
+    r"|(?:deliberat|debat|compar|evaluat|assess|mull|agonis|agoniz|wonder|think"
+    r"|ponder)\w* (?:\w+ )?(?:between|among|amongst|over|about whether|whether)"''',
+        r'''    r"|(?:choos|select|pick|decid|deliberat|debat|compar|evaluat|assess|mull"
+    r"|agonis|agoniz|wonder|think|ponder)\w* (?:\w+ )?(?:between|among|amongst"
+    r"|over|about whether|whether)"''',
+        "test_preferring_one_thing_to_another_is_not_one_verb",
+    ),
+    (
+        # Finding 4. A list of whole phrasings is how the singular went missing:
+        # "years ago" was admitted and "a year ago" was not.
+        "a measured distance back is a quantity and a unit",
+        "derive.py",
+        r'''    rf"|{_TIME_UNIT} ago|{_QTY} {_TIME_UNIT} (?:ago|back)"''',
+        r'''    r"|(?:years|months|weeks|days|hours|releases|sprints|quarters) ago"''',
+        "test_a_block_that_dates_itself_to_the_past_is_a_report",
+    ),
+    (
+        # The other half of Finding 4: the past named as a period rather than as
+        # a distance. "Back when I joined", "yesterday", "in older releases".
+        "the past can be named as a period, not only as a distance",
+        "derive.py",
+        r'''    r"|back when|when (?:we|i) (?:first|originally|initially|started|began)"
+    r"|yesterday|the other (?:day|week|night|morning|afternoon)"
+    r"|started (?:out|off)|in the early days"
+    rf"|in (?:older|earlier|prior|previous|the original|the first|the early)"
+    rf" {_ARTEFACT}"''',
+        r'''    r""''',
+        "test_a_block_that_dates_itself_to_the_past_is_a_report",
+    ),
+    (
+        # A clause-final "earlier" is the commonest adjunct of the lot and the
+        # list reached every position of it except that one.
+        "a clause-final `earlier` dates the block too",
+        "derive.py",
+        r'''    r"|earlier (?:in|today|this|on|we|i|you|they|the|that|it)|earlier(?=[,;])"''',
+        r'''    r"|earlier (?:in|today|this|on|we|i|you|they|the|that|it)"''',
+        "test_a_block_that_dates_itself_to_the_past_is_a_report",
+    ),
+    (
+        # "last Tuesday" dates a clause exactly as "last week" does, and a list
+        # of generic units reaches none of the named days or months.
+        "a named day dates a clause as a generic unit does",
+        "derive.py",
+        r'''    rf"|last (?:year|month|week|quarter|sprint|time|release|cycle|session"
+    rf"|iteration|night|day|{_CALENDAR})"''',
+        r'''    r"|last (?:year|month|week|quarter|sprint|time|release|cycle|session"
+    r"|iteration|night|day)"''',
+        "test_a_block_that_dates_itself_to_the_past_is_a_report",
     ),
 ]
 

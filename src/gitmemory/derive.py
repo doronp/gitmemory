@@ -328,14 +328,28 @@ def timeline(session: Session) -> dict:
 # one thing this module may not do (DESIGN.md §2.6); the honest alternative is
 # to widen the corpus until the shapes that fail are known.
 
+# Degree and stance adverbs: the modifiers that attach to a verb phrase without
+# changing what it asserts. English puts them on either side of the auxiliary —
+# "I *really* don't think" and "I don't *really* think" are the same hedge — so a
+# frame that opens the slot in one position and not the other has a hole the
+# grammar does not have, and a hedge read as a rule is what falls through it.
+# `\w+ly` is the productive form; the rest are the adverbs with no suffix, and
+# writing it this way is what retires the hand-picked `-ly` literals that `_MID`
+# and `_OPINION` each kept a private copy of.
+_ADV = (
+    r"(?:\w+ly|quite|rather|somewhat|even|much|all that|at all|so|too|just|ever"
+    r"|still|half|altogether)"
+)
+
 # An adverb/auxiliary slot, for use in the middle of a frame. A fixed two-word
 # sequence is a surface form; the same frame with a slot in it is a class, and
 # every frame below that can take a modifier is written with one. The absence of
 # this slot is what let "as we discussed" through while catching "as discussed".
+# The members are the words a slot holds that `_ADV` does not: perfect and
+# aspectual auxiliaries, and the temporal and focus adverbs.
 _MID = (
-    r"(?: (?:have|has|had|already|previously|earlier|before|just|also|again"
-    r"|clearly|explicitly|repeatedly|specifically|originally|initially|indeed"
-    r"|keep|kept|been|all|only|both))*"
+    rf"(?: (?:{_ADV}|have|has|had|already|previously|earlier|before|also|again"
+    r"|keep|kept|been|all|only|both|indeed))*"
 )
 
 # Verbs of saying. A class of saying-verbs has a couple of dozen members, not
@@ -352,12 +366,33 @@ _SAYING = (
     r"|instructed|directed|insisted|required|advised|suggested|promised)"
 )
 
-# Sentence-initial back-reference: the speaker is restating something already
-# agreed, which is not a new decision however imperative it sounds. Anchored at
-# the start because that is where a discourse connective lives; "as noted" in
-# the middle of a clause is doing a different job.
+# Adversative and concessive connectives: the words that join a conceded clause
+# to the point being made. They are here because they are the one thing that can
+# stand between a unit's punctuation and the connective that opens it — "sorry
+# to nag, but as we agreed …" — and without them the boundary is unreachable.
+_CONCESSIVE = (
+    r"(?:but|however|although|though|still|yet|anyway|regardless|nonetheless"
+    r"|nevertheless|that said|even so|in any case|either way|mind you|all the same)"
+)
+
+# The positions a discourse connective can open from. This used to be offset 0
+# alone, matched with `_BACKREF.match`, and offset 0 is not where chat puts it: a
+# block is several sentences, the frame opens the second or the fifth of them,
+# and it follows an apology or a concession when it opens the first. Every one of
+# those was a restatement read as a fresh directive.
+#
+# Still a *position* and not a bag of words, which is the other half of getting
+# this right. The frame has to open a unit — the block, a sentence, a clause
+# after its punctuation, or the concessive that joins one — because a
+# saying-verb loose inside a clause is reporting rather than restating ("write
+# the ADR that records what we agreed"), and suppressing those costs real
+# directives.
+_OPENS_A_UNIT = rf"(?:\A|[.!?;:,\n)]|[—–]|\s-\s|\b{_CONCESSIVE}\b)"
+
+# Back-reference: the speaker is restating something already agreed, which is
+# not a new decision however imperative it sounds.
 _BACKREF = re.compile(
-    r"\s*(?:"
+    rf"{_OPENS_A_UNIT}\s*(?:"
     # The citation frame: "as <subject>? <slot>* <saying-verb>". One frame with
     # two open positions, rather than one list per subject — keeping two lists
     # in step is what failed, and "as we established" fell in the gap.
@@ -368,10 +403,17 @@ _BACKREF = re.compile(
     r"|per (?:my|our|your|the|that|this|a) [\w-]+"
     # Explicit repetition, with the politeness and hedge slots open in front.
     r"|(?:just |simply |only )?to (?:recall|reiterate|repeat|restate|remind)\b"
+    # A reminder *frame* introduces what is being restated, so the noun is
+    # followed by the thing it introduces. Without that lookahead "reminder" and
+    # "recall" are ordinary words of this domain — a reminder job, a recall
+    # figure beside a precision one — and unanchoring the guard put both of them
+    # one comma away from suppressing a real directive.
     r"|(?:just |simply )?(?:a |an |one |another |the )?"
     r"(?:quick |friendly |gentle |final |small |little |brief |last )*"
-    r"remind(?:er|ing)\b"
-    r"|(?:please |just )?(?:remember|recall|bear in mind|keep in mind)\b"
+    r"remind(?:er|ing)(?=\s*[:,;—–]|\s+(?:that|to)\b)"
+    r"|(?:please |just )?(?:remember|recall|bear in mind|keep in mind)"
+    r"(?=\s*[:,;—–]|\s+(?:that|to|we|you|i|it|this|these|the|our|your|what"
+    r"|when|how|why|never|no|always)\b)"
     r"|(?:please )?(?:do ?n[o']t|never) forget\b"
     r"|(?:i'?m |i am |just )?(?:repeating|restating|reiterating|echoing)\b"
     r"|(?:let me|i'?ll|i will) (?:repeat|restate|reiterate|remind|echo"
@@ -395,10 +437,15 @@ _DELIBERATION = re.compile(
     r"|under (?:consideration|discussion|debate)|open question"
     r"|to be (?:decided|determined)|up in the air"
     # The comparison frame: any verb of comparing or choosing, an open adverb
-    # slot, and the preposition that takes the alternatives as its object.
-    r"|(?:choos|select|pick|decid|deliberat|debat|compar|evaluat|assess|mull"
-    r"|agonis|agoniz|wonder|think)\w* (?:\w+ )?(?:between|among|amongst|over"
+    # slot, and the preposition that takes the alternatives as its object. Two
+    # verb groups, because they do not share "over": after a verb of pondering it
+    # means "about" and the set stays open ("still mulling it over"), but after a
+    # verb of choosing it names the loser — "pick Parquet over CSV" is a decision
+    # taken, and one list read it as a decision deferred.
+    r"|(?:choos|select|pick|decid)\w* (?:\w+ )?(?:between|among|amongst"
     r"|about whether|whether)"
+    r"|(?:deliberat|debat|compar|evaluat|assess|mull|agonis|agoniz|wonder|think"
+    r"|ponder)\w* (?:\w+ )?(?:between|among|amongst|over|about whether|whether)"
     r"|torn between|going back and forth|on the (?:one|other) hand"
     r"|weigh(?:s|ing|ed)?|pros and cons|trade-?offs?|upsides? and downsides?"
     r"|(?:we|i) (?:could|might|may want)|(?:we|you|i) can either"
@@ -415,6 +462,36 @@ _DELIBERATION = re.compile(
     re.I,
 )
 
+# A quantity and a unit of time — the two halves of a measured distance into the
+# past. Written as two classes because a list of whole phrasings is how the
+# singular went missing: "years ago" and "a while back" were both admitted and
+# "a year ago" fell between them.
+_QTY = (
+    r"(?:an?|one|two|three|four|five|six|seven|eight|nine|ten|\d+|some|many"
+    r"|several|a few|a couple of|a handful of)"
+)
+_TIME_UNIT = (
+    r"(?:(?:second|minute|hour|day|week|month|year|decade|release|sprint"
+    r"|quarter|cycle|version|iteration|generation)s?|while|long time|moment)"
+)
+
+# Weekday and month names, a closed class. "last Tuesday" and "last March" date
+# a clause exactly as "last week" does, and a list of generic units alone
+# reaches none of the dated ones.
+_CALENDAR = (
+    r"(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day"
+    r"|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun[e]?|jul[y]?"
+    r"|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)"
+)
+
+# Things a project has earlier versions of. Only used behind a retrospective
+# determiner, and enumerated rather than left as `[\w-]+` so that "in the first
+# place" — which dates nothing — is not read as a date.
+_ARTEFACT = (
+    r"(?:versions?|releases?|iterations?|builds?|designs?|drafts?|cuts?"
+    r"|revisions?|implementations?|days)"
+)
+
 # A report about the past, not a decision taken now. The give-away is a
 # retrospective time adverbial: the clause says when it happened, which a
 # commitment never needs to.
@@ -422,18 +499,32 @@ _RETROSPECTIVE = re.compile(
     r"\b(?:historically|originally|formerly|initially|previously|early on"
     r"|in the past|back then|at first|at one point|once upon a time"
     r"|at the (?:time|outset|start|beginning)|in the (?:beginning|old days)"
-    r"|earlier (?:in|today|this|on|we|i|you|they|the|that|it)"
-    r"|a (?:while|long time|moment|minute) (?:back|ago)|way back|long ago"
+    # The punctuation is looked at rather than consumed: the wrapper's trailing
+    # `\b` wants a word character, and a clause-final "earlier," has none.
+    r"|earlier (?:in|today|this|on|we|i|you|they|the|that|it)|earlier(?=[,;])"
+    r"|way back|long ago"
     r"|back in (?:the day|\d{4})|in \d{4}\b"
     r"|used to"
-    r"|last (?:year|month|week|quarter|sprint|time|release|cycle|session"
-    r"|iteration|night|day)"
+    rf"|last (?:year|month|week|quarter|sprint|time|release|cycle|session"
+    rf"|iteration|night|day|{_CALENDAR})"
     # A past-tense copula or auxiliary right after a retrospective determiner is
     # the one tense cue available without a parse: "the old setup *had* no CI".
     r"|the (?:old|previous|original|former|first) [\w-]+ (?:was|were|had|did|used)"
-    r"|(?:years|months|weeks|days|hours|releases|sprints|quarters|versions) ago"
+    # A measured distance back. "back" only after a quantity, because "roll the
+    # version back" is a direction and not a date.
+    rf"|{_TIME_UNIT} ago|{_QTY} {_TIME_UNIT} (?:ago|back)"
+    # The past named as a period rather than as a distance: a clause that opens
+    # one, a deictic day, or an earlier edition of the thing under discussion.
+    r"|back when|when (?:we|i) (?:first|originally|initially|started|began)"
+    r"|yesterday|the other (?:day|week|night|morning|afternoon)"
+    r"|started (?:out|off)|in the early days"
+    rf"|in (?:older|earlier|prior|previous|the original|the first|the early)"
+    rf" {_ARTEFACT}"
     r"|(?:up )?until (?:now|recently|last|then)|up to now|till recently"
     r"|since then|ever since|by then|at that time"
+    # "before then", "prior to that", "beforehand" are deliberately absent: they
+    # locate a clause relative to another time, not in the past, and every one
+    # of them has a reading that points forward ("ship it before then").
     # Framing markers that announce the clause as background rather than as an
     # instruction. The frame is the tell, not the tense.
     r"|for (?:context|background|history)|as (?:context|background)"
@@ -466,9 +557,12 @@ _REPAIR = re.compile(
 )
 
 # Negated auxiliaries, as a class rather than as the five that turned up first.
+# Written as auxiliary + slot + negator rather than as whole contracted forms,
+# because that is the third place the modifier goes ("I'm *really* not sure") and
+# a list of surface forms has nowhere to put one.
 _NOT = (
-    r"(?:(?:do|did|does|ca|could|wo|would|should|have|has|had|was|were|is|are|ai)"
-    r" ?n[o']t|'?m not|am not|'?re not|are not|'?ve not|'?d not|'?ll not)"
+    r"(?:(?:do|did|does|ca|could|wo|would|should|have|has|had|was|were|is|are|ai"
+    rf"|am|'?m|'?re|'?ve|'?d|'?ll) ?(?:{_ADV} )?n[o']t)"
 )
 
 # Verbs of believing, knowing, perceiving and wanting — the ones that take a
@@ -484,19 +578,20 @@ _MIND = (
 # prohibition's words and imposes nothing. Guarded on the subject, because the
 # same verb with any other subject ("you don't touch that") is deontic.
 _OPINION = re.compile(
-    # The negated-attitude frame, with an adverb slot in the middle: "I do not
-    # *really* think", "we don't *necessarily* want".
-    rf"\b(?:i|we) ?{_NOT}"
-    rf" (?:(?:\w+ly|quite|even|much|all that|so|too|just) )?{_MIND}\b"
+    # The negated-attitude frame, with the adverb slot open on both sides of the
+    # auxiliary: "I *honestly* don't think", "I do not *really* think".
+    rf"\b(?:i|we)(?: {_ADV})? ?{_NOT}"
+    rf" (?:{_ADV} )?{_MIND}\b"
     # The perfect is a report of experience; the bare present is a rule. "We
     # have never used pickle" says what happened, "we never use pickle" orders.
-    r"|\b(?:i|we)(?:'?ve| have|'?d| had) never\b"
+    rf"|\b(?:i|we)(?: {_ADV})?(?:'?ve| have|'?d| had)(?: {_ADV})? never\b"
     # Negated certainty about a proposition, which asserts nothing about it.
-    rf"|\b(?:i|we) ?{_NOT} (?:sure|certain|convinced|persuaded|sold|clear"
+    rf"|\b(?:i|we)(?: {_ADV})? ?{_NOT} (?:{_ADV} )?"
+    r"(?:sure|certain|convinced|persuaded|sold|clear"
     r"|positive|confident|fussed|bothered|keen)\b"
     # An attitude or knowledge noun under "have no" is a report of not holding
     # one, not a prohibition on holding one.
-    r"|\b(?:i|we)(?:'?ve| have| had|'?d) no (?:\w+ )?"
+    rf"|\b(?:i|we)(?: {_ADV})?(?:'?ve| have| had|'?d) no (?:\w+ )?"
     r"(?:view|opinion|preference|objection|idea|clue|issue|problem|feelings?"
     r"|thoughts?|comment|complaint|doubt|memory|recollection|experience"
     r"|visibility|insight|say|stake|context|sense)\b",
@@ -539,6 +634,19 @@ _PROHIBIT = re.compile(
 # half stated beside it.
 _PREVENT = re.compile(r"\b(?:prevent(?:s|ed|ing)?|guard(?:s|ed|ing)? against)\b", re.I)
 
+# Verbs that take an `X over Y` complement in which `over` names the loser.
+# Preference is not one verb: ranking one thing above another is a small open
+# class and the frame means the same with any member of it. Verbs whose `over`
+# is spatial or scopal are deliberately out — "use a lock over the whole map",
+# "take the branch over the trunk" — because there the preposition is the same
+# word doing a different job, and admitting them buys the preference frame at
+# the price of every sentence about coverage.
+_PREFER = (
+    r"(?:prefer\w*|favou?r\w*|choos\w*|chose|chosen|pick(?:s|ed|ing)?"
+    r"|select\w*|opt(?:s|ed|ing)?|prioriti[sz]\w*|privileg\w*|recommend\w*"
+    r"|advocat\w*|rank\w*)"
+)
+
 # The substitution frame. Two-sided by construction — it cannot be written
 # without naming both the thing taken up and the thing put down — which is why
 # it is sufficient on its own for a directive.
@@ -549,7 +657,7 @@ _CONTRAST = re.compile(
     # preposition elided.
     r"|,\s*(?:and )?not\b"
     # A preference stated as a comparison: "composition over inheritance".
-    r"|\bprefer\w*\b[^.;:!?]{1,40}\bover\b",
+    rf"|\b{_PREFER}\b[^.;:!?]{{1,40}}\bover\b",
     re.I,
 )
 
@@ -664,7 +772,7 @@ def _decision_kind(text: str, role: str) -> str | None:
     # substitution frame exactly as the assistant does, and the correction is a
     # repair either way.
     if (
-        _BACKREF.match(text)
+        _BACKREF.search(text)
         or _DELIBERATION.search(text)
         or _RETROSPECTIVE.search(text)
         or _OPINION.search(text)
