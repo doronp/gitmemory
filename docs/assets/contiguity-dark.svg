@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 392" width="1160" height="392" role="img" aria-label="A transcript's bytes tiled by three captured segments with no hole and no overlap, hashed to a recorded digest, committed to git, with derived artifacts rebuilt from the bytes.">
+  <style>
+    .ink    { fill: #e6edf3; }
+    .muted  { fill: #9198a1; }
+    .accent { fill: #4493f8; }
+    .rule   { stroke: #3d444d; }
+    .edge   { stroke: #4493f8; }
+    .seg    { fill: #4493f8; }
+    .caret  { fill: #9198a1; }
+  </style>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+
+    <!-- eyebrow -->
+    <text x="100" y="44" class="muted" font-size="13" letter-spacing="1.6">GITMEMORY — CONTIGUOUS, NOT COMPLETE</text>
+    <text x="100" y="74" class="ink" font-size="21">The record either proves it is contiguous, or it names the hole.</text>
+
+    <!-- compaction markers -->
+    <g class="caret" font-size="12">
+      <text x="530" y="118" text-anchor="middle" class="muted">compaction</text>
+      <text x="697" y="118" text-anchor="middle" class="muted">compaction</text>
+      <path d="M524 126 h12 l-6 9 z"/>
+      <path d="M691 126 h12 l-6 9 z"/>
+    </g>
+
+    <!-- the byte range, tiled -->
+    <g>
+      <rect x="100" y="142" width="430" height="54" class="seg" fill-opacity="0.13"/>
+      <rect x="530" y="142" width="167" height="54" class="seg" fill-opacity="0.20"/>
+      <rect x="697" y="142" width="363" height="54" class="seg" fill-opacity="0.28"/>
+      <rect x="100" y="142" width="960" height="54" fill="none" class="edge" stroke-opacity="0.45" stroke-width="1"/>
+      <line x1="530" y1="142" x2="530" y2="196" class="edge" stroke-opacity="0.45" stroke-width="1"/>
+      <line x1="697" y1="142" x2="697" y2="196" class="edge" stroke-opacity="0.45" stroke-width="1"/>
+    </g>
+
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12.5" class="accent" text-anchor="middle">
+      <text x="315" y="174">3f9c8a1e</text>
+      <text x="613" y="174">0b17d442</text>
+      <text x="878" y="174">c4ae6f30</text>
+    </g>
+
+    <!-- byte boundaries -->
+    <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="12" class="muted">
+      <text x="100" y="218">0</text>
+      <text x="530" y="218" text-anchor="middle">41 823</text>
+      <text x="697" y="218" text-anchor="middle">58 100</text>
+      <text x="1060" y="218" text-anchor="end">93 412</text>
+    </g>
+
+    <!-- the claim -->
+    <text x="100" y="254" class="accent" font-size="14">
+      verify → the three segments tile [0, 93 412) · no hole · no overlap · digest matches
+    </text>
+    <text x="100" y="276" class="muted" font-size="13">
+      Not a proof the agent wrote everything it generated. A process killed before its flush leaves a stream that is contiguous and short.
+    </text>
+
+    <line x1="100" y1="306" x2="1060" y2="306" class="rule" stroke-width="1"/>
+
+    <!-- what happens to the bytes -->
+    <g font-size="13">
+      <text x="100" y="336" class="ink">Kept</text>
+      <text x="100" y="358" class="muted">raw bytes, committed — one commit per capture, append-only</text>
+
+      <text x="620" y="336" class="ink">Rebuilt</text>
+      <text x="620" y="358" class="muted">index.db · ideas.json · timeline.json · graph.json</text>
+      <text x="620" y="378" class="muted">every node carries a source_ref back to a committed block hash</text>
+    </g>
+
+  </g>
+</svg>

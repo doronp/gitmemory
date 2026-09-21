@@ -2363,9 +2363,21 @@ MUTANTS = [
         # perfect at all of them. The split is the measurement.
         "a documented ceiling is scored against the class",
         "bench/probes.py",
-        '        if group == "ceiling":',
+        "        if group in ASIDE:",
         "        if False:",
         "test_a_ceiling_miss_is_not_counted_as_a_class_miss",
+    ),
+    (
+        # Probe C's 8 contested items sit apart from its 32 for the same reason
+        # A and B's ceilings do. Dropping `hard` out of the aside set moves C's
+        # denominator from 32 to 40 without moving the floor, so 14/32 would
+        # quietly become 16/40 and the published number would stop meaning what
+        # the document says it means. [probe C]
+        "the contested items are folded into probe C's 32",
+        "bench/probes.py",
+        'ASIDE = frozenset({"ceiling", "hard"})',
+        'ASIDE = frozenset({"ceiling"})',
+        "test_the_probe_score_has_not_regressed",
     ),
     (
         # The same mutant as "a restatement may open any sentence", aimed at a

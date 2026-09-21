@@ -1,21 +1,25 @@
-"""Two adversarial probes in vocabularies neither fixture split uses.
+"""Three adversarial probes in vocabularies no fixture split uses.
 
-The gate fixture scores 1.0000/1.0000 and has done through four rounds of real
+The gate fixture scores 1.0000/1.0000 and has done through five rounds of real
 defects. That is not a contradiction: the generator writes in one register, and
 every defect found since has been invisible to it. These probes are the other
 measurement — hand-labelled by what each sentence *does*, in words the corpus
 does not contain.
 
-**Both are spent.** A held-out set is spent the moment it informs a revision,
-and each of these set the brief for a round and then scored its result. The
+**A and B are spent.** A held-out set is spent the moment it informs a revision,
+and each of those set the brief for a round and then scored its result. The
 numbers pinned in `bench/test_probes.py` are therefore a regression floor, not
 evidence of generalisation, and optimising against them would be optimising
-against training data. The next honest number needs a third probe nobody has
-scored yet.
+against training data.
 
-Scored by class and by ceiling separately. CEILING groups are shapes the
-extractor declares out of reach — bare imperatives with no obligation frame,
-mostly — so failing them confirms a known limit and passing one is a bonus.
+**C is the generalisation number**, scored once, on 2026-09-21, and it reads
+**14/32** against A's 26 and B's 27. The gap is the finding, not a defect in the
+probe: A and B were written to attack precision and C was written to attack
+recall, and the extractor turns out to be badly lopsided. C scores 10/10 on the
+items that are not decisions and 4/22 on the ones that are. See
+`docs/benchmarks/E5-probe-C.md`. C is spent the moment anyone tunes against it.
+
+Scored by class and aside separately — see `ASIDE`.
 
 Run: `python -m bench.probes`
 """
@@ -454,21 +458,325 @@ CASES_B = [
     ),
 ]
 
-PROBES = {"A": CASES_A, "B": CASES_B}
+# --------------------------------------------------------------------------- #
+# Probe C
+#
+# Written blind on 2026-09-21 by an agent that read only README.md and
+# docs/DESIGN.md — not derive.py, not this file, not bench/, not the gate
+# reports. It never ran the extractor. Unlike A and B it did not set the brief
+# for a round: it was frozen unscored and scored once, after the fact, and the
+# number below is therefore the first honest generalisation figure this project
+# has. A and B are training data now; C is spent the moment anyone tunes
+# against it, so do not.
+#
+# Domain: theatrical show control — cue stacks, DMX universes, sACN/ArtNet,
+# fade curves, grandmaster, followspots, house lights. Chosen so lexical
+# overlap with the corpus (parsers, tokenizers, buckets, credentials, workers)
+# is impossible by construction.
+#
+# Conventions the author committed to, stated before scoring:
+#   1. A one-off work request ("run the validator") is None — it asks for
+#      labour, it does not bind how later work is done.
+#   2. Reversal is scored on effect, never on cue words: no item in the
+#      reversal groups contains "actually" or "instead".
+#   3. `directive` is read as human-imposed, so no assistant turn in the 32 is
+#      a directive. The assistant self-commitment case is in `hard`.
+#
+# The 32 split 11 directive / 11 reversal / 10 None. The 8 `hard` items are
+# the ones the author could not settle — an assistant imposing a rule on
+# itself, a correction of a belief rather than of a decision, a rule proposed
+# in interrogative mood, a third party's rule relayed. They are scored and
+# reported apart from the 32 for the same reason the CEILING groups are: an
+# item two careful readers would split on measures the label, not the code.
+# --------------------------------------------------------------------------- #
+
+# (group, role, text, expected)
+CASES_C = [
+    (
+        "standing-rule-declarative",
+        "user",
+        "Fade times live in the cue stack as integer milliseconds, never seconds.",
+        "directive",
+    ),
+    (
+        "standing-rule-declarative",
+        "user",
+        "Everything that speaks to the desk goes out through the sACN sender; nothing opens its "
+        "own socket.",
+        "directive",
+    ),
+    (
+        "standing-rule-declarative",
+        "user",
+        "The grandmaster belongs to the console — our code reads it and does not set it.",
+        "directive",
+    ),
+    (
+        "directive-terse",
+        "user",
+        "One universe per output thread. No sharing.",
+        "directive",
+    ),
+    (
+        "directive-terse",
+        "user",
+        "Patch file stays YAML.",
+        "directive",
+    ),
+    (
+        "directive-buried-clause",
+        "user",
+        "I honestly don't care how the fade curve gets computed, as long as the interpolation "
+        "happens on the show thread and not inside the renderer.",
+        "directive",
+    ),
+    (
+        "directive-buried-clause",
+        "user",
+        "While you're in the cue loader anyway, index zero stays reserved for blackout.",
+        "directive",
+    ),
+    (
+        "directive-buried-clause",
+        "user",
+        "Whatever you end up doing about the moving-head timeout — and I know it's messy, the "
+        "fixtures don't even agree on what a timeout means — the house lights still have to be up "
+        "within two seconds of the panic button.",
+        "directive",
+    ),
+    (
+        "directive-selection-or-hedge",
+        "user",
+        "Between ArtNet and sACN for the studio rig, we're going with sACN.",
+        "directive",
+    ),
+    (
+        "directive-selection-or-hedge",
+        "user",
+        "I'd rather eat the slower timecode sync than keep the one that drifts, so take the slow "
+        "one.",
+        "directive",
+    ),
+    (
+        "directive-selection-or-hedge",
+        "user",
+        "Let's not grow a second dimmer curve table; fold the extra points into the one we "
+        "already have.",
+        "directive",
+    ),
+    (
+        "reversal-plain",
+        "user",
+        "The millisecond rule is off for the legacy patch importer — that file keeps whatever "
+        "units it was written with.",
+        "reversal",
+    ),
+    (
+        "reversal-plain",
+        "user",
+        "Drop the sACN decision. The studio rig turned out to be ArtNet and nobody is rewiring it "
+        "this season.",
+        "reversal",
+    ),
+    (
+        "reversal-plain",
+        "user",
+        "Cue index zero is no longer reserved. Numbering is free again.",
+        "reversal",
+    ),
+    (
+        "reversal-partial-scope",
+        "user",
+        "One universe per thread still holds on the main rig, but it stops applying to the "
+        "rehearsal room.",
+        "reversal",
+    ),
+    (
+        "reversal-partial-scope",
+        "user",
+        "We are not holding the two-second house-lights target anymore; best effort is fine.",
+        "reversal",
+    ),
+    (
+        "reversal-partial-scope",
+        "user",
+        "Stop treating the rehearsal desk as read-only — that constraint came out of a "
+        "misunderstanding on my side.",
+        "reversal",
+    ),
+    (
+        "reversal-reinstate-prior",
+        "user",
+        "Back to the YAML patch file. Moving it to JSON was a mistake and I'd like it undone.",
+        "reversal",
+    ),
+    (
+        "reversal-reinstate-prior",
+        "user",
+        "The followspot goes back to manual. The automatic tracking we agreed on last week isn't "
+        "happening.",
+        "reversal",
+    ),
+    (
+        "reversal-abandon-plan",
+        "user",
+        "Scratch precomputing every fade ramp at load time.",
+        "reversal",
+    ),
+    (
+        "reversal-abandon-plan",
+        "user",
+        "That rule about never setting the grandmaster is lifted; the panic path needs it.",
+        "reversal",
+    ),
+    (
+        "reversal-abandon-plan",
+        "user",
+        "We said the cue stack would be append-only. It won't be — editors have to reorder.",
+        "reversal",
+    ),
+    (
+        "none-one-off-request",
+        "user",
+        "Can you re-render the cue list preview and paste me the first ten rows?",
+        None,
+    ),
+    (
+        "none-one-off-request",
+        "user",
+        "Run the patch validator over the touring rig file when you get a minute.",
+        None,
+    ),
+    (
+        "none-one-off-request",
+        "user",
+        "Where does the followspot timeout actually get set?",
+        None,
+    ),
+    (
+        "none-external-rule",
+        "user",
+        "The sACN spec says a source must stop transmitting after three seconds of inactivity.",
+        None,
+    ),
+    (
+        "none-external-rule",
+        "user",
+        "The venue's contract requires a dark break every ninety minutes, which is why the house "
+        "file has those gaps in it.",
+        None,
+    ),
+    (
+        "none-assistant-reports",
+        "assistant",
+        "Following your call earlier, fade times stay in milliseconds everywhere in the cue "
+        "loader.",
+        None,
+    ),
+    (
+        "none-assistant-reports",
+        "assistant",
+        "Now that the cue stack is no longer append-only, the reorder path doesn't need the "
+        "shadow copy.",
+        None,
+    ),
+    (
+        "none-assistant-reports",
+        "assistant",
+        "I've moved the studio rig over to sACN as you asked and the desk is answering on "
+        "universe one.",
+        None,
+    ),
+    (
+        "none-chatter-speculation",
+        "user",
+        "Nice — the crossfade looks a lot smoother than it did this morning.",
+        None,
+    ),
+    (
+        "none-chatter-speculation",
+        "assistant",
+        "If timecode ever drifts more than a frame we'd probably want a resync, though I haven't "
+        "seen it drift on this rig yet.",
+        None,
+    ),
+    (
+        "hard",
+        "assistant",
+        "From here on I'll keep every cue-stack edit behind the undo journal.",
+        None,
+    ),
+    (
+        "hard",
+        "user",
+        "If the touring rig ever gets a second universe, that one runs on its own thread too.",
+        "directive",
+    ),
+    (
+        "hard",
+        "user",
+        "Half of what I told you about the fade engine this morning was wrong — the ramp is "
+        "computed on the desk, not by us.",
+        None,
+    ),
+    (
+        "hard",
+        "user",
+        "Could we make it a rule that no cue writes to two universes in the same frame?",
+        "directive",
+    ),
+    (
+        "hard",
+        "user",
+        "Rig's back up, desk is patched, and the followspot stays on DMX after all rather than "
+        "going over the network — the latency was awful.",
+        "reversal",
+    ),
+    (
+        "hard",
+        "user",
+        "The lighting director's note says every cue under three seconds has to be marked as a "
+        "snap.",
+        None,
+    ),
+    (
+        "hard",
+        "user",
+        "There is no reason for the renderer to ever touch the patch table.",
+        "directive",
+    ),
+    (
+        "hard",
+        "user",
+        "We've flipped back on the YAML question one more time — JSON, and that's final.",
+        "reversal",
+    ),
+]
+
+
+PROBES = {"A": CASES_A, "B": CASES_B, "C": CASES_C}
+
+
+# Groups held out of the class score. Two reasons, one rule: neither measures a
+# shape the rules claim to cover. `ceiling` is a limit the extractor's author
+# declared out of reach; `hard` is an item probe C's author could not settle,
+# where a miss may be the label's fault rather than the code's. Folding either
+# into the 32 would move the denominator every probe is compared against.
+ASIDE = frozenset({"ceiling", "hard"})
 
 
 def score(cases) -> tuple[int, int, int, int, list]:
-    """`(class_ok, class_n, ceiling_ok, ceiling_n, misses)`.
+    """`(class_ok, class_n, aside_ok, aside_n, misses)`.
 
-    The two are never added together. A ceiling miss is a limit behaving as
-    documented; a class miss is a rule that claims the shape and does not
+    The two are never added together. An aside miss is a documented limit or a
+    contested label; a class miss is a rule that claims the shape and does not
     deliver it, and only the second is a defect.
     """
     class_ok = class_n = ceil_ok = ceil_n = 0
     misses = []
     for group, role, text, expected in cases:
         got = _decision_kind(text, role)
-        if group == "ceiling":
+        if group in ASIDE:
             ceil_n += 1
             ceil_ok += got == expected
         else:
@@ -482,7 +790,7 @@ def score(cases) -> tuple[int, int, int, int, list]:
 def main() -> int:
     for name, cases in PROBES.items():
         class_ok, class_n, ceil_ok, ceil_n, misses = score(cases)
-        print(f"probe {name}:  class {class_ok}/{class_n}   ceiling {ceil_ok}/{ceil_n}")
+        print(f"probe {name}:  class {class_ok}/{class_n}   aside {ceil_ok}/{ceil_n}")
         for group, role, text, expected, got in misses:
             print(f"  [{group}] expected {expected}, got {got}\n    ({role}) {text}")
         print()

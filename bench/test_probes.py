@@ -7,14 +7,17 @@ problem these probes exist to state out loud. The generator writes in one
 register. Everything wrong with the extractor so far has been invisible to it.
 
 So the numbers here are the second measurement, and they are deliberately
-*not* round. 26 of 32 and 27 of 32 on shapes the rules claim to cover, in words
-the corpus does not contain.
+*not* round. 26 of 32, 27 of 32 and 14 of 32 on shapes the rules claim to cover,
+in words the corpus does not contain.
 
-Both probes are spent: each set the brief for a round and then scored its
-result, so they are training data now. That is why these assertions are a floor
-and not an equality — a regression is a defect worth a red test, and an
-improvement is not evidence of anything until a third probe nobody has scored
-says so. Do not tune against them.
+A and B are spent: each set the brief for a round and then scored its result, so
+they are training data now. C is not — it was written blind, frozen, and scored
+once — and 14 is what the extractor is worth on text nobody shaped for it.
+
+That is why these assertions are a floor and not an equality: a regression is a
+defect worth a red test. An improvement in A or B is not evidence of anything.
+An improvement in C is not evidence either, unless it came from a change that
+was never shown C's miss list. Do not tune against them.
 """
 
 from __future__ import annotations
@@ -25,13 +28,21 @@ from bench.probes import PROBES, score
 
 # Measured 2026-09-21 on 831ef6e, after guard round 3. Before that round:
 # A 23/32, B 26/32. The dev fixture read 1.0000/1.0000 both times.
-FLOOR = {"A": 26, "B": 27}
+#
+# C is 14 and that is not a typo. A and B each set the brief for a round and
+# then scored its result, so they are training data; C was written blind,
+# frozen, and scored once, and it is the only generalisation number here.
+# Raising C by editing the extractor against C's own misses would convert the
+# one honest measurement into a fourth piece of training data. Don't. The fix
+# for what C found needs a probe D, written by someone who has not read C.
+# `docs/benchmarks/E5-probe-C.md` is the record.
+FLOOR = {"A": 26, "B": 27, "C": 14}
 
 
 @pytest.mark.parametrize("name", sorted(FLOOR))
 def test_the_probe_score_has_not_regressed(name):
     class_ok, class_n, _, _, misses = score(PROBES[name])
-    assert class_n == 32, "both probes are 32 class items; a changed denominator changes the floor"
+    assert class_n == 32, "every probe is 32 class items; a changed denominator changes the floor"
     assert class_ok >= FLOOR[name], "\n".join(
         [f"probe {name}: {class_ok}/{class_n}, floor {FLOOR[name]}"]
         + [f"  [{g}] expected {e}, got {got}: {t}" for g, _r, t, e, got in misses]
