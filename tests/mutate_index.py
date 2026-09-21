@@ -1900,6 +1900,31 @@ MUTANTS = [
     r"|iteration|night|day)"''',
         "test_a_block_that_dates_itself_to_the_past_is_a_report",
     ),
+    # --- the probes ----------------------------------------------------------
+    (
+        # The flattering direction. Folding the ceiling into the class score
+        # makes the extractor look worse at shapes it never claimed, and the
+        # opposite mutant — scoring everything as ceiling — makes it look
+        # perfect at all of them. The split is the measurement.
+        "a documented ceiling is scored against the class",
+        "bench/probes.py",
+        '        if group == "ceiling":',
+        "        if False:",
+        "test_a_ceiling_miss_is_not_counted_as_a_class_miss",
+    ),
+    (
+        # The same mutant as "a restatement may open any sentence", aimed at a
+        # different test on purpose. That row proves `test_derive.py` holds the
+        # fix; this one proves the *probe floor* does — that the pinned 26 and
+        # 27 are load-bearing rather than a number nobody's change can trip.
+        # The dev fixture scores 1.0000 with this mutant in place, which is the
+        # whole argument for having the probes at all.
+        "the probe floor does not notice a guard regressing",
+        "derive.py",
+        """        _BACKREF.search(text)""",
+        """        _BACKREF.match(text)""",
+        "test_the_probe_score_has_not_regressed",
+    ),
 ]
 
 

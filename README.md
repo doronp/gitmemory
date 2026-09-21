@@ -52,7 +52,7 @@ asserted.
 
 ## Status
 
-Under construction, epoch by epoch. 921 tests, plus one gated on the
+Under construction, epoch by epoch. 925 tests, plus one gated on the
 LongMemEval download (`-m corpus`).
 
 | | | |
@@ -68,9 +68,12 @@ LongMemEval download (`-m corpus`).
 **Read the E5 number carefully.** 1.0000 precision and recall is the score on a
 held-out split the extractor's author could not see, and it is the gate that was
 pre-registered before anything was measured. It is *not* evidence the extractor
-reads English: a probe in a third vocabulary, written by the reviewer, scores the
-same code **23/32**. The corpus is two samples of the language, and passing on
-the second one is the weaker claim of the two. Both numbers are in the report.
+reads English: two probes in a third vocabulary, written by the reviewer, score
+the same code **26/32** and **27/32** ([`bench/probes.py`](bench/probes.py)).
+The corpus is one sample of the language, and the gate has now been at 1.0000
+through four rounds of real defects — every one of which the fixture scored
+identically with and without. Both numbers are in the report; the second is the
+one that has ever moved.
 
 The discipline the test count does not show: every fix is pinned by a negative
 control — mutate the module to remove the behaviour, confirm the named test
