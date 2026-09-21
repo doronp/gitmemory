@@ -14,7 +14,7 @@ behaviour, the named test required to fail.
 
 ## Status
 
-**Ten findings; eight closed so far.** This document grows as the round does.
+**Ten findings; nine closed so far.** This document grows as the round does.
 
 | | Finding | Outcome |
 |---|---|---|
@@ -27,7 +27,7 @@ behaviour, the named test required to fail.
 | F7 | Control characters and bidi overrides reach `graph.json` labels | **fixed** — same transform, and it was not only `graph.json` |
 | F8 | `derive.ideas` costs ~32 s of CPU for 284 KB of crafted text | open |
 | F9 | `index/` is created 0755 where the store is 0700 | **fixed** — `_mkdir` here too, and it unbroke `--db /tmp/x.db` |
-| F10 | The truncation warning is announced once per process | open |
+| F10 | The truncation warning is announced once per process | **fixed** — the count is on the result, and `recall` prints it first |
 
 ---
 
@@ -325,9 +325,49 @@ which means a caller who points one through a symlink they did not plant
 themselves gets no warning — the trade is deliberate and the alternative was
 refusing `/tmp`.
 
+## F10 — the notice that fires once and then never again
+
+`search` announced a truncated query with `warnings.warn`. Python's default
+filter is once per call site per process, so the announcement belongs to the
+*call site*, not to the query. Reproduced with Python's own default filter —
+not `"always"`, and not `catch_warnings` inside the loop, which resets
+`__warningregistry__` and hides the bug:
+
+```
+query, warnings so far, any hits: [(0, 1, False), (1, 1, False), (2, 1, False)]
+```
+
+Three over-long queries, one warning. And note the third column: **every one
+of them returned nothing**, because in this fixture the only term that would
+have matched was the one past `MAX_TERMS = 64`. So a long-lived reader — the
+bench harness, a server, anything that searches more than once — got a
+real-looking empty ranking, twice, with no explanation. An empty result reads
+as "not in the store". That is a wrong answer, not a missing one.
+
+`search` now returns `Hits`, a `list` subclass carrying `.dropped`. A subclass
+rather than a `(hits, dropped)` tuple because the count is a property of the
+search and not a second result, and because every caller that does not care
+keeps working unchanged — `retriever`, the bench seam, and roughly sixty tests
+that index into the return value. `recall` prints the notice on stderr *before*
+the hits, so the ordering is right when there are none:
+
+```
+query truncated to 64 terms; 1 dropped
+no matches
+```
+
+The `warnings.warn` is gone rather than kept alongside. Two channels for one
+fact, one of them documented-defective, is worse than one channel that works.
+
+**What this does not fix.** Nothing else calls `search` — the dashboard is
+Datasette over the database itself and never goes through this path — so a
+future caller can still ignore `.dropped`. That is a caller choosing to, which
+is the distinction the fix is for: the fact is now *available* per query rather
+than announced once per process and discarded.
+
 ## Negative controls added this round
 
-Nineteen rows, all run, **19/19 CAUGHT by their intended test**.
+Twenty-one rows, all run, **21/21 CAUGHT by their intended test**.
 
 | Mutant | Verdict |
 |---|---|
@@ -350,9 +390,15 @@ Nineteen rows, all run, **19/19 CAUGHT by their intended test**.
 | index/ and the parents a `--db` path needs are owner-only | CAUGHT |
 | a `--db` path is resolved before the symlink refusal sees it | CAUGHT |
 | the symlink refusal is skipped for `<home>/index` too | CAUGHT |
+| the truncation count is remembered, so only the first query says so | CAUGHT |
+| `recall` does not mention that it dropped terms | CAUGHT |
 
 Five existing rows had their anchors re-pointed at rewritten lines and were
 re-run — "an index from a superseded schema is left on disk forever", "a
 skipped generation loses its stale artifacts", "blocks are not counted", "a
 turn with no blocks leaves no trace in the digest" and "how a store was
 segmented leaves no trace in the digest". All five still CAUGHT.
+
+Two more were re-pointed for F10 and re-run: "truncation goes silent", whose
+anchor was the `if dropped:` that no longer exists, and "MAX_TERMS never
+actually drops a term". Both still CAUGHT.

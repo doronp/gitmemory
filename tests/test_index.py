@@ -423,9 +423,37 @@ def test_an_over_long_query_is_truncated_loudly(home, src):
     """
     db = built(home, src, [user("u1", "the peculiar marmoset")])
     over = ["aardvark"] * index.MAX_TERMS + ["marmoset"]
-    with pytest.warns(UserWarning, match="truncated"):
-        assert index.search(db, " ".join(over)) == []
-    assert index.search(db, "marmoset"), "the fixture is findable when nothing is dropped"
+    hits = index.search(db, " ".join(over))
+    assert hits == []
+    assert hits.dropped == 1
+    found = index.search(db, "marmoset")
+    assert found, "the fixture is findable when nothing is dropped"
+    assert found.dropped == 0
+
+
+def test_every_over_long_query_says_so_not_just_the_first(home, src):
+    """The channel used to be `warnings.warn`, which is once per call site per
+    process. Measured: three over-long queries in one interpreter, one warning
+    — and all three returned nothing, because the only term that would have
+    matched was the one past the cap. Anything long-lived that searches more
+    than once got a real-looking empty ranking with no explanation. [E7
+    index-F10]"""
+    db = built(home, src, [user("u1", "the peculiar marmoset")])
+    over = " ".join(["aardvark"] * index.MAX_TERMS + ["marmoset"])
+    assert [index.search(db, over).dropped for _ in range(3)] == [1, 1, 1]
+
+
+def test_recall_says_a_query_was_truncated_before_it_says_no_matches(home, src, capsys):
+    """"no matches" for a query whose matching word was the one past the cap is
+    a wrong answer, not an empty one, so the notice goes first. [E7 index-F10]
+    """
+    built(home, src, [user("u1", "the peculiar marmoset")]).close()
+    over = " ".join(["aardvark"] * index.MAX_TERMS + ["marmoset"])
+    capsys.readouterr()
+    assert main(["--home", home, "recall", over]) == 0
+    err = capsys.readouterr().err
+    assert "truncated to 64 terms; 1 dropped" in err, err
+    assert err.index("truncated") < err.index("no matches"), err
 
 
 # --------------------------------------------------------------------------- #

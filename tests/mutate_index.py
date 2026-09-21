@@ -50,8 +50,8 @@ MUTANTS = [
     (
         "truncation goes silent",
         "index.py",
-        "    if dropped:",
-        "    if False:",
+        "    hits.dropped = dropped\n    return hits",
+        "    hits.dropped = 0\n    return hits",
         "test_an_over_long_query_is_truncated_loudly",
     ),
     (
@@ -2976,6 +2976,24 @@ MUTANTS = [
         "    if path:\n        parent = os.path.realpath(parent)",
         "    if True:\n        parent = os.path.realpath(parent)",
         "test_a_symlink_planted_at_the_index_directory_is_refused",
+    ),
+    # --- E7 index-F10: the cap is announced on every query, not the first --- #
+    (
+        # The old channel was `warnings.warn`, and this is what it did.
+        "the truncation count is remembered, so only the first query says so",
+        "index.py",
+        "    hits.dropped = dropped\n    return hits",
+        '    hits.dropped = dropped * (not getattr(search, "_said", 0))\n'
+        "    search._said = 1\n"
+        "    return hits",
+        "test_every_over_long_query_says_so_not_just_the_first",
+    ),
+    (
+        "recall does not mention that it dropped terms",
+        "__main__.py",
+        "    if hits.dropped:",
+        "    if False:",
+        "test_recall_says_a_query_was_truncated_before_it_says_no_matches",
     ),
 ]
 

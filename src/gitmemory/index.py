@@ -36,7 +36,6 @@ import shutil
 import sqlite3
 import tempfile
 import unicodedata
-import warnings
 from dataclasses import dataclass
 from urllib.parse import quote
 
@@ -47,6 +46,7 @@ from .records import Session, canonical_json
 __all__ = [
     "DEFAULT_WEIGHTS",
     "Hit",
+    "Hits",
     "Stats",
     "Weights",
     "build",
@@ -864,30 +864,46 @@ def match_expr(query: str) -> tuple[str, int]:
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in kept), len(terms) - len(kept)
 
 
+class Hits(list):
+    """`list[Hit]`, carrying how many query terms `search` had to drop.
+
+    A `list` subclass rather than a `(hits, dropped)` tuple because the count
+    is a property of the search and not a second result, and because every
+    caller that does not care keeps working unchanged.
+
+    The channel this replaces was `warnings.warn`, which is once per call site
+    per process. Measured before the change: three over-long queries in one
+    interpreter, one warning — and all three returned *nothing*, because the
+    only term that would have matched was the one past the cap. A long-lived
+    reader (the bench harness, a server) therefore got a real-looking empty
+    ranking with no explanation for every query after the first. [E7 index-F10]
+    """
+
+    dropped: int = 0
+
+
 def search(
     db: sqlite3.Connection,
     query: str,
     *,
     k: int = 10,
     weights: Weights = DEFAULT_WEIGHTS,
-) -> list[Hit]:
+) -> Hits:
     """Top `k` turns for `query`, best first. A turn scores as its best block.
 
     Turn-level, not block-level: two matching blocks in one turn are one piece
     of evidence, and returning both would spend the budget on a single place in
     the transcript.
+
+    `.dropped` on the result is the number of terms past `MAX_TERMS`; a caller
+    that renders hits to a person is expected to say so. A truncated query
+    returns a real ranking over fewer terms, which reads exactly like a
+    complete one.
     """
     _check_schema(db)
     expr, dropped = match_expr(query)
     if not expr:
-        return []
-    if dropped:
-        # Announced, never silent: a truncated query returns a real ranking
-        # over fewer terms, which reads exactly like a complete one.
-        warnings.warn(
-            f"query truncated to {MAX_TERMS} terms; {dropped} dropped",
-            stacklevel=2,
-        )
+        return Hits()
     rows = db.execute(
         f"""
         -- bm25() is an FTS5 auxiliary function: it exists only in a query whose
@@ -938,7 +954,7 @@ def search(
         """,
         (*weights.as_tuple(), expr, max(k, 0)),
     ).fetchall()
-    return [
+    hits = Hits(
         Hit(
             byte_offset=r["byte_offset"],
             byte_len=r["byte_len"],
@@ -953,7 +969,9 @@ def search(
             text=r["text"],
         )
         for r in rows
-    ]
+    )
+    hits.dropped = dropped
+    return hits
 
 
 def retriever(db: sqlite3.Connection, *, weights: Weights = DEFAULT_WEIGHTS):

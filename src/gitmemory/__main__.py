@@ -261,6 +261,14 @@ def _recall(args) -> int:
         hits = index.search(db, args.query, k=args.k)
     finally:
         db.close()
+    if hits.dropped:
+        # Before the answer, not after it: "no matches" for a query whose
+        # matching word was the one past the cap is a wrong answer, not an
+        # empty one. [E7 index-F10]
+        print(
+            f"query truncated to {index.MAX_TERMS} terms; {hits.dropped} dropped",
+            file=sys.stderr,
+        )
     for h in hits:
         head = " ".join(h.text.split())[:160]
         print(f"{h.score:8.3f}  {h.session_key}@{h.byte_offset}  {h.role}/{h.kind}  {head}")
