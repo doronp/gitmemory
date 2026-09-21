@@ -19,6 +19,10 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "src" / "gitmemory"
 
+# Generous against the ~1 minute the offline suite takes, and short against the
+# thirty-three minutes a wedged mutant cost before there was a bound at all.
+SUITE_TIMEOUT = 600
+
 # (name, file, find, replace, test that must catch it)
 MUTANTS = [
     (
@@ -2705,6 +2709,84 @@ MUTANTS = [
         "    except store.EscapingSegment as exc:",
         "test_push_names_the_unreadable_manifest_instead_of_tracebacking",
     ),
+    # S4 and S12: `open` is the wrong verb for anything that is not a regular
+    # file. A FIFO never finishes opening; a symlink opens the wrong bytes. [E7]
+    (
+        # The anchor takes the `if` and its comment with it. Deleting only the
+        # two body lines leaves `if not _regular(full):` followed by a comment,
+        # which is an IndentationError — and that scored CAUGHT for a round,
+        # because `-x` reports a collection error as exit 1 and the BROKEN
+        # branch was only reading `suite > 1`. Both halves are fixed; this is
+        # the half that makes the row a program. [E7]
+        "verify opens a segment before asking what it is",
+        "store.py",
+        "        if not _regular(full):\n"
+        "            # Before the open, not inside the `except`: a FIFO does not fail to\n"
+        "            # open, it never finishes opening, and this read holds the session\n"
+        "            # lock. [E7]\n"
+        "            out.append(f\"{rel}: segment {seg['path']} is not a regular file\")\n"
+        "            return out\n",
+        "",
+        "test_a_fifo_named_as_a_segment_does_not_hang_verify",
+    ),
+    (
+        "adoption rehashes a run it cannot read",
+        "store.py",
+        '            raise ValueError(f"segment is not a regular file: {p!r}")',
+        "            pass",
+        "test_a_fifo_named_as_a_segment_does_not_hang_orphan_adoption",
+    ),
+    (
+        # `_regular` answers False for a missing path too, which is what its
+        # `except OSError` is for. `True` keeps every honest store green and
+        # restores both hangs.
+        "the file-type check answers yes to everything",
+        "store.py",
+        "        return stat.S_ISREG(os.lstat(path).st_mode)",
+        "        return True",
+        "test_a_fifo_named_as_a_segment_does_not_hang_verify",
+    ),
+    (
+        "the gate follows a symlink instead of reading its text",
+        "redact.py",
+        "    if stat.S_ISLNK(mode):\n"
+        '        return os.readlink(path).encode("utf-8", "surrogateescape")\n',
+        "",
+        "test_the_gate_scans_a_symlinks_text_and_not_what_it_points_at",
+    ),
+    (
+        "the gate opens whatever it is handed again",
+        "redact.py",
+        '    if not stat.S_ISREG(mode):\n        return b""\n',
+        "",
+        "test_a_fifo_in_the_gates_file_list_does_not_block_it",
+    ),
+    (
+        # The seam scan is a second reader of the same path and had its own
+        # `open`. A symlink's text is short enough to carry whole either side.
+        "the seam scan opens what the file scan does not",
+        "redact.py",
+        "    if not stat.S_ISREG(os.lstat(path).st_mode):\n"
+        "        # Link text and nothing are both short enough to carry whole.\n"
+        "        data = contents(path)\n"
+        "        return data[:n], data[-n:]\n",
+        "",
+        "test_the_seam_scan_reads_a_symlink_the_same_way_the_file_scan_does",
+    ),
+    (
+        # The only mutation of `_deadline` that is a program rather than a
+        # wedge. Removing the timer, lengthening it, or making the handler
+        # return all end the same way — the FIFO open blocks and the row that
+        # was meant to score the deadline hangs on it instead, which is the
+        # WEDGED verdict and not a negative control. A leaked timer is the one
+        # failure that still returns, and it is a real one: it fires inside
+        # whatever test runs next, which reads as that test being flaky.
+        "the deadline leaks its timer into the next test",
+        "tests/test_store.py",
+        "        signal.setitimer(signal.ITIMER_REAL, 0)\n",
+        "",
+        "test_the_deadline_fires_on_something_that_really_blocks",
+    ),
 ]
 
 
@@ -2719,10 +2801,25 @@ def run(args: list[str]) -> int:
     The exit code, not a green/red boolean, because the difference between 1 and
     2 is the difference between a mutant that was caught and one that was never
     run. See `BROKEN` in `main`. [E5]
+
+    The timeout is not defensive tidiness, it is a repair. The offline suite is
+    about a minute, and this call had no bound at all until a mutant that
+    removes a file-type check met a test that names a FIFO as a segment: the
+    suite blocked in `open`, under the session lock, and the whole pass sat
+    there for thirty-three minutes with nothing on stdout. A harness that can
+    hang is a harness that stops being run, and the verdict it owed — WEDGED —
+    is the most interesting one a mutant can earn, because it says the mutant
+    removed a guard against blocking and the test could only prove it by
+    blocking too. `-1` because no pytest exit code is negative. [E7]
     """
-    return subprocess.run(
-        [sys.executable, "-m", "pytest", "-q", "tests", "bench", *args], cwd=ROOT
-    ).returncode
+    try:
+        return subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", "tests", "bench", *args],
+            cwd=ROOT,
+            timeout=SUITE_TIMEOUT,
+        ).returncode
+    except subprocess.TimeoutExpired:
+        return -1
 
 
 def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
@@ -2733,16 +2830,36 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
     leans on, and a scoring bug here quietly converts the whole mutation record
     into decoration. [E5]
     """
-    if suite == 0:
-        return False, "SURVIVED", ""
-    if suite > 1:
+    if suite == -1 or intended == -1:
+        # Not caught. A test that demonstrates "this does not hang" by hanging
+        # proves nothing a reader can act on, and it takes the pass down with
+        # it. The row is fine; the test needs its own deadline so the mutant
+        # makes it *fail*. [E7]
+        which = "the suite" if suite == -1 else test
+        return False, "WEDGED", f": {which} never returned; give it a deadline"
+    if (suite > 1) or (intended > 1 and intended != 5):
         # pytest exits 2 when collection fails, and a mutant that stops the
         # module importing takes the whole suite down with it — including the
         # intended test, which then "fails" and is credited with having caught
         # something. That is attribution on no evidence: the mutant was never
         # run. Deleting a group out of a regex is the usual way in. Rewrite the
         # row so that the mutant is a program.
-        return False, "BROKEN", f": the mutant does not import (pytest exit {suite})"
+        #
+        # `intended` and not just `suite`, because `-x` is on the suite run and
+        # **`-x` turns a collection error into exit 1**, not 2 — so for the two
+        # rounds this branch has existed it could not fire on the one shape it
+        # was written for. A row whose mutant left an `if` with no body scored
+        # CAUGHT: suite 1 from `-x`, intended 2 from the unbounded run, and
+        # nothing in between reading either. The intended run has no `-x`, so it
+        # is the one that still reports collection honestly. [E7]
+        #
+        # 5 is excluded because it is not an exit *above* failure, it is "no
+        # tests ran", which has its own verdict two lines down.
+        which = "the suite" if suite > 1 else test
+        code = suite if suite > 1 else intended
+        return False, "BROKEN", f": the mutant does not import ({which} exited {code})"
+    if suite == 0:
+        return False, "SURVIVED", ""
     if intended == 5:
         # pytest's "no tests ran". The row names a test that does not exist —
         # renamed, deleted, or mistyped — and the old green/red boolean read

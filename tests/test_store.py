@@ -10,12 +10,15 @@ single time. A test that only checks the happy path would pass against a
 from __future__ import annotations
 
 import builtins
+import contextlib
 import hashlib
 import json
 import os
 import random
 import shutil
+import signal
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -1736,6 +1739,164 @@ def test_a_terminal_escape_in_a_transcript_does_not_reach_the_terminal(home, src
     assert "needle" in out
     assert "\x1b" not in out and "\r" not in out
     assert "\\x1b" in out
+
+
+def _fifo_over(path: str) -> None:
+    os.unlink(path)
+    os.mkfifo(path)
+
+
+@contextlib.contextmanager
+def _deadline(seconds: float = 5.0):
+    """Fail, rather than block, when the thing under test blocks. [E7]
+
+    Every test that uses this names a hang, and under the mutant that removes
+    the guard each one demonstrated the hang by hanging itself — which is not a
+    demonstration. The negative control for `adoption rehashes a run it cannot
+    read` sat in `open` for thirty-three minutes, holding the session lock,
+    printing nothing, and took the whole mutation pass down with it. A test that
+    proves "this does not block" by blocking is unusable exactly when it matters.
+
+    `open` on a FIFO is interruptible, so an alarm converts "never returns" into
+    a named assertion. Main-thread only, which pytest is.
+    """
+
+    def fire(signum, frame):
+        raise AssertionError(f"blocked for {seconds}s — this is the hang the test is about")
+
+    previous = signal.signal(signal.SIGALRM, fire)
+    signal.setitimer(signal.ITIMER_REAL, seconds)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def test_the_deadline_fires_on_something_that_really_blocks():
+    """[E7] `_deadline` is the only thing standing between a removed file-type
+    check and a wedged mutation pass, and a deadline that never fires is
+    indistinguishable from one that is never needed — every test that uses it
+    passes either way. So: block on a real FIFO and require the deadline to say
+    so, then require it to keep out of the way of a call that returns."""
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d:
+        pipe = os.path.join(d, "pipe")
+        os.mkfifo(pipe)
+        # Not merged into one `with`: `raises` has to wrap the deadline, and the
+        # deadline has to wrap the `open` it is interrupting.
+        with pytest.raises(AssertionError, match="this is the hang the test is about"):  # noqa: SIM117
+            with _deadline(0.5), open(pipe):
+                pass
+
+    with _deadline(0.5):
+        pass  # and the timer is cancelled, so nothing fires into the next test
+    time.sleep(0.8)
+
+
+def test_a_fifo_named_as_a_segment_does_not_hang_verify(home, src):
+    """[E7] `open` on a FIFO does not fail, it never returns — and every segment
+    read in `store` happens under the session's exclusive lock, so one `mkfifo`
+    inside a generation directory stops `verify` forever and every `capture` for
+    that session with it, from a process that looks idle."""
+    transcript(src, 4)
+    store.capture(src, "claude-code", "sess", home=home)
+    seg = store.segment_groups(home)[0][0]
+    _fifo_over(seg)
+
+    with _deadline():
+        problems = store.verify(home)
+    assert [p for p in problems if "not a regular file" in p], problems
+
+
+def test_a_fifo_named_as_a_segment_does_not_hang_orphan_adoption(home, src):
+    """[E7] `test_an_escaping_segment_path_stops_orphan_adoption`'s sibling, and
+    for the same reason: adoption rehashes the whole run from the manifest, so it
+    is a second reader of the same untrusted list. It holds the lock it took to
+    publish a segment, and it raises rather than skipping — the hash it is
+    computing *is* the proof, and one over a run with a hole in it is worse than
+    no adoption at all.
+
+    An ordinary second capture never reads an existing segment, so this is the
+    only write path that can block. Named `ValueError`, not `EscapingSegment`:
+    the path does not escape, it is the wrong kind of thing.
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    size = manifest(home)["size"]
+    _fifo_over(store.segment_groups(home)[0][0])
+    orphan = Path(home, "raw", "claude-code", "sess", "g00", f"{size:012d}-{size + 10:012d}.jsonl")
+    orphan.write_bytes(b"0123456789")
+
+    with _deadline(), pytest.raises(ValueError, match="not a regular file"):
+        store.capture(src, "claude-code", "sess", home=home)
+
+
+def test_the_gate_scans_a_symlinks_text_and_not_what_it_points_at(tmp_path):
+    """[E7] Git stores a symlink as a blob holding the link *text* and never
+    follows it. Following it scanned the wrong bytes in both directions: the
+    target, which is not in the push, instead of the text, which is."""
+    secret = ("ghp_" + "A" * 36).encode()
+    (tmp_path / "target.txt").write_bytes(b"nothing here\n")
+    os.symlink(secret.decode(), tmp_path / "text-is-the-key")
+    os.symlink("target.txt", tmp_path / "points-at-nothing-interesting")
+
+    found = redact.scan_path(str(tmp_path / "text-is-the-key"))
+    assert [f.detector for f in found] == ["github_token"]
+    assert redact.scan_path(str(tmp_path / "points-at-nothing-interesting")) == []
+
+
+def test_a_dangling_symlink_does_not_take_the_gate_down(tmp_path):
+    """[E7] Git tracks a broken link perfectly happily — `ls-files` lists it and
+    `push` sends its text. `open` raised `FileNotFoundError` straight through
+    the gate and out of the CLI as a traceback, so one broken link made the
+    store unpushable with no sentence saying why."""
+    os.symlink("/nowhere/at/all", tmp_path / "broken")
+
+    assert redact.scan_path(str(tmp_path / "broken")) == []
+    assert redact.gate([str(tmp_path / "broken")])[0] is True
+
+
+def test_the_gate_does_not_read_a_file_outside_the_store(tmp_path):
+    """[E7] A symlink to `~/.aws/credentials` used to make the gate read it and
+    refuse — over bytes `git push` would never have sent, which is F4a's
+    over-refusal at its worst, and a read outside the store besides."""
+    outside = tmp_path / "outside" / "creds"
+    outside.parent.mkdir()
+    outside.write_bytes(b"aws_secret_access_key=" + b"B" * 40 + b"\n")
+    inside = tmp_path / "store"
+    inside.mkdir()
+    os.symlink(outside, inside / "link")
+
+    assert redact.gate([str(inside / "link")])[0] is True
+
+
+def test_a_fifo_in_the_gates_file_list_does_not_block_it(tmp_path):
+    """[E7] `git ls-files` does not list a FIFO and `git push` cannot carry one,
+    so there is nothing to scan — but `scan_path` opened whatever it was handed,
+    and `open` on a FIFO waits for a writer that never comes. A skip in the gate
+    is S1's bypass; this one is sound only because git agrees there is nothing
+    there."""
+    os.mkfifo(tmp_path / "pipe")
+
+    with _deadline():
+        assert redact.scan_path(str(tmp_path / "pipe")) == []
+
+
+def test_the_seam_scan_reads_a_symlink_the_same_way_the_file_scan_does(tmp_path):
+    """[E7] `scan_group` is a second reader of the same path and had its own
+    `open`, so fixing `scan_path` alone left the seam scan following links and
+    blocking on FIFOs — and the seam scan is the one that runs under `push`."""
+    secret = "ghp_" + "A" * 36
+    os.symlink(secret, tmp_path / "link")
+    os.mkfifo(tmp_path / "pipe")
+    (tmp_path / "plain.txt").write_bytes(b"ordinary\n")
+
+    with _deadline():
+        found = redact.scan_group([str(tmp_path / p) for p in ("plain.txt", "link", "pipe")])
+    assert [f.detector for f in found] == ["github_token"]
+    assert "…[40 bytes]" not in found[0].path, "the link text is content here, not the path"
 
 
 def test_a_credential_in_an_exception_message_is_masked_on_the_way_out(home, capsys):

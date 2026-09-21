@@ -36,6 +36,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import threading
 from dataclasses import dataclass
 from glob import glob
@@ -566,7 +567,7 @@ def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> 
     while size in pending:
         end, name = pending.pop(size)
         full = os.path.join(seg_dir, name)
-        if os.path.getsize(full) != end - size:
+        if not _regular(full) or os.path.getsize(full) != end - size:
             break  # a torn temp, not a published segment; leave it for verify
         with open(full, "rb") as fh:
             digest = hashlib.sha256(fh.read()).hexdigest()
@@ -589,6 +590,14 @@ def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> 
         full = _inside(home, p) if isinstance(p, str) else None
         if full is None:
             raise EscapingSegment(f"segment path escapes the store: {p!r}")
+        if not _regular(full):
+            # Same lock, same block as `_verify_one`'s, but this hash is the
+            # proof — a proof computed over a run with a hole in it is worse
+            # than no adoption at all, so this one raises. Not
+            # `EscapingSegment`: the path does not escape, it is the wrong kind
+            # of thing, and `sessions` re-raises `EscapingSegment` specifically
+            # because an escape is an attack rather than a mess. [E7]
+            raise ValueError(f"segment is not a regular file: {p!r}")
         with open(full, "rb") as fh:
             while chunk := fh.read(CHUNK):
                 whole.update(chunk)
@@ -1263,6 +1272,12 @@ def _verify_one(  # noqa: PLR0912 - one branch per failure mode
             out.append(f"{rel}: segment path escapes the store: {seg['path']!r}")
             return out
         listed.add(full)
+        if not _regular(full):
+            # Before the open, not inside the `except`: a FIFO does not fail to
+            # open, it never finishes opening, and this read holds the session
+            # lock. [E7]
+            out.append(f"{rel}: segment {seg['path']} is not a regular file")
+            return out
         try:
             with open(full, "rb") as fh:
                 data = fh.read()
@@ -1337,6 +1352,26 @@ def _verify_chain(path: str, rel: str, man: dict, gen: object) -> list[str]:
     if man.get("prev_manifest_sha256") != hashlib.sha256(prev_bytes).hexdigest():
         out.append(f"{rel}: prev_manifest_sha256 does not match generation {gen - 1}'s manifest")
     return out
+
+
+def _regular(path: str) -> bool:
+    """True if `path` is a regular file. [E7]
+
+    `open` on a FIFO blocks until a writer arrives, and every segment read in
+    this module happens under the session's exclusive lock — so one `mkfifo`
+    inside a generation directory stops `verify` forever, and every `capture`
+    for that session with it, from a process that looks idle. A store is a
+    directory its owner can write to, a directory any process running as them
+    can write to, and — once this is a two-way sync — a directory a stranger's
+    checkout produced.
+
+    `_inside` has already resolved symlinks and confirmed containment by the
+    time this is asked, so this is the file type question and only that.
+    """
+    try:
+        return stat.S_ISREG(os.lstat(path).st_mode)
+    except OSError:
+        return False
 
 
 def _inside(home: str, rel_path: str) -> str | None:

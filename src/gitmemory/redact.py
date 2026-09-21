@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import os
 import re
+import stat
 import tomllib
 import urllib.parse
 from collections.abc import Iterable
@@ -37,6 +38,7 @@ from dataclasses import dataclass
 
 __all__ = [
     "Finding",
+    "contents",
     "gate",
     "push_allowed",
     "safe_path",
@@ -202,11 +204,41 @@ def scan_path(path: str) -> list[Finding]:
     """
     label = safe_path(path)
     found = scan_bytes(path.encode("utf-8", "surrogateescape"), label)
+    return found + scan_bytes(contents(path), label)
+
+
+def contents(path: str) -> bytes:
+    """What `git push` would send for `path`, which is not always what `open` reads.
+
+    Git stores a symlink as a blob holding the **link text** and never follows
+    it. Following it here scanned the wrong bytes in both directions: the target
+    — which can be `~/.aws/credentials`, outside the store and not in the push at
+    all, so refusing over it is F4a's over-refusal at its worst — instead of the
+    text, which *is* in the push and can itself be a credential. A dangling link,
+    which git tracks perfectly happily, raised `FileNotFoundError` straight
+    through the gate and out of the CLI as a traceback.
+
+    Anything that is neither a regular file nor a symlink has no bytes to send:
+    `git ls-files` does not list a FIFO or a socket and `git push` cannot carry
+    one. Reading it is not a scan, it is a block — `open` on a FIFO waits for a
+    writer that never comes, and the gate waits with it. This is a skip in the
+    gate, which S1 says is a bypass; it is sound only because git agrees there is
+    nothing there, and the `ls-files` that feeds this is git's own answer. [E7]
+    """
+    mode = os.lstat(path).st_mode  # a missing path still raises, as `open` did
+    if stat.S_ISLNK(mode):
+        return os.readlink(path).encode("utf-8", "surrogateescape")
+    if not stat.S_ISREG(mode):
+        return b""
     with open(path, "rb") as fh:
-        return found + scan_bytes(fh.read(), label)
+        return fh.read()
 
 
 def _edge(path: str, n: int) -> tuple[bytes, bytes]:
+    if not stat.S_ISREG(os.lstat(path).st_mode):
+        # Link text and nothing are both short enough to carry whole.
+        data = contents(path)
+        return data[:n], data[-n:]
     with open(path, "rb") as fh:
         head = fh.read(n)
         fh.seek(max(0, os.path.getsize(path) - n))
