@@ -285,6 +285,13 @@ def main(argv: list[str] | None = None) -> int:
     # yet" with the real cause swallowed. [E5:R7]
     from gitmemory import derive
 
+    # Name the file that is about to be scored. Run from a git worktree,
+    # `python -m bench.gate` resolves `gitmemory` through the editable install,
+    # which points at the main checkout — so an extractor author iterates on
+    # their own file all afternoon while the gate scores somebody else's, and
+    # nothing in the report says so. The one-line answer is to print it. [E5:R8]
+    print(f"scoring {derive.__file__}", file=sys.stderr)
+
     if not hasattr(derive, "decisions"):
         print(
             "gitmemory.derive has no `decisions(session) -> list[Decision]` yet — "

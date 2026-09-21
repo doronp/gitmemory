@@ -219,6 +219,7 @@ def test_a_derive_that_fails_to_import_is_not_reported_as_unwritten(tmp_path, mo
             raise ImportError("numpy is required for LexRank and is not installed")
 
     import gitmemory
+    import gitmemory.derive  # noqa: F401 - so there is an attribute to replace
 
     # Both, because `from gitmemory import derive` takes the package attribute
     # when the submodule is already imported and never looks at sys.modules.
@@ -226,6 +227,18 @@ def test_a_derive_that_fails_to_import_is_not_reported_as_unwritten(tmp_path, mo
     monkeypatch.setitem(sys.modules, "gitmemory.derive", Broken())
     with pytest.raises(ImportError, match="numpy"):
         gate.main([str(out)])
+
+
+def test_the_report_names_the_file_it_scored(tmp_path, capsys):
+    """Run from a worktree, `python -m bench.gate` resolves `gitmemory` through
+    the editable install — the main checkout — so an author can iterate on their
+    own extractor all afternoon while the gate scores a different file. The
+    extractor's author hit this and caught it by hand."""
+    from gitmemory import derive
+
+    out = small_fixture(tmp_path)
+    gate.main([str(out)])
+    assert derive.__file__ in capsys.readouterr().err
 
 
 def test_the_scorer_runs_with_the_corpus_generator_unimportable(tmp_path):

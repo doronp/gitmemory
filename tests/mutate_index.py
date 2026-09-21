@@ -478,6 +478,13 @@ MUTANTS = [
         "test_a_derive_that_fails_to_import_is_not_reported_as_unwritten",
     ),
     (
+        "the report does not name the file it scored",
+        "bench/gate.py",
+        '    print(f"scoring {derive.__file__}", file=sys.stderr)',
+        "    pass",
+        "test_the_report_names_the_file_it_scored",
+    ),
+    (
         "a stray file in the dump hands the author something extra",
         "bench/fixture.py",
         '    (out_dir / "gold.json").write_text('
