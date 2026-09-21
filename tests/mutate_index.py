@@ -3208,6 +3208,32 @@ MUTANTS = [
         "            role=str(message.get('role', role)),",
         "test_role_is_one_of_three_literals_this_module_writes",
     ),
+    # --- E7 parsing-F5 ---
+    (
+        "the session id enters every turn at whatever length the file chose",
+        "src/gitmemory/adapters/claude_code.py",
+        "    if len(value) <= _MAX_SESSION_ID:\n        return value",
+        "    if True:\n        return value",
+        "test_a_long_session_id_is_bounded_before_it_reaches_every_turn",
+    ),
+    (
+        # The suffix, not the bound: a bare prefix is still bounded and still
+        # merges two sessions that share a head.
+        "the bound keeps a prefix and drops the digest, so two ids can collide",
+        "src/gitmemory/adapters/claude_code.py",
+        '    return f"{value[: _MAX_SESSION_ID - 17]}-{sha256_text(value)[:16]}"',
+        "    return value[:_MAX_SESSION_ID]",
+        "test_two_long_session_ids_stay_two_sessions",
+    ),
+    (
+        # The other direction: normalising unconditionally rewrites the uuid
+        # every real transcript carries, which churns every turn_id in the store.
+        "every session id is rewritten, including the ones that were fine",
+        "src/gitmemory/adapters/claude_code.py",
+        "    if len(value) <= _MAX_SESSION_ID:\n        return value",
+        "    if False:\n        return value",
+        "test_a_short_session_id_is_passed_through_untouched",
+    ),
 ]
 
 

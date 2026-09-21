@@ -1420,3 +1420,76 @@ def test_the_adapter_bill_is_not_spoofable_either(tmp_path):
         line("user", "assistant", 9_000_000, uuid="u2", requestId="req_b"),
     ]
     assert billable_usage(cc.parse(write(tmp_path, "c.jsonl", lines))) == {"input_tokens": 100}
+
+
+# --- E7 parsing-F5: a session id re-hashed once per turn ------------------
+
+
+def test_a_long_session_id_is_bounded_before_it_reaches_every_turn(tmp_path):
+    """`session_id` is inside every `turn_id`, so its length is per-turn work.
+
+    Measured on two 20,001-turn fixtures differing in nothing but the id: 16
+    characters parsed in 0.13 s CPU, 1,000,000 characters in 6.75 s — quadratic
+    work for linear input, on `index.build`'s path, once per rebuild. After the
+    bound both are 0.14 s.
+
+    The assertion is the bound, not the clock. A timing test on a shared
+    machine is a coin flip, and the bound is the thing that has to hold: if it
+    is gone the cost is back, whatever the clock said that afternoon.
+
+    Both places the id enters a turn are covered, because they are two: the
+    session-level one every uuid-less line inherits, and the per-line
+    `sessionId`, which a hostile file can vary line by line. [E7 parsing-F5]
+    """
+    huge = "s" * 1_000_000
+    inherited = [
+        {"type": "user", "uuid": "u0", "sessionId": huge, "message": {"content": "start"}},
+        {"type": "user", "uuid": "u1", "message": {"content": "x"}},
+    ]
+    session = cc.parse(write(tmp_path, "a.jsonl", inherited))
+    assert len(session.session_id) <= cc._MAX_SESSION_ID
+    assert {len(t.session_id) for t in session.turns} == {len(session.session_id)}
+
+    per_line = [
+        {"type": "user", "uuid": f"u{i}", "sessionId": huge + str(i), "message": {"content": "x"}}
+        for i in range(3)
+    ]
+    session = cc.parse(write(tmp_path, "b.jsonl", per_line))
+    assert len(session.turns) == 3, "the fixture lost a line; it proves less"
+    assert max(len(t.session_id) for t in session.turns) <= cc._MAX_SESSION_ID
+
+
+def test_two_long_session_ids_stay_two_sessions(tmp_path):
+    """Truncation, not rejection, and not a bare prefix either.
+
+    Rejecting a too-long id falls back to the filename stem, and two
+    transcripts in different directories share a stem — that swaps a cost bug
+    for turns from unrelated sessions minting the same `turn_id`. A bare prefix
+    does the same thing to two ids with a common head, which is the shape a
+    generated id has. The digest suffix is what keeps the map injective.
+    """
+    head = "s" * 1_000_000
+    ids = [
+        cc.parse(
+            write(
+                tmp_path,
+                f"{i}.jsonl",
+                [{"type": "user", "uuid": "u0", "sessionId": head + tail, "message": {}}],
+            )
+        ).session_id
+        for i, tail in enumerate(("-alpha", "-beta"))
+    ]
+    assert len(set(ids)) == 2, "two sessions collapsed into one id"
+
+
+def test_a_short_session_id_is_passed_through_untouched(tmp_path):
+    """The bound must not rewrite the ids real transcripts carry.
+
+    A uuid is 36 characters. If the helper normalised unconditionally, every
+    `turn_id` in the store would change and the whole derived tree would churn
+    — the failure this project exists to avoid — for input that was never the
+    problem.
+    """
+    uid = "3f2b9c14-7a55-4e0d-9d3e-1c6b8a204f77"
+    lines = [{"type": "user", "uuid": "u0", "sessionId": uid, "message": {"content": "x"}}]
+    assert cc.parse(write(tmp_path, "c.jsonl", lines)).session_id == uid

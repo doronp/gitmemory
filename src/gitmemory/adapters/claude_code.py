@@ -24,7 +24,7 @@ import os
 import re
 
 from ..jsonl import iter_records
-from ..records import Block, Event, Session, Turn, canonical_json
+from ..records import Block, Event, Session, Turn, canonical_json, sha256_text
 
 AGENT = "claude-code"
 _DEC = ("utf-8", "surrogatepass")
@@ -72,6 +72,13 @@ _MAX_REASONS = 64
 # dotfiles, and the charset bans every glob metacharacter and separator.
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
+# A session id is re-hashed once per turn, because it is part of every
+# `turn_id`, and written once per turn by `to_canonical`. Both are therefore
+# O(turns x len(session_id)) for an input that is O(turns + len(session_id)).
+# Real ones are 36-character uuids; the file can say anything. Same 128 the
+# path rule above uses, so the two bounds cannot drift apart.
+_MAX_SESSION_ID = 128
+
 
 def _get(obj: dict, *names: str, default=None):
     """First present, non-null key. Handles schema drift across CC versions.
@@ -99,6 +106,32 @@ def _str_or_none(value) -> str | None:
 def _safe_type(line_type) -> str:
     """A `type` value fit to key a committed skip counter."""
     return line_type if isinstance(line_type, str) and _TYPE_RE.match(line_type) else "other"
+
+
+def _session_id(value) -> str | None:
+    """A `sessionId` from the file, bounded so hashing it stays O(1) per turn.
+
+    `Turn.__post_init__` feeds the session id into a fresh SHA-256 for every
+    turn, so a long one turns a linear parse quadratic. Measured on two
+    fixtures of 20,001 turns differing in nothing else: a 16-character id
+    parses in 0.13 s CPU, a 1,000,000-character id in 6.75 s — 52x the work
+    for 1.6x the bytes. `to_canonical` has the same shape in space.
+
+    Truncated with a digest rather than rejected, so two long ids stay two
+    ids. Rejecting would fall back to the filename stem, which two transcripts
+    in different directories can share — trading a cost bug for a correctness
+    one. The verbatim value is still in every line's `native`.
+
+    Charset is deliberately not policed here. This id is not a path component
+    — `store.session_id_for` computes that separately and `_safe` guards it —
+    and every render boundary already scrubs: the CLI prints through
+    `safe_text` and `derive` scrubs every string it writes. [E7 parsing-F5]
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    if len(value) <= _MAX_SESSION_ID:
+        return value
+    return f"{value[: _MAX_SESSION_ID - 17]}-{sha256_text(value)[:16]}"
 
 
 def _scrub(value, depth: int = 0):
@@ -251,8 +284,8 @@ def parse(path: str) -> Session:
             bump(f"skip:{_safe_type(line_type)}")
             continue
 
-        sid = _get(obj, "sessionId", "session_id")
-        if isinstance(sid, str) and sid and not session.session_id:
+        sid = _session_id(_get(obj, "sessionId", "session_id"))
+        if sid and not session.session_id:
             session.session_id = sid
         session.agent_version = session.agent_version or _str_or_none(obj.get("version"))
         session.cwd = session.cwd or _str_or_none(obj.get("cwd"))
@@ -309,7 +342,7 @@ def parse(path: str) -> Session:
 
     # Pass 2: build. Every id now sees the real session id.
     for seq, (rec, obj, message, content, line_type, role, uuid, ref_uuid, sid) in enumerate(kept):
-        turn_sid = sid if isinstance(sid, str) and sid else session.session_id
+        turn_sid = sid or session.session_id
         raw_usage = message.get("usage")
         blocks = [
             Block(turn_id="", seq=i, kind=k, text=t, tool_name=n, native=nat)
