@@ -472,9 +472,15 @@ MUTANTS = [
     (
         "any failure inside derive is reported as an unwritten extractor",
         "bench/gate.py",
-        '    from gitmemory import derive\n\n    if not hasattr(derive, "decisions"):',
-        "    try:\n        from gitmemory.derive import decisions  # noqa: F401\n"
-        "    except ImportError:\n        derive = None\n    if derive is None:",
+        # The anchor used to span the import *and* the check, with a blank line
+        # asserted between them — so the comment that grew in the gap silently
+        # retired the control. The mechanism is one line: nothing may turn an
+        # ImportError from inside derive into "not written yet", and `hasattr`
+        # only swallows AttributeError. Anchor on the line that does the work,
+        # not on its neighbours. [round 3, finding 3]
+        '    if not hasattr(derive, "decisions"):',
+        '    try:\n        _has = hasattr(derive, "decisions")\n'
+        "    except ImportError:\n        _has = False\n    if not _has:",
         "test_a_derive_that_fails_to_import_is_not_reported_as_unwritten",
     ),
     (
@@ -886,15 +892,24 @@ MUTANTS = [
     (
         "prose order comes out of a set, so it varies with the hash seed",
         "derive.py",
+        # Rotten for some time and reported as SKIP, which is one line in an
+        # hour-long pass nobody reads to the end. `_prose` grew a second value —
+        # it yields `turn, block` so `decisions` can see the role — and the
+        # anchor went on naming the old shape, so this control held nothing.
+        # `test_mutate_harness.py` now fails on an unresolvable anchor at commit
+        # time instead of whispering SKIP an hour in. [round 3, finding 3]
         """    for turn in session.turns:
         for block in turn.blocks:
             if block.kind == "text" and block.text.strip():
-                yield block""",
-        """    by_text = {
-        b.text: b for t in session.turns for b in t.blocks if b.kind == "text" and b.text.strip()
+                yield turn, block""",
+        """    pairs = {
+        b.text: (t, b)
+        for t in session.turns
+        for b in t.blocks
+        if b.kind == "text" and b.text.strip()
     }
-    for body in set(by_text):
-        yield by_text[body]""",
+    for body in set(pairs):
+        yield pairs[body]""",
         "test_derived_bytes_are_identical_in_a_fresh_interpreter",
     ),
     (
@@ -1645,6 +1660,77 @@ MUTANTS = [
         '    cut = flat.rfind(" ", 0, LABEL_CHARS)',
         "    cut = -1",
         "test_a_label_is_one_line_and_ends_on_a_word",
+    ),
+    (
+        "a whitespace-only block gets a blank label",
+        "graph.py",
+        "        return NO_TEXT",
+        "        return flat",
+        "test_a_block_with_no_visible_text_gets_a_caption_not_a_blank_node",
+    ),
+    (
+        # The Gemini review's finding 1, as a control: the first version sent
+        # every keyword to `extraction`, so a graphify option died on a
+        # TypeError naming a function the caller never called.
+        "a graphify option is swallowed by the extractor call",
+        "graph.py",
+        "    return build_from_json(extraction(sessions, extract=extract), **kw)",
+        "    return build_from_json(extraction(sessions, extract=extract, **kw))",
+        "test_a_graphify_option_reaches_graphify",
+    ),
+    # --- the dashboard -------------------------------------------------------
+    (
+        # The 2.79x over-count. A sum over turns instead of over requests is the
+        # single most plausible way this view goes wrong, and the number it
+        # produces is wrong in the direction that flatters the project.
+        "cumulative usage is summed per turn instead of per request",
+        "index.py",
+        "GROUP BY agent, session_id, COALESCE(request_id, turn_id);",
+        "GROUP BY agent, session_id, turn_id;",
+        "test_repeated_cumulative_usage_is_billed_once",
+    ),
+    (
+        "a replayed generation is billed again",
+        "index.py",
+        "CREATE VIEW dash_requests AS\nSELECT agent, session_id,",
+        "CREATE VIEW dash_requests AS\nSELECT agent, session_key AS session_id,",
+        "test_a_replayed_generation_is_not_billed_twice",
+    ),
+    (
+        "a generation that would not parse leaves no trace",
+        "index.py",
+        "            _generation_row(db, stored, turns=0, blocks=0, reason=repr(exc))",
+        "            pass",
+        "test_a_generation_that_would_not_parse_is_still_counted",
+    ),
+    (
+        "the cache share counts output tokens in its denominator",
+        "index.py",
+        "           / NULLIF(SUM(input_tokens + cache_write_tokens + cache_read_tokens), 0), 1",
+        "           / NULLIF(SUM(input_tokens + cache_write_tokens + cache_read_tokens\n"
+        "                       + output_tokens), 0), 1",
+        "test_cache_share_is_a_share_of_what_went_in",
+    ),
+    (
+        "the dashboard binds to every interface by default",
+        "dashboard.py",
+        'HOST = "127.0.0.1"',
+        'HOST = "0.0.0.0"  # noqa: S104',
+        "test_the_command_is_immutable_and_loopback",
+    ),
+    (
+        "the dashboard opens the index writable",
+        "dashboard.py",
+        '        "--immutable",',
+        '        "--load-extension=",',
+        "test_the_command_is_immutable_and_loopback",
+    ),
+    (
+        "a missing datasette is installed instead of reported",
+        "dashboard.py",
+        '    if shutil.which("datasette"):\n        return args',
+        "    if True:\n        return args",
+        "test_uvx_is_the_fallback_not_the_default",
     ),
 ]
 

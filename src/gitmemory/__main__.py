@@ -15,7 +15,7 @@ import re
 import sqlite3
 import sys
 
-from . import daemon, derive, index, redact, store
+from . import daemon, dashboard, derive, index, redact, store
 from .adapters import get as get_adapter
 
 # Everything this module prints is bytes an attacker may have chosen: a recall
@@ -198,6 +198,14 @@ def _index(args) -> int:
     return 0
 
 
+def _dashboard(args) -> int:
+    if args.host != dashboard.HOST:
+        # The store is the most sensitive file on the machine. Binding it to
+        # anything but loopback is a deliberate act and is reported as one.
+        print(f"warning: serving the store on {args.host}, not loopback", file=sys.stderr)
+    return dashboard.serve(args.home, db=args.db, host=args.host, port=args.port)
+
+
 def _derive(args) -> int:
     if (code := _not_a_store(args.home)) is not None:
         return code
@@ -275,6 +283,12 @@ def main(argv: list[str] | None = None) -> int:
         "--ideas", type=int, default=derive.DEFAULT_IDEAS, help="key sentences per generation"
     )
     der.set_defaults(fn=_derive)
+
+    dash = sub.add_parser("dashboard", help="serve the index with Datasette on localhost")
+    dash.add_argument("--db", default=None)
+    dash.add_argument("--host", default=dashboard.HOST, help="default: %(default)s (loopback)")
+    dash.add_argument("--port", type=int, default=dashboard.PORT)
+    dash.set_defaults(fn=_dashboard)
 
     rec = sub.add_parser("recall", help="search the index; one line per turn, best first")
     rec.add_argument("query")

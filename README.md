@@ -52,7 +52,7 @@ asserted.
 
 ## Status
 
-Under construction, epoch by epoch. 895 tests, plus one gated on the
+Under construction, epoch by epoch. 916 tests, plus one gated on the
 LongMemEval download (`-m corpus`).
 
 | | | |
@@ -62,7 +62,7 @@ LongMemEval download (`-m corpus`).
 | E3 | Index + retrieval + CLI | passed — 470 LongMemEval instances, [gate report](docs/benchmarks/E3-longmemeval.md) |
 | E4 | Hook shim + watcher + git daemon | in review |
 | E5 | Derivation and decision graph | extractor passed — 1.0000/1.0000 on a blind split, [gate report](docs/benchmarks/E5-decision-gate.md); graph not wired |
-| E6 | Dashboard | |
+| E6 | Dashboard | built — six views over the index, served read-only on loopback by Datasette |
 | E7 | RC1: security review, private repo | |
 
 **Read the E5 number carefully.** 1.0000 precision and recall is the score on a

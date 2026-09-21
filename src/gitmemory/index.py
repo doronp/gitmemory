@@ -56,7 +56,7 @@ __all__ = [
     "search",
 ]
 
-SCHEMA = 1
+SCHEMA = 2
 COLUMNS = ("prose", "tool_use", "tool_result", "paths")
 
 # A token FTS5 will index, used to sanitise a user query into a MATCH
@@ -121,6 +121,146 @@ CREATE VIRTUAL TABLE fts USING fts5(
     content_rowid = 'rowid',
     tokenize = 'unicode61 remove_diacritics 2'
 );
+
+-- Retrieval needs blocks. Everything a person wants to *know about* the store
+-- — how much of it there is, what it cost, whether it is whole — is a fact
+-- about a turn or a generation, and neither had a table. Both are written from
+-- the same parse `blocks` comes from, so they cost one extra insert per turn
+-- and no extra read. [E6]
+--
+-- `turn_id` is deliberately not the primary key: it is content-derived, so a
+-- turn replayed into a forked generation is the *same* id in two rows, and that
+-- is the normal case rather than a corruption. Position is what is unique.
+CREATE TABLE turns (
+    turn_id      TEXT NOT NULL,
+    session_key  TEXT NOT NULL,
+    agent        TEXT NOT NULL,
+    session_id   TEXT NOT NULL,
+    generation   INTEGER NOT NULL,
+    seq          INTEGER NOT NULL,
+    role         TEXT NOT NULL,
+    model        TEXT,
+    request_id   TEXT,
+    is_sidechain INTEGER NOT NULL,
+    agent_id     TEXT,
+    byte_offset  INTEGER NOT NULL,
+    byte_len     INTEGER NOT NULL,
+    ts           TEXT,
+    usage        TEXT NOT NULL,  -- JSON, exactly as the adapter scrubbed it
+    PRIMARY KEY (session_key, seq)
+);
+
+-- A generation is what the store proves contiguous, so this is the table the
+-- contiguity panel reads. `parsed = 0` rows are the ones `build` had to skip:
+-- leaving them out would have made a store with an unparseable generation look
+-- identical to a whole one, which is the single thing this panel is for.
+CREATE TABLE generations (
+    session_key TEXT PRIMARY KEY,
+    agent       TEXT NOT NULL,
+    session_id  TEXT NOT NULL,
+    generation  INTEGER NOT NULL,
+    segments    INTEGER NOT NULL,
+    bytes       INTEGER NOT NULL,
+    compactions INTEGER NOT NULL,  -- boundaries the manifest carries
+    turns       INTEGER NOT NULL,
+    blocks      INTEGER NOT NULL,
+    parsed      INTEGER NOT NULL,
+    skip_reason TEXT
+);
+"""
+
+# Views, not canned queries in the dashboard's YAML: Datasette lists a view as a
+# table, so the panels are in the database and anything else that opens it —
+# `sqlite3`, a notebook, the next dashboard — gets the same definitions. The
+# YAML is left to say what the numbers *mean*. [E6]
+_VIEWS = """
+CREATE VIEW dash_corpus AS
+SELECT agent,
+       COUNT(DISTINCT session_id)  AS sessions,
+       COUNT(*)                    AS generations,
+       SUM(turns)                  AS turns,
+       SUM(blocks)                 AS blocks,
+       SUM(bytes)                  AS bytes,
+       SUM(compactions)            AS compactions,
+       SUM(1 - parsed)             AS unparseable
+FROM generations GROUP BY agent;
+
+CREATE VIEW dash_growth AS
+SELECT substr(ts, 1, 10) AS day, agent,
+       COUNT(*) AS turns, SUM(byte_len) AS bytes
+FROM turns WHERE ts IS NOT NULL GROUP BY day, agent ORDER BY day;
+
+-- Contiguity is per session, not per generation: a session with three
+-- generations is one conversation the store forked, and "is it whole" is a
+-- question about the conversation.
+CREATE VIEW dash_contiguity AS
+SELECT agent, session_id,
+       COUNT(*)         AS generations,
+       SUM(segments)    AS segments,
+       SUM(compactions) AS compactions,
+       SUM(bytes)       AS bytes,
+       SUM(turns)       AS turns,
+       SUM(1 - parsed)  AS unparseable,
+       group_concat(skip_reason, ' | ') AS skipped
+FROM generations GROUP BY agent, session_id;
+
+-- One row per billable request. Usage is repeated on every turn of a request
+-- and is *cumulative*, so summing turns over-counts -- 2.79x, measured on a
+-- real transcript. Last write per request wins, which is what `MAX(seq)` with
+-- bare columns selects (a documented SQLite behaviour, pinned by a test).
+--
+-- Grouped by session rather than by generation: a fork replays the same
+-- requests into the next generation, and billing them twice is exactly the
+-- over-count this view exists to avoid. The replayed rows are the same bytes,
+-- so which one MAX picks cannot change the answer.
+CREATE VIEW dash_requests AS
+SELECT agent, session_id,
+       COALESCE(request_id, turn_id) AS request,
+       MAX(seq) AS seq,
+       COALESCE(model, '(unknown)') AS model,
+       COALESCE(json_extract(usage, '$.input_tokens'), 0)                 AS input_tokens,
+       COALESCE(json_extract(usage, '$.output_tokens'), 0)                AS output_tokens,
+       COALESCE(json_extract(usage, '$.cache_creation_input_tokens'), 0)  AS cache_write_tokens,
+       COALESCE(json_extract(usage, '$.cache_read_input_tokens'), 0)      AS cache_read_tokens
+FROM turns WHERE usage <> '{}'
+GROUP BY agent, session_id, COALESCE(request_id, turn_id);
+
+CREATE VIEW dash_spend AS
+SELECT agent, model,
+       COUNT(*)                 AS requests,
+       SUM(input_tokens)        AS input_tokens,
+       SUM(output_tokens)       AS output_tokens,
+       SUM(cache_write_tokens)  AS cache_write_tokens,
+       SUM(cache_read_tokens)   AS cache_read_tokens,
+       -- Cache-served share of everything that went *in*. This is a saving
+       -- against "the same prompt, uncached" and against nothing else; it is
+       -- not a saving against not having sent the prompt.
+       ROUND(
+           100.0 * SUM(cache_read_tokens)
+           / NULLIF(SUM(input_tokens + cache_write_tokens + cache_read_tokens), 0), 1
+       ) AS cache_read_pct
+FROM dash_requests GROUP BY agent, model;
+
+-- The panel that says what this dashboard does not know. It is a view so that
+-- it sits in the same list as the numbers and cannot be scrolled past: every
+-- tile above is a count of something observed, and these are the questions a
+-- count cannot answer. [E6, DESIGN 2.9]
+CREATE VIEW dash_unmeasured (question, status, why) AS
+SELECT 'net tokens saved vs no memory', 'UNMEASURED',
+       'Needs the A/B harness. No "tokens saved" number ships before it runs, '
+       || 'because the counterfactual has never been observed.'
+UNION ALL SELECT 'did an injected memory change the answer', 'NOT OBSERVABLE',
+       'Attention leaves no trace. The most that can be said is REFERENCED -- '
+       || 'the text appeared in the reply -- and that is not the same claim.'
+UNION ALL SELECT 'dead ends avoided', 'UNBOUNDED, UNMEASURED',
+       'A search an agent did not have to run leaves nothing behind to count. '
+       || 'Any single frugality number assumes this tail is zero.'
+UNION ALL SELECT 'cost of a stale memory that misled', 'UNBOUNDED, UNMEASURED',
+       'The other tail, and the one that argues against this project. Assumed '
+       || 'zero by every number above, on no evidence.'
+UNION ALL SELECT 'hook latency', 'NOT IN THIS DATABASE',
+       'Measured by tools/hook_latency.py against a running hook, not by the '
+       || 'index. Nothing here should be read as a p99.';
 """
 
 
@@ -248,7 +388,7 @@ def build(home: str | None = None, *, path: str | None = None) -> Stats:
     try:
         db = open_db(tmp)
         try:
-            db.executescript(_DDL)
+            db.executescript(_DDL + _VIEWS)
             stats = _fill(db, home)
             db.executescript("INSERT INTO fts(fts) VALUES('rebuild'); ANALYZE;")
             db.executemany(
@@ -284,9 +424,15 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
             # One unparseable generation must not cost the index every other
             # one; it is reported, not swallowed. Same rule as `verify`. [E2]
             skipped.append(f"{stored.key}: {exc!r}")
+            # A generation that would not parse is still a generation the store
+            # holds, and a dashboard that silently omits it reports a whole
+            # store. It goes in with `parsed = 0` and the reason. [E6]
+            _generation_row(db, stored, turns=0, blocks=0, reason=repr(exc))
             continue
         generations += 1
         turns += len(session.turns)
+        for turn in session.turns:
+            _insert(db, "turns", _turn_row(stored, turn))
         for row in rows:
             digest.update(canonical_json(row))
             db.execute(
@@ -294,6 +440,7 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
                 row,
             )
             blocks += 1
+        _generation_row(db, stored, turns=len(session.turns), blocks=len(rows), reason=None)
     # The skips are part of what this index *is*. Left out, two builds over
     # different stores — one whole, one with a generation that would not parse —
     # compared equal, which is the one question this digest exists to answer.
@@ -343,6 +490,62 @@ def _encodable(value):
     if not isinstance(value, str):
         return value
     return value.encode("utf-8", "replace").decode("utf-8")
+
+
+def _insert(db: sqlite3.Connection, table: str, row: dict) -> None:
+    """Named-parameter insert. The column list comes from the row, not a
+    literal, so adding a field to a `_*_row` function cannot get out of step
+    with the statement that writes it."""
+    db.execute(
+        f"INSERT INTO {table} ({','.join(row)}) VALUES ({','.join(':' + k for k in row)})", row
+    )
+
+
+def _turn_row(stored: store.Stored, turn) -> dict:
+    fields = {
+        "turn_id": turn.turn_id,
+        "session_key": stored.key,
+        "agent": stored.agent,
+        "session_id": stored.session_id,
+        "generation": stored.generation,
+        "seq": turn.seq,
+        "role": turn.role,
+        "model": turn.model,
+        "request_id": turn.request_id,
+        "is_sidechain": int(turn.is_sidechain),
+        "agent_id": turn.agent_id,
+        "byte_offset": turn.byte_offset,
+        "byte_len": turn.byte_len,
+        "ts": turn.ts,
+        # `canonical_json` rather than `json.dumps`: sorted keys and pure ASCII,
+        # so `json_extract` in the spend views reads the same bytes every build
+        # and a surrogate from a mangled transcript cannot make the column
+        # unparseable. Its output is ASCII by construction, so decoding is safe.
+        "usage": canonical_json(turn.usage).decode(),
+    }
+    return {k: _encodable(v) for k, v in fields.items()}
+
+
+def _generation_row(
+    db: sqlite3.Connection, stored: store.Stored, *, turns: int, blocks: int, reason: str | None
+) -> None:
+    _insert(
+        db,
+        "generations",
+        {
+            "session_key": stored.key,
+            "agent": stored.agent,
+            "session_id": stored.session_id,
+            "generation": stored.generation,
+            "segments": len(stored.segments),
+            "bytes": stored.size,
+            "compactions": len(stored.boundaries),
+            "turns": turns,
+            "blocks": blocks,
+            "parsed": int(reason is None),
+            "skip_reason": _encodable(reason),
+        },
+    )
 
 
 def _row(stored: store.Stored, turn, block) -> dict:
