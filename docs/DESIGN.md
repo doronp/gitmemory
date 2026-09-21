@@ -374,6 +374,31 @@ linter retries as "rejected alternatives."
 Every node carries a `source_ref` to a committed block hash. **No node may exist without one.**
 That rule is what stops a decision diagram from becoming fiction.
 
+**What the extractor does not catch, stated here rather than in a source comment [probe C].**
+Role is definitional in `_decision_kind`: a directive is something the *user* imposes, a
+reversal is the *assistant* changing course. Two shapes fall outside that by construction, and
+both were named in a `ponytail:` comment in `src/gitmemory/derive.py` and nowhere a reader of
+this document could find them — which is how a probe author working blind from the public docs
+came to label eleven items the extractor was never going to get.
+
+- **A user who reverses their own earlier instruction is missed.** "Cue index zero is no longer
+  reserved" scores `None`; where the revoked rule contained a prohibition, it can score
+  `directive`, so the revocation is recorded *as the rule*. Measured: **0 of 11**.
+- **An assistant recording a standing rule for itself is missed**, symmetrically.
+- **A plain positive standing rule is missed.** The user branch needs a substitution frame or a
+  prohibition; "Patch file stays YAML." has neither. Measured: **7 of 11 directives missed**
+  out of domain.
+
+The conservatism buys something real and measured — **10 of 10** on out-of-domain items that
+are *not* decisions, no false positive anywhere — and the upgrade is a third label for
+"restated by the other party" rather than loosening the two existing branches, because
+loosening them makes every polite suggestion a directive. Not built. The first of these is the
+one that matters most for this product: a memory system's worst failure is a rule it still
+believes is in force after the user revoked it.
+
+`docs/benchmarks/E5-probe-C.md` is the measurement. It is unspent and must stay that way: the
+fix is scored by a probe D written by someone who has not read C, not by C.
+
 #### The graph layer is graphify, not ours **[E2]**
 
 The original plan — `networkx` plus a hand-rolled transitive reduction plus a `D2`/`dot`
