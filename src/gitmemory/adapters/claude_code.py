@@ -370,6 +370,27 @@ def parse(path: str) -> Session:
     return session
 
 
+def _usage_key(t: Turn, path: str | None = None) -> tuple:
+    """Which request this line's usage belongs to, with the namespace tagged.
+
+    `request_id or uuid or f"@{byte_offset}"` flattened three namespaces into
+    one string. A line whose `uuid` spells another line's `requestId` then
+    shared its slot, and since the later write wins, the earlier request's
+    tokens left the bill entirely — measured 3000 input tokens billed as 2000
+    on a two-request fixture. Same shape as the `turn_id` collision, same fix:
+    say which namespace the value came from. [E7 parsing-F1]
+
+    `path` scopes the offset fallback, because a byte offset only means
+    anything inside one file. Request ids and uuids deliberately do not take
+    it: deduping those *across* files is the whole point of `rollup_usage`.
+    """
+    if t.request_id:
+        return ("req", t.request_id)
+    if t.uuid:
+        return ("uuid", t.uuid)
+    return ("off", path, t.byte_offset)
+
+
 def billable_usage(session: Session) -> dict[str, int]:
     """Token totals with Claude Code's 2.79x over-count removed.
 
@@ -383,12 +404,12 @@ def billable_usage(session: Session) -> dict[str, int]:
     that hardcodes it would be wrong for the next adapter rather than merely
     unused by it.
     """
-    seen: dict[str, dict] = {}
+    seen: dict[tuple, dict] = {}
     for t in session.turns:
         if t.role != "assistant" or t.model == "<synthetic>":
             continue
-        key = t.request_id or t.uuid or f"@{t.byte_offset}"
-        seen[key] = t.usage  # last write per request wins: usage is cumulative
+        # last write per request wins: usage is cumulative
+        seen[_usage_key(t)] = t.usage
     total: dict[str, int] = {}
     for usage in seen.values():
         for k, v in usage.items():
@@ -419,12 +440,12 @@ def rollup_usage(path: str) -> dict[str, int]:
     Dedup spans files: a `requestId` seen in both the main transcript and a
     subagent must be billed once.
     """
-    seen: dict[str, dict] = {}
+    seen: dict[tuple, dict] = {}
     for f in session_files(path):
         for t in parse(f).turns:
             if t.role != "assistant" or t.model == "<synthetic>":
                 continue
-            seen[t.request_id or t.uuid or f"{f}@{t.byte_offset}"] = t.usage
+            seen[_usage_key(t, f)] = t.usage
     total: dict[str, int] = {}
     for usage in seen.values():
         for k, v in usage.items():

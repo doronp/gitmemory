@@ -162,15 +162,34 @@ class Turn:
     turn_id: str = ""
 
     def __post_init__(self) -> None:
-        digest = sha256_text("".join(b.content_sha256 for b in self.blocks))
+        # `kind` and `tool_name` are in the digest, not only the text. Hashing
+        # the text alone makes a `text` block saying X and a `tool_use` block
+        # whose flattened input is X the same turn — the line that *ran* a
+        # command and the line that *mentioned* it, indistinguishable.
+        # `tool_name` is attacker-controlled and variable length, so it is
+        # hashed to fixed width rather than embedded: every field is then
+        # either a closed-set token or 64 hex characters, and a `\x1e` in a
+        # tool name cannot make one block hash as two. [E7 parsing-F1]
+        digest = sha256_text(
+            "".join(
+                f"{b.kind}\x1e{sha256_text(b.tool_name or '')}\x1e{b.content_sha256}"
+                for b in self.blocks
+            )
+        )
         # Identity, NOT position. `seq` is a counter over non-skipped lines, so
         # putting it in the id means any change to a skip rule renumbers every
         # later turn and churns the whole committed tree — the exact failure
         # this project exists to avoid. The harness already hands us a stable
         # node id; use it. Lines with no uuid fall back to byte offset, which
         # is stable under skip-rule changes and under appends.
-        identity = self.uuid or f"@{self.byte_offset}"
-        self.turn_id = _id(self.session_id, identity, self.role, digest)
+        #
+        # The namespace is tagged, because the two are one value otherwise: a
+        # line whose uuid is literally the string "@101" and an uuid-less line
+        # beginning at byte 101 land in the same slot, and the adapter's dedup
+        # is on `uuid`, so it does not fire — one of them has none. [E7
+        # parsing-F1]
+        ident_kind, identity = ("uuid", self.uuid) if self.uuid else ("off", self.byte_offset)
+        self.turn_id = _id(self.session_id, ident_kind, identity, self.role, digest)
         for b in self.blocks:  # blocks are built before the turn_id exists
             b.turn_id = self.turn_id
             b.block_id = _id(b.turn_id, b.seq, b.kind, b.content_sha256)

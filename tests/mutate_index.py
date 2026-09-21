@@ -3099,6 +3099,68 @@ MUTANTS = [
         '            json.dump(metadata(name) | {"title": _digest(path)}, fh, indent=2)',
         "test_the_metadata_is_the_same_whatever_the_store_holds",
     ),
+    # --- E7 parsing-F1 ---
+    (
+        "the turn digest is the block texts again",
+        "records.py",
+        '                f"{b.kind}\\x1e{sha256_text(b.tool_name or \'\')}\\x1e{b.content_sha256}"',
+        "                b.content_sha256",
+        "test_the_digest_separates_a_tool_use_from_the_text_that_quotes_it",
+    ),
+    (
+        "the digest says which kind but not which tool",
+        "records.py",
+        "{sha256_text(b.tool_name or '')}",
+        "{''}",
+        "test_the_digest_separates_a_tool_use_from_the_text_that_quotes_it",
+    ),
+    (
+        "the tool name goes into the digest raw, so it can spell a second block",
+        "records.py",
+        "{sha256_text(b.tool_name or '')}",
+        "{b.tool_name or ''}",
+        "test_a_tool_name_cannot_make_one_block_hash_as_two",
+    ),
+    (
+        "the identity namespace is untagged again",
+        "records.py",
+        '("uuid", self.uuid) if self.uuid else ("off", self.byte_offset)',
+        '("", self.uuid or f"@{self.byte_offset}")',
+        "test_a_uuid_that_looks_like_an_offset_is_a_different_namespace",
+    ),
+    (
+        # The composition, which no single-defect row can catch: reverting one
+        # half leaves the other telling the two turns apart. This row is the
+        # pre-fix function verbatim.
+        "turn_id is the pre-fix function of uuid-or-offset and the texts",
+        "records.py",
+        "        self.turn_id = _id(self.session_id, ident_kind, identity, self.role, digest)",
+        "        self.turn_id = _id(\n"
+        "            self.session_id,\n"
+        '            self.uuid or f"@{self.byte_offset}",\n'
+        "            self.role,\n"
+        '            sha256_text("".join(b.content_sha256 for b in self.blocks)),\n'
+        "        )",
+        "test_a_line_that_ran_a_command_is_not_the_line_that_mentioned_it",
+    ),
+    (
+        "a uuid and a request id share one billing slot again",
+        "src/gitmemory/adapters/claude_code.py",
+        '    if t.request_id:\n        return ("req", t.request_id)\n'
+        '    if t.uuid:\n        return ("uuid", t.uuid)\n'
+        '    return ("off", path, t.byte_offset)',
+        '    return (t.request_id or t.uuid or f"{path}@{t.byte_offset}",)',
+        "test_a_uuid_that_spells_a_request_id_does_not_erase_that_request",
+    ),
+    (
+        # The other direction: a file-scoped request id stops deduping across
+        # files, which is what `rollup_usage` exists to do.
+        "the rollup scopes request ids to their file, so a shared one is billed twice",
+        "src/gitmemory/adapters/claude_code.py",
+        '    if t.request_id:\n        return ("req", t.request_id)',
+        '    if t.request_id:\n        return ("req", path, t.request_id)',
+        "test_rollup_dedups_a_request_id_seen_in_two_files",
+    ),
 ]
 
 

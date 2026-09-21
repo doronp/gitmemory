@@ -49,9 +49,14 @@ def _expected_turn_id(t) -> str:
     """
     import hashlib
 
-    digest = sha256_text("".join(b.content_sha256 for b in t.blocks))
-    identity = t.uuid or f"@{t.byte_offset}"
-    parts = (t.session_id, identity, t.role, digest)
+    digest = sha256_text(
+        "".join(
+            f"{b.kind}\x1e{sha256_text(b.tool_name or '')}\x1e{b.content_sha256}"
+            for b in t.blocks
+        )
+    )
+    ident_kind, identity = ("uuid", t.uuid) if t.uuid else ("off", t.byte_offset)
+    parts = (t.session_id, ident_kind, identity, t.role, digest)
     return hashlib.sha256(
         b"\x1f".join(str(p).encode("utf-8", "surrogatepass") for p in parts)
     ).hexdigest()
