@@ -379,6 +379,25 @@ def _check_manifest(man: object) -> None:
             )
 
 
+def _own_manifest(home: str, path: str) -> bool:
+    """Whether `path` is a manifest in this store's own `sessions/` tree.
+
+    Every reader reaches manifests through `glob(home/sessions/*/*/g*.json)`,
+    and `glob` follows symlinks — `_mkdir` refuses to *write* through one
+    (index-F1) but nothing re-checked on the way back in. A link at `sessions/`
+    therefore puts the whole proof outside the store while every check passes.
+    Measured: `verify` reads the manifests through the link and reports
+    `0 problem(s)`, and `git add --all` commits the *link* — one `120000` blob —
+    so the versioned copy holds two raw segments, zero manifests, and `verify`
+    in a clone is red for both. Local and remote disagreeing about whether the
+    proof exists is the one disagreement this command cannot have.
+
+    Realpath rather than `islink`, so a link at the agent or session level is
+    the same answer as one at `sessions/`. [E7 fs-F5]
+    """
+    return _inside(home, os.path.relpath(path, home)) is not None
+
+
 def _adopted_names(carried: object, added: tuple[str, ...] = ()) -> list[str]:
     """This generation's adopted-segment names: what the manifest already said, plus new.
 
@@ -489,7 +508,15 @@ def _lockfile(path: str):
     and neither wants its own copy of five lines of `os.open`. [E7]
     """
     _mkdir(os.path.dirname(path))
-    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
+    # `_mkdir` refuses a symlinked *directory*; the lock file itself is the one
+    # name below `$GITMEMORY_HOME` that nothing checked. Measured: a symlink at
+    # `.locks/<agent>/<sid>.lock` pointing anywhere the user can write had an
+    # empty 0600 file created there by the next capture, which reported success
+    # — a file-creation primitive with no content and no truncation, and then
+    # `flock` taken on whatever is at the far end rather than on this session.
+    # `O_NOFOLLOW` turns both into an error the caller sees. `O_CREAT` is
+    # unaffected when the name is free, which is every ordinary run. [E7 fs-F5]
+    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
@@ -1001,6 +1028,15 @@ def sessions(home: str, *, strict: bool = False) -> list[Stored]:
     for path in sorted(glob(os.path.join(home, "sessions", "*", "*", "g*.json"))):
         if not _GEN_RE.match(os.path.basename(path)):
             continue
+        if not _own_manifest(home, path):
+            # `EscapingSegment`, and not a skip, for the reason the docstring
+            # gives about segments: an escape is an attack rather than a mess,
+            # and a reader that quietly returned "no sessions" would have the
+            # index, the dashboard and the egress gate all agree the store is
+            # empty. [E7 fs-F5]
+            raise EscapingSegment(
+                f"{os.path.relpath(path, home)} leaves the store, so it is not its manifest"
+            )
         try:
             with open(path, "rb") as fh:
                 man = json.loads(fh.read())
@@ -1118,13 +1154,22 @@ def verify(home: str | None = None) -> list[str]:
     for path in sorted(glob(os.path.join(home, "sessions", "*", "*", "g*.json"))):
         if not _GEN_RE.match(os.path.basename(path)):
             continue
+        rel = os.path.relpath(path, home)
+        if not _own_manifest(home, path):
+            # Reported rather than raised, because `verify` reports: it is the
+            # one command whose contract is a list of problems. Continuing also
+            # leaves the segments this manifest would have vouched for to the
+            # walk below, which says so in its own words — which is exactly
+            # what a stranger's clone of this store sees. [E7 fs-F5]
+            problems.append(f"{rel}: leaves the store, so it is not this store's manifest")
+            continue
         try:
             problems += _verify_manifest(home, path)
         except Exception as exc:  # noqa: BLE001 - a manifest is untrusted data
             # One malformed manifest used to abort the sweep, so real tampering
             # in every later session went unreported and the exit code blamed
             # the crash instead. A bad manifest is one problem, not a stop. [E2]
-            problems.append(f"{os.path.relpath(path, home)}: unverifiable manifest ({exc!r})")
+            problems.append(f"{rel}: unverifiable manifest ({exc!r})")
     # Guarded for the same reason the loop above is, and it was not: `verify` is
     # the proof command, so every part of it has to survive a store that has
     # been corrupted in a way nobody predicted. An unguarded second sweep put
@@ -1192,7 +1237,12 @@ def _verify_unattested(home: str) -> list[str]:
             os.path.basename(session_dir),
             gen_dir + ".json",
         )
-        if os.path.exists(manifest):
+        # `_own_manifest` as well as `exists`: without it a manifest reached
+        # through a symlinked `sessions/` marks the generation directory
+        # attested, so the loop above skips it *and* the walk below skips it,
+        # and the bytes nothing in the store speaks for are reported by
+        # nobody. [E7 fs-F5]
+        if os.path.exists(manifest) and _own_manifest(home, manifest):
             attested.add(os.path.realpath(seg_dir))
     for dirpath, dirnames, filenames in os.walk(raw):
         if os.path.realpath(dirpath) in attested:

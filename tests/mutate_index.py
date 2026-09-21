@@ -3490,6 +3490,43 @@ MUTANTS = [
         "    if False:",
         "test_cli_capture_says_when_it_only_found_the_bytes",
     ),
+    # --- E7 fs-F5 ---
+    (
+        # Two rows, one predicate: `sessions()` raising and `verify()`
+        # reporting are different contracts, and the anchors carry the comment
+        # line below each because the `if` alone appears in both.
+        "verify reads the proof through the link and calls it clean",
+        "store.py",
+        "        if not _own_manifest(home, path):\n"
+        "            # Reported rather than raised, because `verify` reports:",
+        "        if False:\n            # Reported rather than raised, because `verify` reports:",
+        "test_verify_says_the_same_thing_a_clone_of_the_store_would",
+    ),
+    (
+        "a manifest outside the store is still this store's manifest",
+        "store.py",
+        "        if not _own_manifest(home, path):\n"
+        "            # `EscapingSegment`, and not a skip, for the reason the docstring",
+        "        if False:\n"
+        "            # `EscapingSegment`, and not a skip, for the reason the docstring",
+        "test_a_reader_refuses_a_store_whose_proof_is_not_in_it",
+    ),
+    (
+        # The half that hides the other half: with the generation directory
+        # marked attested, the walk skips it too and nothing is reported.
+        "an unreadable manifest still vouches for the bytes beside it",
+        "store.py",
+        "        if os.path.exists(manifest) and _own_manifest(home, manifest):",
+        "        if os.path.exists(manifest):",
+        "test_verify_says_the_same_thing_a_clone_of_the_store_would",
+    ),
+    (
+        "the lock file may be a symlink to anywhere the user can write",
+        "store.py",
+        "    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)",
+        "    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)",
+        "test_a_symlinked_lock_file_is_not_a_place_to_create_a_file",
+    ),
 ]
 
 

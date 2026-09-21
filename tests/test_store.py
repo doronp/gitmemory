@@ -2576,3 +2576,102 @@ def test_cli_capture_says_when_it_only_found_the_bytes(tmp_path, capsys):
     out = capsys.readouterr()
     assert f"adopted 1 segment(s) found on disk, not copied from the source: {name}" in out.err
     assert "+0B" in out.out, "the line has to be beside a result that looks like nothing happened"
+
+
+# --- E7 fs-F5: the proof tree reached through a link -------------------------
+
+
+def _relocate_sessions(home: str, tmp_path) -> None:
+    """Move `sessions/` out of the store and leave a symlink where it was."""
+    outside = tmp_path / "elsewhere"
+    shutil.move(os.path.join(home, "sessions"), str(outside))
+    os.symlink(str(outside), os.path.join(home, "sessions"))
+
+
+def test_verify_says_the_same_thing_a_clone_of_the_store_would(tmp_path):
+    """`glob` follows symlinks, and nothing re-checked on the way back in.
+
+    `_mkdir` refuses to *write* through a link (index-F1), so the store cannot
+    get into this state by itself — but it can be put into it afterwards, and
+    every reader then reaches manifests that are not in the store. Measured
+    before the fix: `verify` read them through the link and said
+    `0 problem(s)`, while `git add --all` committed the link itself as one
+    `120000` blob, so the clone held two raw segments, no manifests, and a
+    `verify` that was red for both. The local answer and the pushed answer have
+    to be the same answer. [E7 fs-F5]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    assert store.verify(home) == []
+
+    _relocate_sessions(home, tmp_path)
+
+    problems = store.verify(home)
+    assert any("not this store's manifest" in p for p in problems), problems
+    # And the segments it would have spoken for are reported, rather than
+    # falling into the gap between "a manifest covers this" and "a manifest was
+    # read": before the fix the `attested` set was built with `os.path.exists`,
+    # which follows the link too, so nothing reported them at all.
+    assert any("no manifest speaks for these bytes" in p for p in problems), problems
+
+
+def test_a_reader_refuses_a_store_whose_proof_is_not_in_it(tmp_path):
+    """A skip here would make the index, the dashboard and the gate agree it is empty.
+
+    `sessions()` skips unreadable manifests on purpose; an escape is the
+    documented exception, for segments, "because an escape is an attack rather
+    than a mess". A manifest is the same case. [E7 fs-F5]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    assert len(store.sessions(home)) == 1
+
+    _relocate_sessions(home, tmp_path)
+
+    with pytest.raises(store.EscapingSegment, match="leaves the store"):
+        store.sessions(home)
+
+
+def test_a_symlinked_lock_file_is_not_a_place_to_create_a_file(tmp_path):
+    """The one name below the store that no directory check covers.
+
+    `_mkdir` walks the parents with `lstat`; the lock file itself was opened
+    with `O_CREAT|O_RDWR` and no `O_NOFOLLOW`. Measured: an empty 0600 file
+    appeared at the far end of a dangling link and the capture reported
+    success, with `flock` then taken on that file rather than on this session —
+    so the serialisation the lock exists for was not happening either.
+    [E7 fs-F5]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+
+    lock = Path(home, ".locks", "claude-code", "sess.lock")
+    target = tmp_path / "elsewhere" / "created-by-gitmemory"
+    lock.unlink()
+    os.makedirs(target.parent)
+    os.symlink(str(target), lock)
+    transcript(src, 5, start=5)
+
+    with pytest.raises(OSError):
+        store.capture(src, "claude-code", "sess", home=home)
+    assert not target.exists(), "a file was created outside the store"
+
+
+def test_an_ordinary_lock_is_still_created_and_still_locks(tmp_path):
+    """`O_NOFOLLOW` must be a no-op on the name that is free, which is every run."""
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+
+    lock = Path(home, ".locks", "claude-code", "sess.lock")
+    assert lock.is_file() and not lock.is_symlink()
+    assert oct(lock.stat().st_mode & 0o777) == "0o600"
+    transcript(src, 5, start=5)
+    assert store.capture(src, "claude-code", "sess", home=home).appended
