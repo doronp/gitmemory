@@ -2421,6 +2421,188 @@ MUTANTS = [
         """        _BACKREF.match(text)""",
         "test_the_probe_score_has_not_regressed",
     ),
+    # --- E7 security round: what the gate attests to ----------------------- #
+    (
+        # The three sources of `gate` are three different questions. This one
+        # asks what `git push` transmits, and it is the only one that can see a
+        # credential that was committed and then deleted.
+        "the gate reads the object graph and scans none of it",
+        "redact.py",
+        """        seen_objects = True
+        findings += scan_bytes(data, f"history:{_safe_path(label)}")""",
+        """        seen_objects = True""",
+        "test_a_credential_deleted_from_the_worktree_still_blocks_the_push",
+    ),
+    (
+        "push builds the gate without the history source",
+        "__main__.py",
+        ", objects=gitrepo.pushable_objects(home)",
+        "",
+        "test_a_credential_deleted_from_the_worktree_still_blocks_the_push",
+    ),
+    (
+        # `spool/` and `index/` are gitignored and are full of exactly the bytes
+        # a detector fires on. Scanning them refuses a push over bytes that were
+        # never being sent, and there is no override flag anywhere in the CLI.
+        "the worktree source stops asking git which files are its own",
+        "gitrepo.py",
+        '"ls-files", "-z", "--cached", "--others", "--exclude-standard"',
+        '"ls-files", "-z", "--cached", "--others"',
+        "test_a_credential_in_a_gitignored_directory_does_not_block_the_push",
+    ),
+    (
+        "the push credential's own file goes back to being committed",
+        "gitrepo.py",
+        """
+/config.toml
+\"\"\"""",
+        """
+\"\"\"""",
+        "test_the_store_does_not_commit_the_credential_it_pushes_with",
+    ),
+    (
+        # A `.gitignore` line does not untrack a tracked file, so without this
+        # every store that predates the rule goes on committing its own push
+        # credential while the fix reads as applied.
+        "the ignore rule is added but the tracked copy is left tracked",
+        "gitrepo.py",
+        '    _git(home, "rm", "--cached", "--quiet", "--ignore-unmatch", '
+        '"config.toml", check=False)\n',
+        "",
+        "test_init_untracks_a_config_that_an_older_store_already_committed",
+    ),
+    (
+        "an inline credential in a remote url is allowed through",
+        "redact.py",
+        '    if ":" in userinfo:',
+        "    if False:",
+        "test_a_remote_url_password_is_never_printed",
+    ),
+    (
+        # The over-refusing version of the same check, which is what the first
+        # draft did: `https://host:8443/p.git` has no userinfo at all, and
+        # `ssh://git@host:22/p` is a port behind a username. A store that cannot
+        # push is as broken as one that pushes a token.
+        "the userinfo check reads a port number as a password",
+        "redact.py",
+        '    userinfo = parts.netloc.rsplit("@", 1)[0] if "@" in parts.netloc else ""',
+        '    userinfo = parts.netloc.rsplit("@", 1)[0]',
+        "test_a_remote_url_password_is_never_printed",
+    ),
+    (
+        # The finding is printed to stderr, into a terminal an agent transcribes
+        # into the transcript this store then commits. A gate that prints what
+        # it caught has filed a second permanent copy of it.
+        "findings wear the unmasked path they were found in",
+        "redact.py",
+        "    label = _safe_path(path)",
+        "    label = path",
+        "test_a_finding_whose_match_is_the_path_does_not_print_the_path",
+    ),
+    (
+        "overlapping matches are masked one per detector",
+        "redact.py",
+        "        if spans and start <= spans[-1][1]:",
+        "        if False:",
+        "test_a_finding_whose_match_is_the_path_does_not_print_the_path",
+    ),
+    (
+        # One false positive is a block that merely *names* a PEM header. With
+        # no count, a store where the gate misfires on every block looks exactly
+        # like a store full of secrets, and both look like a store with none.
+        "the graph stops saying how many labels it redacted",
+        "graph.py",
+        '        "labels_redacted": sum(1 for n in nodes.values() if n["label"] == REDACTED),\n',
+        "",
+        "test_the_extraction_says_how_many_labels_it_redacted",
+    ),
+    # Nine confirmed misses, one row each, because each is one independently
+    # deletable line in a table and the parametrised test is the only thing that
+    # says which shape went missing. [E7]
+    (
+        "a PGP private key block is not a private key block",
+        "redact.py",
+        "PRIVATE KEY(?: BLOCK)?-----",
+        "PRIVATE KEY-----",
+        "test_the_shapes_a_transcript_actually_contains_are_seen and private_key_block",
+    ),
+    (
+        "the browser-session slack tokens are dropped again",
+        "redact.py",
+        'rb"\\bxox[baprsecd]-[A-Za-z0-9-]{12,}"',
+        'rb"\\bxox[baprse]-[A-Za-z0-9-]{12,}"',
+        "test_the_shapes_a_transcript_actually_contains_are_seen and slack_token",
+    ),
+    (
+        "an incoming-webhook url is not a credential",
+        "redact.py",
+        '    ("slack_webhook", re.compile(rb"\\bhttps://hooks\\.slack\\.com/services/'
+        '[A-Za-z0-9/_+-]{20,}")),\n',
+        "",
+        "test_the_shapes_a_transcript_actually_contains_are_seen and slack_webhook",
+    ),
+    (
+        "only the gcloud api key is seen, not the token gcloud prints",
+        "redact.py",
+        '    ("google_oauth_token", re.compile(rb"\\bya29\\.[A-Za-z0-9_-]{20,}")),\n',
+        "",
+        "test_the_shapes_a_transcript_actually_contains_are_seen and google_oauth_token",
+    ),
+    (
+        "a huggingface token walks",
+        "redact.py",
+        '    ("huggingface_token", re.compile(rb"\\bhf_[A-Za-z0-9]{30,}\\b")),\n',
+        "",
+        "test_the_shapes_a_transcript_actually_contains_are_seen and huggingface_token",
+    ),
+    (
+        # The keyword is not adjacent to the `=` in `AWS_SECRET_ACCESS_KEY=…`,
+        # and `_` is a word character, so the `\\b`-anchored form saw neither
+        # edge of `SECRET` nor the assignment past it.
+        "the assignment rule goes back to needing the keyword against the separator",
+        "redact.py",
+        "            [A-Za-z0-9_.-]{0,40} [\"']? \\s* [:=] \\s*",
+        "            [\"']? \\s* [:=] \\s*",
+        "test_the_shapes_a_transcript_actually_contains_are_seen and assigned_secret",
+    ),
+    (
+        # `"authorization": "Bearer …"` is how a transcript records a header.
+        # The `"` between the name and the value is not `\\s`.
+        "the authorization rule needs a bare colon again",
+        "redact.py",
+        """            rb\"\"\"(?ix) \\b authorization [\"']? \\s* [:=] \\s* [\"']?
+            \\s* (?: bearer | basic ) \\s+ [A-Za-z0-9._~+/=-]{20,}\"\"\"
+""",
+        """            rb\"\"\"(?ix) \\b authorization \\s* : \\s*
+            bearer \\s+ [A-Za-z0-9._~+/-]{20,}\"\"\"
+""",
+        "test_the_shapes_a_transcript_actually_contains_are_seen and bearer_header",
+    ),
+    (
+        # `https://user:pw@` is the form this store's own `config.toml` uses and
+        # the three-scheme alternation did not contain it.
+        "only three url schemes may carry a password",
+        "redact.py",
+        '        re.compile(rb"(?i)\\b[a-z][a-z0-9+.-]*://[^\\s:@/]+:[^\\s@/]+@"),',
+        '        re.compile(rb"(?i)\\b(?:postgres(?:ql)?|mysql|mongodb)://[^\\s:@/]+:[^\\s@/]+@"),',
+        "test_the_shapes_a_transcript_actually_contains_are_seen and url_with_password",
+    ),
+    (
+        # The whole tuple, not just its pattern: `jwt` is a two-line entry, and
+        # deleting the `re.compile` alone leaves a one-element tuple that blows
+        # up `scan_bytes` on unpacking. A mutant that crashes is credited with
+        # being caught by whatever test ran into the crash first, which is
+        # attribution on no evidence.
+        "a jwt outside an authorization header is nothing",
+        "redact.py",
+        r"""    (
+        "jwt",
+        re.compile(rb"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
+    ),
+""",
+        "",
+        "test_the_shapes_a_transcript_actually_contains_are_seen and jwt",
+    ),
 ]
 
 

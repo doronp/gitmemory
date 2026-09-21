@@ -208,8 +208,18 @@ Bounds a session to typically <10 segments, so tree objects stay small. Tiling i
 coalescing only changes where the cut points are, never whether they tile.
 
 **Raw is committed locally, always** — that is the thesis. Redaction applies at exactly two
-boundaries: anything written to `derived/`, and anything that leaves the machine. **`push` is
+boundaries: anything written to `derived/`, and anything **`gitmemory push`** sends. **`push` is
 opt-in per remote and refuses unless the redaction gate passed.** Default config has no remote.
+
+Not "anything that leaves the machine" — that claim was wider than the code and is withdrawn
+**[E7]**. The store is an ordinary git repository in a directory the owner can read. A `git push`
+run by hand in it is ungated, and so is `scp`, a backup agent, or a second tool pointed at the
+same path; `core.hooksPath` is set to `/dev/null` (`gitrepo.CONFIG`, so that a template or a
+`~/.gitconfig` cannot run code in this repository), so there is no `pre-push` hook to intercept
+one either. What the gate is, exactly, is a floor on the one egress this product
+performs. The three sources it reads are the files git would ship, the ordered segment groups with
+their seams, and the object graph `git push` actually transmits — a credential committed and then
+deleted is absent from the first two and present in the third **[E7]**.
 A startup assertion refuses to run if `$GITMEMORY_HOME` is inside another work tree, and every
 git call is explicit `git -C $GITMEMORY_HOME` — never cwd-inherited **[R1]**.
 
@@ -316,8 +326,11 @@ proving why you would want that.*
   contiguity is unaffected.
 - *"agentcairn's redact-before-write is the safer default"* — it is the *lossier* default. Its own
   reading shows redaction rewrites text before hashing, so the field labelled `verbatim` is not the
-  bytes. We keep raw local-only and redact at the two egress boundaries (§2.4). Same safety, no
-  silent loss.
+  bytes. We keep raw local-only and redact at the two egress boundaries (§2.4), which is a
+  different trade, not a free one **[E7]**: agentcairn's copy is lossy and safe to hand anywhere,
+  ours is verbatim and safe only as far as §2.4's gate reaches. We take that trade because a
+  memory whose `verbatim` field is not the bytes cannot answer the question this product exists
+  to answer. No silent loss; a narrower guarantee.
 
 ### 2.5b Vendored, not written **[E0]**
 

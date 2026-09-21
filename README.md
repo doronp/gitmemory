@@ -71,8 +71,8 @@ gitmemory dashboard             # serve the index, read-only, on loopback
 | The same extractor, in a vocabulary its corpus does not contain | two adversarial probes hand-written by a reviewer, both since spent | 26/32 and 27/32 |
 | The same extractor again, on a probe written blind and scored once | 32 items in a domain chosen to share no vocabulary with the corpus | **14/32** |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way | p50 **7.43 ms**, p99 **10.48 ms** |
-| The suite | | **964 tests**, plus one gated on the LongMemEval download |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **267** negative controls |
+| The suite | | **981 tests**, plus one gated on the LongMemEval download |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **286** negative controls |
 
 **Read the extraction numbers carefully — the gap between them is the finding.**
 1.0000 precision and recall is the score on a held-out split the extractor's
@@ -143,6 +143,29 @@ spool and exits 0.
 
 Claude Code is the first adapter, not the only intended one; the records are
 agent-agnostic by construction.
+
+## If a credential lands in the store
+
+It will. A transcript is a recording of a terminal, and terminals print tokens.
+The design answer is that `raw/` stays on your machine and the gate stands at
+`push`; the operational answer is shorter:
+
+1. **Rotate the credential.** Do this first and do not wait for anything below.
+   The store is append-only and local, so the blob is in your history whatever
+   you do next, and a rotated key is worth nothing to anyone holding it.
+2. **`gitmemory push` will refuse, and that is working.** It scans the files git
+   would ship, the segment seams, *and* the object graph a push transmits —
+   deleting the file does not make the push clean, because `git push` does not
+   send the working tree.
+3. **If you must un-say it,** the store is an ordinary git repository, so the
+   ordinary history-rewriting tools apply — `git filter-repo` is the usual one,
+   and it is not vendored here. Run `gitmemory verify` afterwards: it will tell
+   you whether the segments still tile. This is not automated and will not be —
+   a memory system that silently edits its own history is not one you can quote
+   from.
+
+There is no override flag. A gate you can wave through on a deadline is a gate
+that gets waved through on a deadline.
 
 ## Status
 

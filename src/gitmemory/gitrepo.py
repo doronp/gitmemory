@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 from .store import resolve_home
@@ -69,6 +70,13 @@ sessions/*/*/*.tmp.*
 # dotfile in the artifact directory. Swept by `derive._sweep_temps`; anchored
 # here for the same reason as the two above. [E5:8]
 derived/*/*/*/.deriving-*
+# The push credential's only home. `redact.safe_url` goes to trouble never to
+# *print* the token in `[remote.X] url`, and `git add --all` was committing the
+# file it lives in — so the store authenticated to a remote with a secret it was
+# about to push to that same remote. `push_allowed` now refuses an inline
+# credential outright; this line is the belt to that brace, and it also keeps a
+# store's remote list out of a repository other people can read. [E7]
+/config.toml
 """
 
 # Repository-local. The reading half of that is enforced in `_env`, not here.
@@ -202,6 +210,71 @@ def is_repo(home: str) -> bool:
     return os.path.isdir(os.path.join(home, ".git"))
 
 
+def tracked(home: str) -> list[str]:
+    """Paths git would ship from the working tree: tracked, plus unignored new.
+
+    The gate used to build this list with `os.walk` and a two-name skip set,
+    which scanned `spool/` and `index/` — both gitignored, both full of exactly
+    the bytes a detector fires on. A push was refused over a file `git push`
+    would never have sent, with no override flag anywhere in the CLI. Asking git
+    which files are its own is shorter than reproducing `.gitignore`, and it is
+    right by construction. [E7]
+    """
+    out = _git(home, "ls-files", "-z", "--cached", "--others", "--exclude-standard").stdout
+    return [os.path.join(home, p) for p in out.split("\0") if p]
+
+
+def pushable_objects(home: str) -> Iterator[tuple[str, bytes]]:
+    """Every object reachable from a ref, as `(label, bytes)`.
+
+    `git push` does not send the working tree. It sends the object graph
+    reachable from the refs, so a credential that was committed and later
+    deleted is absent from any walk of the checkout and present in the push —
+    and deleting the file is the first thing a user does on noticing a leak.
+    A gate that answers "does the current checkout contain a known shape" is
+    answering a different question from the one it is asked. [E7]
+
+    Trees and commits come through too, not just blobs: a session id that is
+    itself a credential is a *name* inside a tree object, and a commit message
+    carries session keys derived from the transcript filename.
+
+    Unreachable objects are deliberately excluded. `derived/` is rewritten on
+    every rebuild and git prunes loose objects on a two-week delay, so a store
+    carries garbage that will never be pushed; blocking egress on it is the
+    over-refusal this function exists to stop doing.
+    """
+    listing = _git(home, "rev-list", "--objects", "--all").stdout
+    names: dict[str, str] = {}
+    for line in listing.splitlines():
+        sha, _, path = line.partition(" ")
+        if sha and all(c in "0123456789abcdef" for c in sha):
+            names.setdefault(sha, path)
+    if not names:
+        return
+    # `--batch` over one pipe rather than one `cat-file` per object: a store with
+    # a few thousand objects is a few thousand forks otherwise, and the gate runs
+    # on a path a human is waiting on.
+    with subprocess.Popen(  # noqa: S603 - fixed argv, no shell, scrubbed env
+        ["git", "-C", home, "cat-file", "--batch"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        env=_env(),
+    ) as proc:
+        assert proc.stdin is not None and proc.stdout is not None  # noqa: S101 - pipes above
+        try:
+            for sha, path in names.items():
+                proc.stdin.write(f"{sha}\n".encode("ascii"))
+                proc.stdin.flush()
+                header = proc.stdout.readline().split()
+                if len(header) != 3:  # `<sha> missing` — a ref raced a prune
+                    continue
+                data = proc.stdout.read(int(header[2]))
+                proc.stdout.read(1)  # the trailing newline the protocol adds
+                yield path or f"<{header[1].decode()} {sha[:12]}>", data
+        finally:
+            proc.stdin.close()
+
+
 def _assert_no_foreign_config(home: str) -> None:
     """Prove the isolation in `_env` instead of trusting the mechanism.
 
@@ -274,6 +347,14 @@ def init(home: str | None = None) -> str:
     if current != GITIGNORE:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(GITIGNORE)
+    # A `.gitignore` line does not untrack a file that is already tracked, and
+    # `init` runs on every start precisely so an old store picks up a new rule.
+    # Without this, every store created before `/config.toml` was ignored goes
+    # on committing its own push credential and the fix reads as applied.
+    # `--cached` leaves the file on disk; `--ignore-unmatch` makes it a no-op on
+    # the normal path. The blob already in history stays there — that is F1, and
+    # the answer to it is rotation, not this line. [E7]
+    _git(home, "rm", "--cached", "--quiet", "--ignore-unmatch", "config.toml", check=False)
     return home
 
 

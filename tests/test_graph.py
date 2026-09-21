@@ -193,6 +193,22 @@ def test_a_key_past_the_cut_still_redacts_the_whole_label():
     assert "AKIA" not in str(out), "a fragment of the key is still the key's shape"
 
 
+def test_the_extraction_says_how_many_labels_it_redacted():
+    """[E7] `ideas()` reports `sentences_redacted`; this surface reported
+    nothing. One false positive is a block that merely *names* a PEM header, so
+    a store where the gate misfires on every block looked exactly like a store
+    full of secrets — and both looked like a store with none."""
+    key = "AKIAZZZZQQQQWWWW1234"  # synthetic, right shape
+    s = _session("s1", [("user", f"chose {key}"), ("user", "chose the other one")])
+    out = graph.extraction([s], extract=_decide(*_ids(s)))
+    assert out["labels_redacted"] == 1
+    assert [n["label"] for n in out["nodes"]].count(graph.REDACTED) == 1
+    assert validate_extraction(out) == [], "graphify tolerates the extra key"
+
+    clean = _session("s2", [("user", "chose the other one")])
+    assert graph.extraction([clean], extract=_decide(_ids(clean)[0]))["labels_redacted"] == 0
+
+
 def test_a_graphify_option_reaches_graphify():
     """`build` takes `extract` for us and passes the rest on. The first version
     funnelled everything into `extraction`, so `directed=True` died on a

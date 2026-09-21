@@ -143,6 +143,12 @@ def extraction(
                 edges.add((a.source_ref, b.source_ref))
 
     return {
+        # `ideas()` reports `sentences_redacted`; this surface reported nothing,
+        # so a store where the gate misfires on every block — one false positive
+        # is a block that merely *names* a PEM header — looked exactly like a
+        # store full of secrets. A count is the difference between a redaction
+        # you can audit and a redaction you can only discover. [E7]
+        "labels_redacted": sum(1 for n in nodes.values() if n["label"] == REDACTED),
         "nodes": [nodes[i] for i in sorted(nodes)],
         "edges": [
             {

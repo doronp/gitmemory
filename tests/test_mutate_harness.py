@@ -124,13 +124,30 @@ def test_every_mutation_row_actually_changes_the_file():
 def test_every_mutation_row_names_a_test_that_exists():
     """The `NO TEST` verdict, an hour earlier. A renamed test leaves the row
     pointing at nothing and `-k` exits 5. Both `testpaths` are searched: the
-    E3 rows name tests that live beside the harness in `bench/`."""
+    E3 rows name tests that live beside the harness in `bench/`.
+
+    The field is a `-k` expression, not always a bare name: nine E7 rows each
+    delete one detector out of a table and select the one parametrisation that
+    covers it (`test_… and slack_token`), because otherwise all nine rows name
+    the same function and a row that mutated the wrong line still reads CAUGHT.
+    So every `test_`-shaped identifier in the expression has to exist, and the
+    parameter halves are left alone — pytest matches those as substrings.
+    """
     defined = set()
     for d in ("tests", "bench"):
         for p in sorted((ROOT / d).glob("test_*.py")):
             defined.update(re.findall(r"^def (test_\w+)\(", p.read_text(), re.M))
-    bad = sorted({f"{name}: {test}" for name, _, _, _, test in MUTANTS if test not in defined})
+    bad = sorted(
+        f"{name}: {ident}"
+        for name, _, _, _, expr in MUTANTS
+        for ident in re.findall(r"\btest_\w+", expr)
+        if ident not in defined
+    )
     assert not bad, "rows naming a test that does not exist:\n  " + "\n  ".join(bad)
+    # A row whose expression has no `test_…` in it at all selects by parameter
+    # alone, which is how a typo becomes a row that silently runs the suite.
+    nameless = [n for n, _, _, _, expr in MUTANTS if not re.search(r"\btest_\w+", expr)]
+    assert not nameless, f"rows selecting no test function: {nameless}"
 
 
 def test_every_mutation_row_has_a_distinct_name():

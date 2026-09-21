@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from gitmemory import redact, store
+from gitmemory import gitrepo, redact, store
 
 LINE = b'{"type":"user","uuid":"u%d","message":{"role":"user","content":"hello %d"}}\n'
 
@@ -744,11 +744,23 @@ def test_a_remote_url_password_is_never_printed(tmp_path):
         '[remote.origin]\nurl = "https://me:s3cr3t-pw@github.com/me/p.git"\nallow_push = true\n'
     )
 
+    # [E7] And now refused outright, not merely printed safely: `config.toml`
+    # was committed by `git add --all`, so the store authenticated to a remote
+    # with a token it was about to push to that same remote. The refusal still
+    # may not print it.
     allowed, why = redact.push_allowed(str(home), "origin")
-    assert allowed is True
+    assert allowed is False
     assert "s3cr3t-pw" not in why
-    assert why == "https://github.com/me/p.git"
+    assert "embeds a credential" in why
+    assert redact.safe_url("https://me:s3cr3t-pw@github.com/me/p.git") == (
+        "https://github.com/me/p.git"
+    )
     assert redact.safe_url("git@github.com:me/p.git") == "git@github.com:me/p.git"
+
+    # A port is not userinfo, and neither is a bare username.
+    for url in ("https://github.com:8443/me/p.git", "ssh://git@github.com:22/me/p.git"):
+        (home / "config.toml").write_text(f'[remote.origin]\nurl = "{url}"\nallow_push = true\n')
+        assert redact.push_allowed(str(home), "origin")[0] is True, url
 
 
 # --- the CLI push path, which the old suite never reached ------------------ #
@@ -770,6 +782,7 @@ def test_cli_push_is_blocked_by_the_gate(tmp_path, capsys, name):
     with open(source, "ab") as fh:
         fh.write(b'{"k":"' + GHP + b'"}\n')
     assert main(["--home", str(home), "capture", str(source), "--session-id", "sess"]) == 0
+    gitrepo.init(str(home))
     capsys.readouterr()
 
     assert main(["--home", str(home), "push"]) == 1
@@ -793,6 +806,7 @@ def test_cli_push_scans_files_that_are_not_segments(tmp_path, capsys, name):
     )
     transcript(str(source), 8)
     assert main(["--home", str(home), "capture", str(source), "--session-id", "sess"]) == 0
+    gitrepo.init(str(home))
     (home / "derived").mkdir()
     (home / "derived" / "notes.md").write_bytes(b"key: " + GHP + b"\n")
     capsys.readouterr()
@@ -812,12 +826,183 @@ def test_cli_push_reaches_the_gate_on_a_clean_store(tmp_path, capsys):
     )
     transcript(str(source), 8)
     assert main(["--home", str(home), "capture", str(source), "--session-id", "sess"]) == 0
+    gitrepo.init(str(home))
     capsys.readouterr()
 
     assert main(["--home", str(home), "push"]) == 1  # E2 has no transport yet
     err = capsys.readouterr().err
     assert "gate passed" in err
     assert "found credentials" not in err
+
+
+# --- [E7] what the gate attests to, and what it prints while attesting ----- #
+
+
+def _pushable(tmp_path, name=".gitmemory"):
+    """A store with a repository, an opted-in remote, and one clean capture."""
+    from gitmemory.__main__ import main
+
+    home, source = tmp_path / name, tmp_path / "s.jsonl"
+    home.mkdir()
+    (home / "config.toml").write_text(
+        '[remote.origin]\nurl = "git@github.com:me/p.git"\nallow_push = true\n'
+    )
+    transcript(str(source), 8)
+    assert main(["--home", str(home), "capture", str(source), "--session-id", "sess"]) == 0
+    gitrepo.init(str(home))
+    return home
+
+
+def test_a_credential_deleted_from_the_worktree_still_blocks_the_push(tmp_path, capsys):
+    """The gate walked `os.walk(home)` and skipped `.git`. `git push` does not
+    send the working tree — it sends the objects reachable from the refs. So a
+    credential committed and then deleted was gone from the walk, still in the
+    push, and the gate said clean. Deleting the file is the first thing a user
+    does on noticing a leak."""
+    from gitmemory.__main__ import main
+
+    home = _pushable(tmp_path)
+    leak = home / "raw" / "leaked.txt"
+    leak.write_bytes(b"token " + GHP + b"\n")
+    gitrepo.commit(str(home), "capture: with a leak")
+    capsys.readouterr()
+
+    # The precondition is the whole finding: the worktree is clean afterwards.
+    leak.unlink()
+    gitrepo.commit(str(home), "capture: leak removed")
+    assert not leak.exists()
+    # Pruned by directory *name*, not by `".git" not in d`: the home directory
+    # here is `.gitmemory`, so the substring form skips every path and the
+    # precondition passes on an empty list. That is E2's bug, written again.
+    walk = []
+    for parent, dirs, files in os.walk(home):
+        dirs[:] = [d for d in dirs if d != ".git"]
+        walk += [os.path.join(parent, f) for f in files]
+    assert redact.gate(walk)[0], "precondition: the checkout no longer holds it"
+
+    assert main(["--home", str(home), "push"]) == 1
+    err = capsys.readouterr().err
+    assert "the redaction gate found credentials" in err
+    assert "history:" in err, "the finding must say the history is where it lives"
+    assert GHP.decode() not in err
+
+
+def test_a_credential_in_a_gitignored_directory_does_not_block_the_push(tmp_path, capsys):
+    """`spool/` is the hook drop-box: raw transcript JSON, straight off a
+    `PreCompact`. It is gitignored, so `git push` never sends it — and the old
+    two-name skip set walked it anyway, so a credential there killed the store's
+    only egress over bytes that were never leaving. There is no override flag."""
+    from gitmemory.__main__ import main
+
+    home = _pushable(tmp_path)
+    (home / "spool").mkdir()
+    (home / "spool" / "0001.json").write_bytes(b'{"t":"' + GHP + b'"}')
+    (home / "index").mkdir()
+    (home / "index" / "index.db").write_bytes(b"sqlite " + GHP)
+    capsys.readouterr()
+
+    # The precondition: git agrees these are ignored, so they are not being sent.
+    assert gitrepo._git(str(home), "check-ignore", "spool/0001.json").returncode == 0
+    assert main(["--home", str(home), "push"]) == 1
+    err = capsys.readouterr().err
+    assert "gate passed" in err
+    assert "found credentials" not in err
+
+
+def test_the_store_does_not_commit_the_credential_it_pushes_with(tmp_path):
+    """`config.toml` holds the `[remote.X] url`, which is the only userspace
+    HTTPS push form without an ssh key — and `gitrepo.commit` runs `git add
+    --all`. The store authenticated to a remote with a token it was about to
+    push to that same remote."""
+    home = _pushable(tmp_path)
+    gitrepo.commit(str(home), "capture: one")
+    assert "config.toml" not in gitrepo._git(str(home), "ls-files").stdout.split()
+
+
+def test_init_untracks_a_config_that_an_older_store_already_committed(tmp_path):
+    """A `.gitignore` line does not untrack a tracked file. Without the `rm
+    --cached`, every store created before the rule went on committing its own
+    push credential and the fix read as applied."""
+    home = _pushable(tmp_path)
+    gitrepo._git(str(home), "add", "-f", "config.toml")
+    gitrepo.commit(str(home), "capture: an older gitmemory")
+    assert "config.toml" in gitrepo._git(str(home), "ls-files").stdout.split()
+
+    gitrepo.init(str(home))
+    assert "config.toml" not in gitrepo._git(str(home), "ls-files").stdout.split()
+    assert (home / "config.toml").exists(), "--cached: the file stays on disk"
+
+
+def test_a_finding_whose_match_is_the_path_does_not_print_the_path(tmp_path):
+    """`scan_path` exists *because* the path can be the credential, and every
+    finding it returns wore that path as its label. `_push` prints every finding
+    to stderr, into a terminal an agent transcribes into the transcript this
+    store then commits verbatim — so the gate that caught the key filed a second
+    permanent copy of it."""
+    key = "sk-ant-api03-" + "A1b2_-" * 15
+    d = tmp_path / "sessions" / key
+    d.mkdir(parents=True)
+    (d / "g00.json").write_bytes(b"{}")
+
+    findings = redact.scan_path(str(d / "g00.json"))
+    assert findings, "precondition: the path itself trips a detector"
+    for f in findings:
+        assert key not in str(f), "the gate published what it found"
+        assert key not in f.path
+    # Masked, not deleted: the finding still says which file, in which store.
+    assert "g00.json" in findings[0].path
+    assert str(tmp_path) in findings[0].path
+    # One mask, not one per detector. `sk-ant-…` trips both `anthropic_api_key`
+    # and `openai_api_key` at the same offset, and masking each span in turn
+    # writes the directory name out twice with two disagreeing byte counts.
+    assert findings[0].path.count("…[") == 1, findings[0].path
+
+
+def test_the_gate_still_refuses_to_attest_to_nothing(tmp_path):
+    """[E2] `not any(...)` over an empty list is True. Three sources now, so the
+    check has to see all three before it decides there was nothing."""
+    with pytest.raises(ValueError, match="refusing to attest"):
+        redact.gate([])
+    with pytest.raises(ValueError, match="refusing to attest"):
+        redact.gate([], [], objects=iter(()))
+    assert redact.gate([], [], allow_empty=True) == (True, [])
+    # One object is not nothing, and a gate handed only history must attest.
+    ok, found = redact.gate([], [], objects=[("h", b"clean")])
+    assert (ok, found) == (True, [])
+
+
+# --- [E7] the shapes a transcript actually contains ------------------------ #
+
+E7_SHAPES = {
+    "url_with_password": b'url = "https://deploybot:' + b"b" * 36 + b'@github.com/me/p.git"',
+    "bearer_header": b'{"authorization": "Bearer ' + b"b" * 40 + b'"}',
+    "assigned_secret": b"AWS_SECRET_ACCESS_KEY=" + b"b" * 40,
+    "private_key_block": b"-----BEGIN PGP PRIVATE KEY BLOCK-----",
+    "google_oauth_token": b"ya29." + b"b" * 80,
+    "huggingface_token": b"hf_" + b"b" * 34,
+    "slack_webhook": b"https://hooks.slack.com/services/T00000000/B00000000/" + b"b" * 24,
+    "slack_token": b"xoxc-" + b"b" * 30,
+    "jwt": b"eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0." + b"b" * 43,
+}
+
+
+@pytest.mark.parametrize("name,blob", sorted(E7_SHAPES.items()))
+def test_the_shapes_a_transcript_actually_contains_are_seen(name, blob):
+    """Nine confirmed misses. Each is one alternation on an already-anchored
+    pattern, not an entropy heuristic — the reason this gate is prefix-anchored
+    is that a high-entropy rule fires on every sha256 in our own manifests, and
+    `test_our_own_manifests_do_not_trip_the_gate` is what holds that line."""
+    found = redact.scan_bytes(b"prefix " + blob + b" suffix", "t.jsonl")
+    assert name in {f.detector for f in found}, f"{name} would have been pushed"
+
+
+def test_widening_assigned_secret_did_not_make_it_match_a_lookup(tmp_path):
+    """The E2 ruling against widening this detector was that it raises the
+    false-positive rate. The bound that keeps it honest is the character class:
+    `["']?[^\\s"'\\n]{12,}` stops at the quote, so a value *read from* somewhere
+    is not a value."""
+    for line in (b'api_key = os.environ["ANTHROPIC_API_KEY"]', b"password = getpass()"):
+        assert redact.scan_bytes(line) == [], line
 
 
 # --- verify's checks, each deletable while the suite stayed green ---------- #

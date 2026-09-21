@@ -15,7 +15,7 @@ import re
 import sqlite3
 import sys
 
-from . import daemon, dashboard, derive, index, redact, store
+from . import daemon, dashboard, derive, gitrepo, index, redact, store
 from .adapters import get as get_adapter
 
 # Everything this module prints is bytes an attacker may have chosen: a recall
@@ -159,21 +159,29 @@ def _push(args) -> int:
     if not allowed:
         print(f"refusing to push: {why}", file=sys.stderr)
         return 1
-    # `".git" not in d` was a substring test against the whole path, and the
-    # default home is `~/.gitmemory` — so every file was filtered out, the gate
-    # scanned nothing, and push was allowed. Compare path components, relative
-    # to home, or the store's own name defeats its own gate. [E2]
-    skip = {".git", ".locks"}
+    if not gitrepo.is_repo(home):
+        # There is no push without a repository, and the gate's file set is now
+        # git's own. Saying so beats printing "gate passed" over a store that
+        # has no remote, no history and no way to send anything. `watch` runs
+        # `gitrepo.init`; a `capture`-only store has never needed one.
+        print(f"refusing to push: {home} is not a git repository", file=sys.stderr)
+        return 1
+    # Two scans, because a push has two halves and one walk cannot see both.
+    #
+    # The working tree, from `git ls-files` rather than `os.walk`: that is the
+    # set git would add, so `spool/` and `index/` — gitignored, and full of the
+    # raw bytes a detector fires on — stop refusing pushes that would never have
+    # sent them. It also drops the hand-rolled `{".git", ".locks"}` skip that
+    # was E2's full-bypass bug. Segment runs still go through `scan_group`,
+    # which is the only scan that sees a credential cut in half by a seam.
+    #
+    # And the object graph, which is what `git push` actually transmits. A
+    # credential committed and then deleted is absent from every walk of the
+    # checkout and present in the push. [E7]
     groups = store.segment_groups(home)
     grouped = {p for g in groups for p in g}
-    files = [
-        p
-        for d, _, fs in os.walk(home)
-        if not skip & set(os.path.relpath(d, home).split(os.sep))
-        for f in fs
-        if (p := os.path.realpath(os.path.join(d, f))) not in grouped
-    ]
-    clean, findings = redact.gate(files, groups)
+    files = [p for p in gitrepo.tracked(home) if os.path.realpath(p) not in grouped]
+    clean, findings = redact.gate(files, groups, objects=gitrepo.pushable_objects(home))
     for f in findings:
         print(f, file=sys.stderr)
     if not clean:
