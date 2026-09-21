@@ -46,8 +46,18 @@ FORBIDDEN = {
 # Named explicitly rather than honoured as a marker comment any file could claim.
 ALLOWED = {"tests/test_no_owner_data.py"}
 
+# One string per pattern that the pattern must match. Module-level rather than
+# local to the control test, because the scan cases assert against it too: a
+# pattern narrowed until it no longer catches its own sample should fail *that
+# pattern's* case, not only the sibling control. [E4, vacuity pass 2: F2]
+SAMPLES = {
+    "a macOS home directory": "/Users/someone/work/gitmemory",
+    "a Linux home directory": "/home/someone/work/gitmemory",
+    "the author's private memory tree": "~/memory/.claude-auto-memory/MEMORY.md",
+}
 
-def _tracked() -> list[str]:
+
+def _tracked(root: Path = ROOT) -> list[str]:
     """Tracked files **and** untracked ones git would let you add.
 
     `ls-files` alone was the first version and it had the hole you would expect:
@@ -60,7 +70,7 @@ def _tracked() -> list[str]:
     """
     args = ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]
     out = subprocess.run(
-        ["git", "-C", str(ROOT), *args],
+        ["git", "-C", str(root), *args],
         capture_output=True,
         text=True,
         check=True,
@@ -76,18 +86,34 @@ def _is_text(path: Path) -> bool:
     return True
 
 
-@pytest.mark.parametrize("what,pattern", sorted(FORBIDDEN.items()))
-def test_no_tracked_file_contains_owner_data(what: str, pattern: re.Pattern):
+def _scan(root: Path, files: list[str], pattern: re.Pattern, allowed: set[str]) -> list[str]:
+    """`rel:line` for every match, so the scan can be aimed somewhere other than us.
+
+    Pulled out of the test body so a fixture repository can be scanned by the
+    *same* code that scans this one. It was inline, and inline meant every test
+    here asserted "no hits" over a corpus that genuinely has none — which passes
+    identically when the scanner is broken. Five separate one-line ways of
+    disabling it left the whole suite green. [E4, vacuity pass 2: F1]
+    """
     hits = []
-    for rel in _tracked():
-        if rel in ALLOWED:
+    for rel in files:
+        if rel in allowed:
             continue
-        path = ROOT / rel
+        path = root / rel
         if not path.is_file() or not _is_text(path):
             continue
         for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
             if pattern.search(line):
                 hits.append(f"{rel}:{n}")
+    return hits
+
+
+@pytest.mark.parametrize("what,pattern", sorted(FORBIDDEN.items()))
+def test_no_tracked_file_contains_owner_data(what: str, pattern: re.Pattern):
+    # This case owns its pattern: narrowing it until it stops catching its own
+    # sample fails here, not only in the sibling control test. [E4, pass 2: F2]
+    assert pattern.search(SAMPLES[what]), f"the {what} pattern matches nothing"
+    hits = _scan(ROOT, _tracked(), pattern, ALLOWED)
     assert not hits, f"{what} appears in tracked files: {', '.join(hits[:20])}"
 
 
@@ -113,10 +139,64 @@ def test_the_scan_actually_has_files_to_scan():
         assert rel in tracked, f"{rel} is not in the scanned set"
 
 
+def test_the_scanner_finds_leaks_that_are_really_there(tmp_path):
+    """The positive control: point the real scanner at a repository that does leak.
+
+    Every other assertion in this file is "no hits" over a corpus that has none,
+    and that shape passes just as cleanly when the scanner is broken. Pass 2 of
+    the vacuity audit planted a leak and then disabled the scanner five separate
+    ways — dropping `--others --exclude-standard`, allowlisting the leaking file,
+    `_is_text` returning `False`, `pattern.search(...)` replaced by `False`, and
+    narrowing the walk to `src/`. All 784 tests stayed green for each. The first
+    of those is the exact hole E4 found and fixed, so the fix was one careless
+    revert away from being undone in silence.
+
+    The floor test below checks that the scan *enumerated* something. This checks
+    that it *reads, matches and reports* — the three things enumeration does not
+    cover. Four planted files, one per property:
+
+    - untracked, outside `src/`  — the two scope holes, and matching itself
+    - staged but never committed — `--cached` still counts
+    - binary containing the bytes — `_is_text` skips it rather than crashing
+    - allowlisted                — the allowlist is honoured, not ignored
+
+    Asserting the exact hit set rather than a count is deliberate: a scanner that
+    reports the right number of wrong files is still broken. [E4, pass 2: F1]
+    """
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    leak = SAMPLES["a macOS home directory"]
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "untracked_leak.md").write_text(f"see {leak}/notes\n")
+    (tmp_path / "staged_leak.txt").write_text(f"install into {leak}\n")
+    (tmp_path / "allowed_leak.md").write_text(f"deliberate: {leak}\n")
+    # Invalid UTF-8 around a real match, so a scanner that stops gating on
+    # `_is_text` raises `UnicodeDecodeError` here instead of quietly passing.
+    (tmp_path / "icon.bin").write_bytes(b"\xff\xfe" + leak.encode() + b"\x00\xff")
+
+    subprocess.run(["git", "-C", str(tmp_path), "add", "staged_leak.txt"], check=True)
+
+    hits = _scan(
+        tmp_path,
+        _tracked(tmp_path),
+        FORBIDDEN["a macOS home directory"],
+        {"allowed_leak.md"},
+    )
+    assert set(hits) == {"docs/untracked_leak.md:1", "staged_leak.txt:1"}, hits
+
+
 def test_the_allowlist_only_names_files_that_exist():
     """An allowlist entry for a deleted file is a hole nobody notices opening."""
     missing = [rel for rel in ALLOWED if not (ROOT / rel).is_file()]
     assert not missing, f"allowlisted but absent: {missing}"
+
+    # And an allowlist that grew is the cheapest way to make this file pass while
+    # meaning nothing, so growing it has to be a deliberate edit to this line
+    # rather than a one-word addition to a set. [E4, pass 2: F1]
+    assert {"tests/test_no_owner_data.py"} == ALLOWED, (
+        "a file was allowlisted out of the owner-data scan; if that is right, "
+        "say why here and change this assertion in the same commit"
+    )
 
 
 def test_the_patterns_would_actually_catch_something():
@@ -126,13 +206,8 @@ def test_the_patterns_would_actually_catch_something():
     exactly the shape that also passes when the search is broken. So: feed each
     pattern a string it must match. [E4]
     """
-    samples = {
-        "a macOS home directory": "/Users/someone/work/gitmemory",
-        "a Linux home directory": "/home/someone/work/gitmemory",
-        "the author's private memory tree": "~/memory/.claude-auto-memory/MEMORY.md",
-    }
-    assert samples.keys() == FORBIDDEN.keys(), "a pattern has no control sample"
-    for what, text in samples.items():
+    assert SAMPLES.keys() == FORBIDDEN.keys(), "a pattern has no control sample"
+    for what, text in SAMPLES.items():
         assert FORBIDDEN[what].search(text), f"the {what} pattern matches nothing"
 
     # And the other half of the control: the tilde-relative forms the scanner is

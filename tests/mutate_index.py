@@ -859,6 +859,70 @@ MUTANTS = [
     )""",
         "test_derived_mirrors_the_manifest_path_not_the_manifest_contents",
     ),
+    # --- E4 vacuity pass 2: the owner-data guard ---
+    #
+    # Pass 2 planted a leak and then disabled the scanner five separate ways.
+    # Each one left all 784 tests green, because every assertion in that file was
+    # "no hits" over a corpus that genuinely has none — the shape that passes
+    # identically when the search is broken. The first mutant below is the exact
+    # hole E4 found and fixed, so the fix was one revert away from being undone
+    # in silence. These five are the reason `_scan` is now a function and a
+    # fixture repository is scanned by it.
+    #
+    # None of these replacement strings may contain a real owner-shaped path: the
+    # scanner reads `mutate_index.py` too, and a mutant that trips it would turn
+    # every later row red. The pattern-narrowing mutant therefore edits the
+    # character class rather than writing a username.
+    (
+        "the owner-data scan sees untracked files",
+        "tests/test_no_owner_data.py",
+        """args = ["ls-files", "-z", "--cached", "--others", "--exclude-standard"]""",
+        """args = ["ls-files", "-z", "--cached"]""",
+        "test_the_scanner_finds_leaks_that_are_really_there",
+    ),
+    (
+        "the owner-data allowlist stays one file",
+        "tests/test_no_owner_data.py",
+        """ALLOWED = {"tests/test_no_owner_data.py"}""",
+        """ALLOWED = {"tests/test_no_owner_data.py", "src/gitmemory/daemon.py"}""",
+        "test_the_allowlist_only_names_files_that_exist",
+    ),
+    (
+        "the owner-data scan reads the files it enumerates",
+        "tests/test_no_owner_data.py",
+        """    try:
+        path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return False
+    return True""",
+        """    return False""",
+        "test_the_scanner_finds_leaks_that_are_really_there",
+    ),
+    (
+        "the owner-data scan actually matches",
+        "tests/test_no_owner_data.py",
+        """            if pattern.search(line):""",
+        """            if False:""",
+        "test_the_scanner_finds_leaks_that_are_really_there",
+    ),
+    (
+        "the owner-data scan covers the whole repository",
+        "tests/test_no_owner_data.py",
+        """    for rel in files:
+        if rel in allowed:""",
+        """    for rel in files:
+        if not rel.startswith("src/"):
+            continue
+        if rel in allowed:""",
+        "test_the_scanner_finds_leaks_that_are_really_there",
+    ),
+    (
+        "each owner-data pattern catches its own sample",
+        "tests/test_no_owner_data.py",
+        """    "a macOS home directory": re.compile(r"/Users/[a-z][a-z0-9._-]*/", re.I),""",
+        """    "a macOS home directory": re.compile(r"/Users/x[a-z0-9._-]*/", re.I),""",
+        "test_no_tracked_file_contains_owner_data",
+    ),
 ]
 
 
