@@ -513,11 +513,31 @@ def test_canonical_json_is_ascii_and_reparses_after_surrogates(tmp_path):
     With ensure_ascii off, surrogateescape'd bytes passed straight through and
     the committed "canonical JSON" was not valid UTF-8 — unparseable by us and
     by `jq`, which is the whole third-party-checkability claim.
+
+    The bad bytes go in `cwd`, not only in block text. The first version of this
+    test put them solely in the text, and `to_canonical` emits `content_sha256`
+    rather than the text — so the fixture's surrogates never reached the function
+    under test, and `ensure_ascii=False` left the whole suite green. `cwd` is a
+    field the canonical blob actually carries, and it is the realistic carrier:
+    a project directory named from a Latin-1 shell puts one invalid byte in every
+    record of the transcript. Same for `gitBranch`, `tool_name`, usage keys and
+    `compactMetadata`. [E4, vacuity pass 2: L1]
     """
-    raw = json.dumps(user("u1", "X")).encode().replace(b'"X"', b'"caf\xe9\xff"') + b"\n"
-    blob = check_adapter(cc, write(tmp_path, "s1.jsonl", raw)).to_canonical()
+    line = json.dumps(user("u1", "X", cwd="Y", gitBranch="Z")).encode()
+    raw = (
+        line.replace(b'"X"', b'"caf\xe9\xff"')
+        .replace(b'"Y"', b'"/tmp/caf\xe9"')
+        .replace(b'"Z"', b'"br-\xff"')
+    ) + b"\n"
+    session = check_adapter(cc, write(tmp_path, "s1.jsonl", raw))
+    assert "\udce9" in session.cwd, "the fixture never reached the field under test"
+
+    blob = session.to_canonical()
     blob.decode("ascii")  # must not raise
-    assert json.loads(blob)["turns"], "our own reader cannot read what we committed"
+    parsed = json.loads(blob)
+    assert parsed["turns"], "our own reader cannot read what we committed"
+    assert parsed["session"]["cwd"] == session.cwd, "the escaped path did not round-trip"
+    assert parsed["session"]["git_branch"] == session.git_branch
 
 
 @pytest.mark.parametrize(
@@ -684,13 +704,24 @@ def test_queue_operation_remove_keeps_its_human_text(tmp_path):
     assert s.skipped["no_identity:queue-operation"] == 1
 
 
-def test_image_payload_is_not_inlined_into_the_index(tmp_path):
+@pytest.mark.parametrize("size", [700, 50_000])
+def test_image_payload_is_not_inlined_into_the_index(tmp_path, size):
     """Base64 was 61.7% of all indexed text on the corpus before this branch.
 
     The bytes stay in `native` and in the raw segment; what the index gets is
     that an image of a given type and size was here.
+
+    Two sizes, because one was not enough. With only the 50,000-char payload,
+    deleting the whole `image` branch left the suite green: the block fell
+    through to the unknown-block path, where `_scrub`'s 1 KiB cap emitted
+    `[50000 chars elided]` — a string that happens to contain both `image/png`
+    and `50000`, so every assertion here passed by coincidence. A 700-char icon
+    is *under* that cap, so with the branch gone it is inlined verbatim: 778
+    chars of base64 straight into the index. Asserting the exact projection
+    rather than substrings closes the coincidence at both sizes.
+    [E4, vacuity pass 2: L2]
     """
-    blob = "A" * 50_000
+    blob = "A" * size
     line = {
         "type": "user",
         "uuid": "u1",
@@ -707,9 +738,41 @@ def test_image_payload_is_not_inlined_into_the_index(tmp_path):
     }
     s = check_adapter(cc, write(tmp_path, "s1.jsonl", [line]))
     b = s.turns[0].blocks[0]
-    assert blob not in b.text and len(b.text) < 100
-    assert "image/png" in b.text and "50000" in b.text
+    assert b.text == f"[image image/png {size} chars]"
     assert b.native["source"]["data"] == blob, "the payload must survive in native"
+
+
+def test_a_long_string_in_an_unknown_block_is_elided_at_the_cap(tmp_path):
+    """The cap itself, which nothing held down: `_ELIDE_OVER` could be anything.
+
+    Raising it to a billion left all 784 tests green, because the only fixture
+    with a payload big enough to trip it was the image one — and images never
+    reach `_scrub`. This uses an unrecognised block, which does, and pins both
+    sides of the boundary so the constant cannot drift in either direction.
+
+    The sizes are literals, not `cc._ELIDE_OVER ± 1`. The first draft derived
+    them from the constant, which made the test move with the mutant instead of
+    failing on it: a cap of a billion just meant a billion-character fixture.
+    A boundary test that reads the boundary it is checking tests nothing.
+    [E4, vacuity pass 2: L2]
+    """
+    assert cc._ELIDE_OVER == 1024, "the sizes below are literals; change both together"
+    over, under = "B" * 1025, "C" * 1024
+    line = {
+        "type": "user",
+        "uuid": "u1",
+        "sessionId": "s1",
+        "message": {
+            "role": "user",
+            "content": [{"type": "unheard_of", "big": over, "small": under}],
+        },
+    }
+    s = check_adapter(cc, write(tmp_path, "s1.jsonl", [line]))
+    text = s.turns[0].blocks[0].text
+    assert over not in text, "a payload past the cap was inlined"
+    assert f"[{len(over)} chars elided]" in text, "the marker must say how much was dropped"
+    assert under in text, "a payload at the cap must survive whole"
+    assert s.turns[0].blocks[0].native["big"] == over, "the payload must survive in native"
 
 
 def test_flatten_keeps_siblings_of_a_text_key(tmp_path):
@@ -1020,18 +1083,54 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
     `..` walked out of the projects root and glob metacharacters widened the
     search to whatever matched — both reachable by anything that can write a
     hook payload.
+
+    Every hostile id gets a file it *would* resolve to. Without them the fixture
+    had only `real.jsonl`, so `found is None` held for the wrong reason: there
+    was nothing on disk for `.hidden` or a 200-character id to find, and
+    deleting the charset guard outright left all eleven cases green. A guard
+    whose removal changes no answer is pinned by nothing. [E4, vacuity pass 2: L3]
     """
-    root = tmp_path / "projects" / "-Users-x-work"
+    projects = tmp_path / "projects"
+    root = projects / "-Users-x-work"
     root.mkdir(parents=True)
     (root / "real.jsonl").write_text("{}\n")
-    outside = tmp_path / "secrets.jsonl"
-    outside.write_text("{}\n")
-    found = cc.find_session(hostile, str(tmp_path / "projects"))
+    # A dotfile the glob will happily match once the leading-alphanumeric rule
+    # is gone, and an over-length name the {0,127} bound is the only thing
+    # refusing. Both are inside the root, so the containment check passes them.
+    (root / ".hidden.jsonl").write_text("{}\n")
+    (root / ("x" * 200 + ".jsonl")).write_text("{}\n")
+    # `projects/*/../secrets.jsonl` realpaths back inside the root, so traversal
+    # is not caught by the containment check either — only by the charset.
+    (projects / "secrets.jsonl").write_text("{}\n")
+    (tmp_path / "secrets.jsonl").write_text("{}\n")
+
+    found = cc.find_session(hostile, str(projects))
     assert found is None, f"escaped or widened the search: {found}"
 
 
+_TIE_SCRIPT = """
+import sys
+sys.path.insert(0, %r)
+from gitmemory.adapters import claude_code as cc
+print(cc.find_session("abc-123", sys.argv[1]) or "")
+"""
+
+
 def test_find_session_breaks_mtime_ties_deterministically(tmp_path):
-    """`max(set(...))` over equal mtimes returned whichever the set yielded first."""
+    """`max(set(...))` over equal mtimes returned whichever the set yielded first.
+
+    Run in fresh interpreters, because within one process set iteration order is
+    a constant and looping twenty times proves nothing. The first version of
+    this test did exactly that, and deleting the path tie-break from `newest()`
+    — the precise defect the docstring names — left the suite green. Across six
+    `PYTHONHASHSEED` values the mutant answers `-c -a -a -c -b -c`; the shipped
+    code answers `-c` every time.
+
+    The expected winner is spelled out rather than only checked for agreement:
+    six runs that agree on the wrong project are still six runs that agree.
+    With equal mtimes `max` falls through to the path, so the lexicographically
+    largest one wins. [E4, vacuity pass 2: L4]
+    """
     root = tmp_path / "projects"
     for proj in ("-a", "-b", "-c"):
         d = root / proj
@@ -1039,8 +1138,21 @@ def test_find_session_breaks_mtime_ties_deterministically(tmp_path):
         f = d / "abc-123.jsonl"
         f.write_text("{}\n")
         os.utime(f, (1000, 1000))  # identical mtimes: the tie-break is all there is
-    answers = {cc.find_session("abc-123", str(root)) for _ in range(20)}
-    assert len(answers) == 1, f"the same input gave different answers: {answers}"
+
+    src = str(pathlib.Path(__file__).resolve().parent.parent / "src")
+    answers = {
+        subprocess.run(
+            [sys.executable, "-c", _TIE_SCRIPT % src, str(root)],
+            capture_output=True,
+            text=True,
+            env=dict(os.environ, PYTHONHASHSEED=seed),
+            check=True,
+        ).stdout.strip()
+        for seed in ("0", "1", "2", "7", "12345", "random")
+    }
+    assert answers == {str(root / "-c" / "abc-123.jsonl")}, (
+        f"the same input gave different answers across interpreters: {answers}"
+    )
 
 
 def test_find_session_ignores_a_symlink_pointing_out_of_the_root(tmp_path):

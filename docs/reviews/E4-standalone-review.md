@@ -201,6 +201,15 @@ which no mutation can falsify without breaking collection, and the call is
 pinned by `test_gc_actually_invokes_git`; `test_corpus_is_present_or_explicitly_absent`
 is about a third-party fixture's presence and has no production line to mutate.
 
+> **Correction, vacuity pass 2 (D1).** The first half of that ruling is wrong as
+> written. "No mutation can falsify it" is only true of mutations that leave
+> `gc()` working: a one-character flag typo makes `gc()` raise, and this test
+> fails along with ten others. What the ruling should say is that *this* test
+> adds nothing the others do not already have — a no-op `gc()` is caught only by
+> `test_gc_actually_invokes_git`, and that second half is confirmed. The
+> distinction matters because "unfalsifiable" and "redundant" are different
+> verdicts, and only one of them is an argument for leaving a test alone.
+
 A second pass covers the 48, at HEAD rather than at `a9ad664`. **E4 is not
 signed off until it returns** — the audited files gave up seven silent findings,
 so declaring the unaudited ones clean on the strength of the audited ones is the

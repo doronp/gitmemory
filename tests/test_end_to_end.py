@@ -106,6 +106,17 @@ def test_a_compaction_fired_through_the_real_shim_lands_in_a_real_commit(world):
     _fire(home, "PreCompact", src)
     spooled = os.listdir(os.path.join(home, daemon.SPOOL))
     assert len(spooled) == 1 and spooled[0].endswith(".json"), spooled
+    # The seam: the shim writes the name, the watcher parses it, and nothing
+    # else in the system makes them agree. Without this line the test stayed
+    # green when the separator changed and `_event_of` started returning "" —
+    # a `PreCompact` that silently stops forcing a capture — because this
+    # fixture is a never-seen session, which captures regardless of the event.
+    # Six siblings caught it, so it was mis-attributed rather than unpinned,
+    # but the test named after the shim should be one of them.
+    # [E4, vacuity pass 2: A2]
+    assert daemon._event_of(spooled[0]) == "PreCompact", (
+        f"the shim's filename and the watcher's parse disagree: {spooled[0]}"
+    )
 
     result = _sweep(home)
 

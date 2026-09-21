@@ -923,6 +923,100 @@ MUTANTS = [
         """    "a macOS home directory": re.compile(r"/Users/x[a-z0-9._-]*/", re.I),""",
         "test_no_tracked_file_contains_owner_data",
     ),
+    # --- E4 vacuity pass 2: canonical JSON ---
+    #
+    # `ensure_ascii=True` is what makes the committed blob valid UTF-8 when the
+    # transcript is not. Both of these survived pass 2, alone and together,
+    # because the only fixture with bad bytes put them in block text — and
+    # `to_canonical` emits `content_sha256`, never the text. The fixture now
+    # carries them in `cwd` and `gitBranch`, which the blob does write.
+    (
+        "canonical JSON escapes non-ASCII",
+        "records.py",
+        """        obj, sort_keys=True, ensure_ascii=True, separators=(",", ":"), allow_nan=False
+    ).encode("ascii")""",
+        """        obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    ).encode("ascii")""",
+        "test_canonical_json_is_ascii_and_reparses_after_surrogates",
+    ),
+    (
+        "canonical JSON is ASCII end to end",
+        "records.py",
+        """        obj, sort_keys=True, ensure_ascii=True, separators=(",", ":"), allow_nan=False
+    ).encode("ascii")""",
+        """        obj, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8", "surrogateescape")""",
+        "test_canonical_json_is_ascii_and_reparses_after_surrogates",
+    ),
+    # --- E4 vacuity pass 2: the index is not base64 ---
+    #
+    # The image branch and the generic elision cap are two independent defences
+    # and pass 2 removed each of them without a red test. The single 50,000-char
+    # fixture covered neither: deleting the branch let `_scrub` answer
+    # "[50000 chars elided]", which satisfied every substring assertion by
+    # accident, and raising the cap was invisible because no non-image fixture
+    # was ever big enough to reach it. The adapter is addressed by repo-relative
+    # path because a bare name resolves inside the package root.
+    (
+        "an image payload never reaches the index",
+        "src/gitmemory/adapters/claude_code.py",
+        # The branch is disabled rather than deleted, so the block falls through
+        # to the unknown-block path exactly as it did when pass 2 removed it.
+        """        elif kind == "image":""",
+        """        elif False:""",
+        "test_image_payload_is_not_inlined_into_the_index",
+    ),
+    (
+        "the elision cap is a cap",
+        "src/gitmemory/adapters/claude_code.py",
+        """_ELIDE_OVER = 1024""",
+        """_ELIDE_OVER = 1_000_000_000""",
+        "test_a_long_string_in_an_unknown_block_is_elided_at_the_cap",
+    ),
+    # --- E4 vacuity pass 2: the untrusted session id ---
+    #
+    # `session_id` arrives in a hook payload. The charset guard is the only
+    # thing between that payload and a glob, and pass 2 deleted it with the
+    # whole suite green — the fixture had nothing on disk that a guard-less run
+    # could find, so eleven hostile ids all returned None for the wrong reason.
+    #
+    # `_glob.escape` is a genuine EQUIVALENT mutant and is deliberately not
+    # listed: the charset the guard admits contains no glob metacharacter, so
+    # removing the escape changes no answer while the guard stands. That is
+    # defence in depth, and the honest statement is that its value is
+    # conditional on the guard being wrong — which is exactly why the guard
+    # itself now has a row. Remove both and `find_session("*")` returns an
+    # arbitrary other project's transcript. [E4, vacuity pass 2: L3, D3]
+    (
+        "an untrusted session id is charset-checked",
+        "src/gitmemory/adapters/claude_code.py",
+        """    if not _SESSION_ID_RE.match(session_id or ""):
+        return None""",
+        """    if not session_id:
+        return None""",
+        "test_find_session_refuses_a_hostile_id",
+    ),
+    (
+        # The docstring on `newest` names this exact defect, and until L4 the
+        # test that cited it looped inside one process — where set iteration
+        # order never changes, so the tie-break never had to do anything.
+        "an mtime tie is broken by path, not by set order",
+        "src/gitmemory/adapters/claude_code.py",
+        """            return (os.path.getmtime(p), p)""",
+        """            return (os.path.getmtime(p), 0)""",
+        "test_find_session_breaks_mtime_ties_deterministically",
+    ),
+    (
+        # The shim and the watcher agree on a filename and on nothing else.
+        # Change the separator and `_event_of` returns "", so a PreCompact
+        # stops forcing — caught by six siblings, but not by the test named
+        # after the shim until A2 added a line for it.
+        "the shim and the watcher agree on the record name",
+        "hook/gitmemory-hook.sh",
+        """B="$H/spool/${P}-${E}\"""",
+        """B="$H/spool/${P}_${E}\"""",
+        "test_a_compaction_fired_through_the_real_shim_lands_in_a_real_commit",
+    ),
 ]
 
 

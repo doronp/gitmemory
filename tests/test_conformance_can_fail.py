@@ -154,8 +154,15 @@ def _reorder_by_timestamp(s: Session) -> Session:
 def _cover_the_tracks(s: Session) -> Session:
     """Drop a turn *and* adjust the input count so the books still balance.
 
-    The accounting identity alone cannot see this — it is self-consistent. Only
-    the independent recount in the conformance suite can.
+    The accounting identity alone cannot see this — it is self-consistent.
+
+    An earlier version of this docstring said "only the independent recount in
+    the conformance suite can", and that is not what the suite does. Vacuity
+    pass 2 removed the recount alone: still caught. The byte-order rule alone:
+    still caught. The seq-density check holds it too. Only removing the recount
+    *and* the byte-order rule together lets this mutant through. Three
+    overlapping checks is the right answer for a mutant this quiet — the
+    docstring was just claiming credit for one of them. [E4, vacuity pass 2: D2]
     """
     del s.turns[7]
     s.records_seen -= 1
