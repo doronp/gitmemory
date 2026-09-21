@@ -46,6 +46,36 @@ class LineTooLong(ValueError):
     """
 
 
+class LineTruncated(ValueError):
+    """A line that yielded objects, then stopped parsing with bytes to spare.
+
+    A parse failure mid-line abandons the rest of that line: there is no
+    resynchronisation point in concatenated JSON that isn't a guess, so the
+    reader stops. That is the right call and it is not the finding. The
+    finding is that it used to be indistinguishable from a line that simply
+    failed to parse — same `json_decode_error`, count of one, and the
+    accounting identity balances either way.
+
+    Measured: a 844-byte transcript whose single line held five well-formed
+    objects and one truncated fragment produced `records_seen=2`, one turn and
+    one skip. 685 bytes — 81% of the file — left no trace, and every check in
+    `conformance.py` passed.
+
+    Raised only when the line already yielded at least one object, because
+    that is the case where content demonstrably followed the failure. A line
+    that fails at offset zero is an ordinary bad line and stays one.
+    [E7 parsing-F2]
+    """
+
+    def __init__(self, lineno: int, residual: int, cause: Exception) -> None:
+        super().__init__(f"line {lineno} stopped parsing with {residual} bytes left: {cause}")
+        self.lineno = lineno
+        # Failure point to end of physical line, terminator included — the
+        # number as the reader has it, with no copy taken to trim it.
+        self.residual = residual
+        self.cause = cause
+
+
 def iter_records(
     path: str,
     on_error: Callable[[int, Exception], None] | None = None,
@@ -109,6 +139,7 @@ def iter_records(
             # CPU on input a transcript chooses. Carrying the cursor is O(N) and
             # yields byte-identical offsets. [E3]
             byte_pos = 0
+            yielded = 0
             while pos < len(text):
                 ws = pos
                 while pos < len(text) and text[pos] in " \t\r\n":
@@ -126,11 +157,20 @@ def iter_records(
                 # an append-only store has to survive. [E2]
                 except (ValueError, RecursionError) as e:
                     if on_error:
-                        on_error(lineno, e)
+                        # The residual is what the reader is choosing not to
+                        # look at, and it knows the number exactly. Reporting
+                        # it is the difference between "a line failed" and "a
+                        # line failed and took 685 bytes with it". [E7
+                        # parsing-F2]
+                        on_error(
+                            lineno,
+                            LineTruncated(lineno, len(raw) - byte_pos, e) if yielded else e,
+                        )
                     break
                 byte_len = len(text[pos:end].encode("utf-8", "surrogateescape"))
                 yield Record(lineno, this_start + byte_pos, byte_len, obj)
                 pos, byte_pos = end, byte_pos + byte_len
+                yielded += 1
 
 
 def read_span(path: str, offset: int, length: int) -> bytes:

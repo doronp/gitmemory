@@ -1522,3 +1522,48 @@ def test_a_refused_line_is_named_not_folded_into_a_decode_error(tmp_path, monkey
     assert [t.uuid for t in s.turns] == ["u1", "u3"]
     assert s.skipped == {"line_too_long": 1, "json_decode_error": 1}
     assert len(s.turns) + sum(s.skipped.values()) == s.records_seen
+
+
+# --- E7 parsing-F2: a line that stopped parsing, and took the rest with it ---
+
+
+def test_a_fused_line_that_stops_parsing_says_how_much_it_dropped(tmp_path):
+    """One skip is one skip whether it cost sixty bytes or six hundred.
+
+    A parse failure part-way along a line abandons the rest of that line.
+    There is no resynchronisation point in concatenated JSON that isn't a
+    guess, so stopping is right. What was wrong is that it was indistinguish-
+    able from a line that simply failed: same `json_decode_error`, count of
+    one, identity balanced.
+
+    Measured through the CLI before the fix, on a transcript whose single line
+    held five well-formed objects and one truncated fragment: `records_seen=2`,
+    one turn stored, one skip named. 685 of 844 bytes — 81% of the file —
+    left no trace anywhere, and every conformance rule passed. That is a real
+    shape: a crashed write loses its newline and the next append fuses onto
+    it. [E7 parsing-F2]
+    """
+    good = [json.dumps(user(f"u{i}", f"turn {i}")) for i in range(1, 6)]
+    fragment = '{"type":"user","uuid":"uX","message":{"content":"boom'
+    fused = (good[0] + fragment + "".join(good[1:])).encode() + b"\n"
+    s = check_adapter(cc, write(tmp_path, "s.jsonl", fused))
+
+    assert [t.uuid for t in s.turns] == ["u1"]
+    assert s.skipped == {"json_decode_truncated": 1}
+    assert len(s.turns) + sum(s.skipped.values()) == s.records_seen
+
+
+def test_a_line_that_fails_at_its_first_byte_is_still_an_ordinary_bad_line(tmp_path):
+    """The new name has to mean something, so it cannot be every bad line.
+
+    A line that never yielded anything dropped nothing beyond itself, and
+    calling that `json_decode_truncated` would make the counter say "content
+    was lost past a parse failure" on every malformed transcript — which is
+    the same as saying nothing. Raised only when the line already yielded, so
+    the name tracks the thing it claims. [E7 parsing-F2]
+    """
+    body = json.dumps(user("u1", "hello")).encode()
+    s = check_adapter(cc, write(tmp_path, "s.jsonl", b"{not json}\n" + body + b"\n"))
+
+    assert [t.uuid for t in s.turns] == ["u1"]
+    assert s.skipped == {"json_decode_error": 1}

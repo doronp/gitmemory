@@ -2387,3 +2387,33 @@ def test_a_blank_line_is_still_skipped_without_copying_it(tmp_path):
     assert [r.obj for r in records] == [{"i": 0}, {"i": 1}]
     assert records[1].offset == len(b'{"i":0}\n\n   \n\t\n\x0b\n\x0c\n\r\n')
     assert errors == [], "a line of whitespace is not a line json refused"
+
+
+# --- E7 parsing-F2: the bytes a line stopped short of ---
+
+
+def test_the_reader_says_how_many_bytes_it_stopped_short_of(tmp_path):
+    """The reader knows the number exactly and used to throw it away.
+
+    `LineTruncated.residual` is the distance from the failure point to the end
+    of the physical line, terminator included — the number as the reader has
+    it, with no copy taken to trim it. The adapter only keeps the *name*, since
+    skip reasons are dictionary keys and a byte count in a key is unbounded
+    cardinality; the count is here for a caller that wants it. [E7 parsing-F2]
+    """
+    from gitmemory import jsonl
+
+    head = b'{"a":1}'
+    tail = b'{"b":  }' + b'{"c":3}' * 10
+    source = tmp_path / "s.jsonl"
+    source.write_bytes(head + tail + b"\n")
+
+    errors: list[Exception] = []
+    records = list(jsonl.iter_records(str(source), lambda _n, e: errors.append(e)))
+
+    assert [r.obj for r in records] == [{"a": 1}]
+    assert [type(e).__name__ for e in errors] == ["LineTruncated"]
+    assert errors[0].residual == len(tail) + 1  # + the newline
+    assert isinstance(errors[0].cause, ValueError) and not isinstance(
+        errors[0].cause, jsonl.LineTruncated
+    ), "the original decode error is kept, not replaced"

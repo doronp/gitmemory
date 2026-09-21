@@ -3274,9 +3274,48 @@ MUTANTS = [
     (
         "a line refused for its size is counted as a line json refused",
         "src/gitmemory/adapters/claude_code.py",
-        '        bump("line_too_long" if isinstance(exc, LineTooLong) else "json_decode_error")',
-        '        bump("json_decode_error")',
+        "        if isinstance(exc, LineTooLong):",
+        "        if False:",
         "test_a_refused_line_is_named_not_folded_into_a_decode_error",
+    ),
+    # --- E7 parsing-F2 ---
+    (
+        "a line that stopped part-way is an ordinary decode error again",
+        "jsonl.py",
+        "                            LineTruncated(lineno, len(raw) - byte_pos, e)"
+        " if yielded else e,",
+        "                            e,",
+        "test_a_fused_line_that_stops_parsing_says_how_much_it_dropped",
+    ),
+    (
+        "every failed line claims content was lost past it",
+        "jsonl.py",
+        "                            LineTruncated(lineno, len(raw) - byte_pos, e)"
+        " if yielded else e,",
+        "                            LineTruncated(lineno, len(raw) - byte_pos, e),",
+        "test_a_line_that_fails_at_its_first_byte_is_still_an_ordinary_bad_line",
+    ),
+    (
+        "the residual is the whole line, not the part never offered to the parser",
+        "jsonl.py",
+        "                            LineTruncated(lineno, len(raw) - byte_pos, e)"
+        " if yielded else e,",
+        "                            LineTruncated(lineno, len(raw), e) if yielded else e,",
+        "test_the_reader_says_how_many_bytes_it_stopped_short_of",
+    ),
+    (
+        "the adapter folds a truncated line back into json_decode_error",
+        "src/gitmemory/adapters/claude_code.py",
+        "        elif isinstance(exc, LineTruncated):",
+        "        elif False:",
+        "test_a_fused_line_that_stops_parsing_says_how_much_it_dropped",
+    ),
+    (
+        "the line floor never fires",
+        "tests/conformance.py",
+        "    assert s.records_seen >= lines, (",
+        "    assert True, (",
+        "test_the_line_floor_is_counted_without_the_reader",
     ),
 ]
 

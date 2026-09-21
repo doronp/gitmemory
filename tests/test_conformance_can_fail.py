@@ -236,3 +236,37 @@ def test_dropping_an_event_is_deliberately_not_a_contract_violation(tmp_path):
         return s
 
     check_adapter(_Mutant(drop_events), _fixture(tmp_path))  # passes, by design
+
+
+def test_the_line_floor_is_counted_without_the_reader(tmp_path, monkeypatch):
+    """"Independent" was a word in a docstring; this is the check for it.
+
+    `_input_is_recounted_independently` calls `iter_records`, so it agrees
+    with the reader by construction and can only catch drops the *adapter*
+    makes. A reader that loses input balances against itself, and the whole
+    accounting contract goes quiet. `_every_line_produced_a_record` is the
+    half that shares nothing: a floor of one record per non-blank physical
+    line, counted with no JSON parsing at all.
+
+    Proved two ways, because the shared-reader bug is exactly the kind a
+    reading cannot rule out: the floor fires on a session that under-reports,
+    and it still works with `iter_records` replaced by something that raises.
+    [E7 parsing-F2]
+    """
+    import conformance
+
+    from gitmemory import jsonl
+
+    path = _fixture(tmp_path)
+    honest = cc.parse(path)
+
+    def explode(*a, **kw):
+        raise AssertionError("the floor called the code it is checking")
+
+    monkeypatch.setattr(jsonl, "iter_records", explode)
+    conformance._every_line_produced_a_record(honest, path)
+
+    short = cc.parse(path)
+    short.records_seen -= 1
+    with pytest.raises(AssertionError, match="produced"):
+        conformance._every_line_produced_a_record(short, path)

@@ -33,6 +33,7 @@ def check_adapter(module, path: str) -> Session:
     if getattr(module, "SPANS_ARE_FILE_BYTES", _SPANS_DEFAULT):
         _spans_are_real(session, path)
         _input_is_recounted_independently(session, path)
+        _every_line_produced_a_record(session, path)
     _nothing_is_silently_dropped(session)
     _canonical_json_is_valid_and_reparses(session)
     _reparse_is_byte_identical(module, path, session)
@@ -127,6 +128,11 @@ def _input_is_recounted_independently(s: Session, path: str) -> None:
     vacuous: an adapter returning an empty Session reports zero records read,
     zero turns and zero skips, and balances perfectly. The recount is the only
     number in the contract that the adapter does not supply.
+
+    What this cannot see: it calls `iter_records`, so it agrees with the
+    reader by construction and catches only drops the *adapter* makes. A
+    reader that loses input balances against itself. `_every_line_produced_a_
+    record` is the half that does not share the reader. [E7 parsing-F2]
     """
     from gitmemory.jsonl import iter_records
 
@@ -135,6 +141,33 @@ def _input_is_recounted_independently(s: Session, path: str) -> None:
     assert s.records_seen == n + len(errors), (
         f"adapter says it read {s.records_seen} records; the file holds "
         f"{n + len(errors)} ({n} decoded + {len(errors)} undecodable)"
+    )
+
+
+def _every_line_produced_a_record(s: Session, path: str) -> None:
+    """A floor on `records_seen` counted without the code under test.
+
+    Every non-blank physical line has to become at least one record: an object
+    the reader yielded, or an error it reported. A line that becomes neither
+    has vanished, and the accounting identity above cannot say so, because the
+    only other count in it comes from the same reader.
+
+    A floor rather than an equality, deliberately: one physical line can hold
+    several concatenated objects — real Claude Code transcripts do this — so
+    the exact number is only knowable by reimplementing the reader, and a
+    recount that is a second copy of the thing it checks is two bugs waiting
+    to agree. The floor needs no JSON parsing at all, which is what makes it
+    independent.
+
+    Blank is `strip()`, not `isspace()`, for the same reason: same six ASCII
+    whitespace bytes, arrived at by a different call. [E7 parsing-F2]
+    """
+    with open(path, "rb") as fh:
+        lines = sum(1 for raw in fh if raw.strip())
+    assert s.records_seen >= lines, (
+        f"the file has {lines} non-blank lines but the adapter saw only "
+        f"{s.records_seen} records; {lines - s.records_seen} line(s) produced "
+        f"neither an object nor a named skip"
     )
 
 
