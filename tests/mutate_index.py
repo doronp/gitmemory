@@ -414,6 +414,79 @@ MUTANTS = [
         '    gold_by_stem = json.loads((fixture_dir / "gold.json").read_text())',
         "test_the_scorer_runs_with_the_corpus_generator_unimportable",
     ),
+    # A standalone review of the gate found six defects in it. Each fix gets a
+    # mutant here, because a scorer nobody can break is a scorer nobody is
+    # holding in place — and this is the code that decides whether E5 passed.
+    # [E5:R]
+    (
+        "a prediction is credited to gold in a different transcript",
+        "bench/gate.py",
+        '    return [(kind, f"{scope}\\x00{ref}") for kind, ref in (_pair(d) for d in decisions)]',
+        "    return [_pair(d) for d in decisions]",
+        "test_a_prediction_cannot_satisfy_gold_planted_in_another_transcript",
+    ),
+    (
+        "a green test run counts as a failure again",
+        "bench/gate.py",
+        "    m = _EXIT_CODE.search(block.text)",
+        '    if "failed" in block.text or "Exit code 1" in block.text:\n'
+        "        return True\n"
+        "    m = _EXIT_CODE.search(block.text)",
+        "test_a_green_test_run_is_not_a_failure_and_a_red_one_is",
+    ),
+    (
+        "predictions outside every slice go back to being dropped in silence",
+        "bench/gate.py",
+        '        "predicted": len(predicted) - sum(len(b["preds"]) for b in buckets.values()),',
+        '        "predicted": 0,',
+        "test_predictions_the_slices_cannot_hold_are_reported",
+    ),
+    (
+        "gold may name any block of the right turn",
+        "bench/decisions.py",
+        "        if block.text != text:",
+        "        if False:",
+        "test_gold_must_name_the_block_that_holds_the_planted_text",
+    ),
+    (
+        "an unlabelled transcript is scored past in silence",
+        "bench/gate.py",
+        "    if on_disk != set(gold_by_stem):",
+        "    if False:",
+        "test_a_transcript_with_no_label_is_refused_rather_than_skipped",
+    ),
+    (
+        "a string decision is read as a two-character pair",
+        "bench/gate.py",
+        "    if isinstance(d, (tuple, list)) and len(d) == 2:\n        return (d[0], d[1])",
+        "    if True:\n        return (d[0], d[1])",
+        "test_a_decision_that_is_neither_a_pair_nor_an_object_is_named",
+    ),
+    (
+        "an empty slice prints as a slice that scored zero",
+        "bench/gate.py",
+        '            if not s["gold"]',
+        "            if False",
+        "test_a_slice_with_no_gold_does_not_read_as_a_failed_one",
+    ),
+    (
+        "any failure inside derive is reported as an unwritten extractor",
+        "bench/gate.py",
+        '    from gitmemory import derive\n\n    if not hasattr(derive, "decisions"):',
+        "    try:\n        from gitmemory.derive import decisions  # noqa: F401\n"
+        "    except ImportError:\n        derive = None\n    if derive is None:",
+        "test_a_derive_that_fails_to_import_is_not_reported_as_unwritten",
+    ),
+    (
+        "a stray file in the dump hands the author something extra",
+        "bench/fixture.py",
+        '    (out_dir / "gold.json").write_text('
+        'json.dumps(gold, indent=1, sort_keys=True) + "\\n")',
+        '    (out_dir / "meta.json").write_text(f"{split} {seed}\\n")\n'
+        '    (out_dir / "gold.json").write_text('
+        'json.dumps(gold, indent=1, sort_keys=True) + "\\n")',
+        "test_the_gold_labels_carry_no_hint_of_how_the_corpus_was_made",
+    ),
     (
         "a zero-variance difference gets a fabricated p of 0",
         "bench/score.py",

@@ -19,7 +19,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from bench.gate import get_decision_slice, post_failure_blocks, score_predictions, score_with_slices
+from bench.gate import (
+    get_decision_slice,
+    looks_failed,
+    post_failure_blocks,
+    scoped,
+    score_predictions,
+    score_with_slices,
+)
 from gitmemory import adapters
 from gitmemory.records import Session
 
@@ -573,8 +580,11 @@ TEST_SUCCESS_MESSAGES: list[str] = [
 @dataclass(frozen=True)
 class Case:
     transcript_bytes: bytes
-    # Recorded as a list of (uuid, block index, kind)
-    planted_decisions: list[tuple[str, int, str]]
+    # Recorded as (uuid, block index, kind, the exact text planted there).
+    # The text is what lets `resolve_gold_for_case` check that the id it
+    # resolves belongs to the block holding the decision, and not merely to
+    # some block of the right turn. [E5:R8]
+    planted_decisions: list[tuple[str, int, str, str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -630,7 +640,7 @@ def generate_session(rng: random.Random, session_idx: int, split: str) -> Case:
 
     planted_directives_data: list[str] = []
     line_objs: list[dict[str, Any]] = []
-    planted_decisions: list[tuple[str, int, str]] = []
+    planted_decisions: list[tuple[str, int, str, str]] = []
     last_uuid: str | None = None
     pending_turns: list[dict[str, Any]] = []
 
@@ -705,7 +715,7 @@ def generate_session(rng: random.Random, session_idx: int, split: str) -> Case:
                             {"type": "text", "text": text},
                         ],
                     }
-                    planted_decisions.append((turn_uuid, 1, "directive"))
+                    planted_decisions.append((turn_uuid, 1, "directive", text))
                 else:
                     if rng.random() < 0.5:
                         turn_obj["message"] = {
@@ -714,7 +724,7 @@ def generate_session(rng: random.Random, session_idx: int, split: str) -> Case:
                         }
                     else:
                         turn_obj["message"] = {"role": "user", "content": text}
-                    planted_decisions.append((turn_uuid, 0, "directive"))
+                    planted_decisions.append((turn_uuid, 0, "directive", text))
                 directives_planted += 1
 
             elif planted_directives_data and rng.random() < 0.25:
@@ -863,7 +873,7 @@ def generate_session(rng: random.Random, session_idx: int, split: str) -> Case:
                 )
                 reversal_text = format_template(rng, split, tpl)
                 reversal_turn_uuid = deterministic_uuid(f"session_{session_idx}_turn_{t_idx + 2}")
-                planted_decisions.append((reversal_turn_uuid, 0, "reversal"))
+                planted_decisions.append((reversal_turn_uuid, 0, "reversal", reversal_text))
                 reversals_planted += 1
 
                 retry_tu_id = f"tu_{session_idx}_{t_idx}_retry"
@@ -925,7 +935,7 @@ def generate_session(rng: random.Random, session_idx: int, split: str) -> Case:
                     "usage": generate_assistant_usage(rng),
                     "model": "claude-3-5-sonnet",
                 }
-                planted_decisions.append((turn_uuid, 0, "reversal"))
+                planted_decisions.append((turn_uuid, 0, "reversal", text))
                 reversals_planted += 1
 
             elif rng.random() < 0.25 and (num_turns - t_idx) >= 4:
@@ -1115,22 +1125,23 @@ def generate(seed: int, n: int, split: str | None = None) -> list[Case]:
 
 def resolve_gold_for_case(case: Case) -> list[Decision]:
     """Resolve content-derived Block.block_ids for planted decisions using the ordinary adapter."""
-    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
-        tmp.write(case.transcript_bytes)
-        tmp_path = tmp.name
-
+    tmp_path = None
     try:
+        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
+            tmp_path = tmp.name
+            tmp.write(case.transcript_bytes)
         adapter = adapters.get("claude-code")
         session = adapter.parse(tmp_path)
     finally:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp_path)
+        if tmp_path is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp_path)
 
     # Map turn UUID to parsed turn object
     turn_by_uuid = {t.uuid: t for t in session.turns if t.uuid}
     resolved = []
 
-    for uuid, block_idx, kind in case.planted_decisions:
+    for uuid, block_idx, kind, text in case.planted_decisions:
         if uuid not in turn_by_uuid:
             raise ValueError(f"Planted turn UUID {uuid!r} not found in parsed session turns.")
         turn = turn_by_uuid[uuid]
@@ -1140,6 +1151,18 @@ def resolve_gold_for_case(case: Case) -> list[Decision]:
                 f"(0-{len(turn.blocks) - 1}) for turn UUID {uuid!r}."
             )
         block = turn.blocks[block_idx]
+        # The index alone is not enough. A turn in the multi-block families
+        # opens with a content-free lead-in and carries the directive in the
+        # second block, so an off-by-one resolves to a real, present, plausible
+        # block id that labels the wrong sentence — 52 of 180 dev directives,
+        # with the whole suite green, because every downstream check asks only
+        # whether the id exists. The planted text is what makes that loud.
+        # [E5:R8]
+        if block.text != text:
+            raise ValueError(
+                f"Planted decision at turn {uuid!r} block {block_idx} resolves to a block "
+                f"holding {block.text!r}, not the planted {text!r}."
+            )
         resolved.append(Decision(kind=kind, source_ref=block.block_id))
 
     return resolved
@@ -1152,23 +1175,32 @@ def run_gate(
     n: int,
 ) -> dict[str, Any]:
     """Score an extractor over a whole split, overall and per slice."""
-    all_gold: list[Decision] = []
-    all_preds: list[Decision] = []
+    all_gold: list[Any] = []
+    all_preds: list[Any] = []
     block_is_post_failure: dict[str, bool] = {}
 
-    for case in generate(seed=seed, n=n, split=split):
-        all_gold.extend(resolve_gold_for_case(case))
+    # Scoped by case index, for the reason `bench.gate.scoped` gives: block ids
+    # are content-derived, so a replayed turn has the same id in two sessions
+    # and a flat pool credits a prediction against one to gold in the other.
+    # [E5:R1]
+    for i, case in enumerate(generate(seed=seed, n=n, split=split)):
+        scope = f"{i:03d}"
+        all_gold.extend(scoped(resolve_gold_for_case(case), scope))
 
-        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
-            tmp.write(case.transcript_bytes)
-            tmp_path = tmp.name
+        tmp_path = None
         try:
+            with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
+                tmp_path = tmp.name
+                tmp.write(case.transcript_bytes)
             session = adapters.get("claude-code").parse(tmp_path)
-            block_is_post_failure.update(post_failure_blocks(session))
-            all_preds.extend(extractor(session))
+            block_is_post_failure.update(
+                {f"{scope}\x00{k}": v for k, v in post_failure_blocks(session).items()}
+            )
+            all_preds.extend(scoped(extractor(session), scope))
         finally:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp_path)
+            if tmp_path is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp_path)
 
     return score_with_slices(all_preds, all_gold, block_is_post_failure)
 
@@ -1186,9 +1218,7 @@ def baseline_naive(session: Session) -> list[Decision]:
         is_failed_tool = False
         if turn.role == "user":
             for block in turn.blocks:
-                if block.kind == "tool_result" and (
-                    "failed" in block.text or "Exit code 1" in block.text
-                ):
+                if block.kind == "tool_result" and looks_failed(block):
                     is_failed_tool = True
                     break
 
@@ -1226,9 +1256,7 @@ def baseline_leak(session: Session) -> list[Decision]:
 
         is_failed_tool = False
         for block in prev_turn.blocks:
-            if block.kind == "tool_result" and (
-                "failed" in block.text or "Exit code 1" in block.text
-            ):
+            if block.kind == "tool_result" and looks_failed(block):
                 is_failed_tool = True
                 break
 

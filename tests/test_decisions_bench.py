@@ -186,7 +186,7 @@ def test_corpus_size_and_gold_count():
         if len(case.planted_decisions) == 0:
             dev_zero_sessions += 1
 
-        for _uuid, block_idx, kind in case.planted_decisions:
+        for _uuid, block_idx, kind, _text in case.planted_decisions:
             if kind == "directive" and block_idx >= 1:
                 has_block_idx_at_least_1 = True
 
@@ -215,7 +215,7 @@ def test_corpus_size_and_gold_count():
         if len(case.planted_decisions) == 0:
             test_zero_sessions += 1
 
-        for _uuid, block_idx, kind in case.planted_decisions:
+        for _uuid, block_idx, kind, _text in case.planted_decisions:
             if kind == "directive" and block_idx >= 1:
                 has_block_idx_at_least_1_test = True
 
@@ -258,76 +258,16 @@ def test_baseline_leak_on_corpus():
     assert score_leak["passed"] is False
 
 
-def test_disjoint_pools_equality():
-    """Verify that opening texts, first commands, and tool errors have equal sets of values."""
-    for split, seed in [("dev", 42), ("test", 20042)]:
-        cases = generate(seed=seed, n=100, split=split)
-        gold_openings = set()
-        gold_commands = set()
-        gold_errors = set()
-
-        dist_openings = set()
-        dist_commands = set()
-        dist_errors = set()
-
-        for case in cases:
-            with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
-                tmp.write(case.transcript_bytes)
-                tmp_path = tmp.name
-            try:
-                session = adapters.get("claude-code").parse(tmp_path)
-            finally:
-                with contextlib.suppress(OSError):
-                    os.unlink(tmp_path)
-
-            for i in range(len(session.turns) - 3):
-                t0 = session.turns[i]
-                t1 = session.turns[i + 1]
-                t2 = session.turns[i + 2]
-                t3 = session.turns[i + 3]
-
-                # Shape of a 4-turn sequence
-                if t0.role != "assistant" or len(t0.blocks) < 2:
-                    continue
-                if t0.blocks[0].kind != "text" or t0.blocks[1].kind != "tool_use":
-                    continue
-
-                if t1.role != "user" or len(t1.blocks) < 1 or t1.blocks[0].kind != "tool_result":
-                    continue
-
-                if t2.role != "assistant" or len(t2.blocks) < 2:
-                    continue
-                if t2.blocks[0].kind != "text" or t2.blocks[1].kind != "tool_use":
-                    continue
-
-                if t3.role != "user" or len(t3.blocks) < 1 or t3.blocks[0].kind != "tool_result":
-                    continue
-
-                if "Exit code 0" not in t3.blocks[0].text:
-                    continue
-
-                op = t0.blocks[0].text
-                cmd = t0.blocks[1].text
-                if cmd.startswith("command: "):
-                    cmd = cmd[len("command: ") :]
-                err = t1.blocks[0].text
-
-                f_cmd = t2.blocks[1].text
-                if f_cmd.startswith("command: "):
-                    f_cmd = f_cmd[len("command: ") :]
-
-                if cmd == f_cmd:
-                    dist_openings.add(op)
-                    dist_commands.add(cmd)
-                    dist_errors.add(err)
-                else:
-                    gold_openings.add(op)
-                    gold_commands.add(cmd)
-                    gold_errors.add(err)
-
-        assert gold_openings == dist_openings, f"Opening text pool inequality in {split}"
-        assert gold_commands == dist_commands, f"First command pool inequality in {split}"
-        assert gold_errors == dist_errors, f"Tool error content pool inequality in {split}"
+# `test_disjoint_pools_equality` stood here and has been deleted rather than
+# repaired. It labelled a 4-turn window gold iff the retried command changed,
+# which is not what gold means: the generator keeps the command in a quarter of
+# gold windows and changes it in a quarter of distractor windows, so on dev it
+# mislabelled 23 gold windows as distractor and 110 distractor windows as gold.
+# Gold values therefore landed on both sides of its partition and set-equality
+# held no matter what leaked — a constant string only gold windows ever use
+# passed it and failed `test_general_leak_check`, which walks the same leaves
+# off the real gold block ids and is a strict superset. A test that passes for
+# a reason other than the one it is named for is worse than no test. [E5:R9]
 
 
 def walk_leaves(obj, leaves: list[str]) -> None:
@@ -455,7 +395,7 @@ def test_resolve_gold_raises_on_unresolvable_plant():
     # Non-existent turn UUID
     bad_case_uuid = Case(
         transcript_bytes=valid_case.transcript_bytes,
-        planted_decisions=[("non-existent-uuid-12345", 0, "directive")],
+        planted_decisions=[("non-existent-uuid-12345", 0, "directive", "anything")],
     )
     with pytest.raises(ValueError, match="Planted turn UUID .* not found"):
         resolve_gold_for_case(bad_case_uuid)
@@ -473,10 +413,36 @@ def test_resolve_gold_raises_on_unresolvable_plant():
 
     bad_case_block = Case(
         transcript_bytes=valid_case.transcript_bytes,
-        planted_decisions=[(real_uuid, 99, "directive")],
+        planted_decisions=[(real_uuid, 99, "directive", "anything")],
     )
     with pytest.raises(ValueError, match="Planted block index .* out of range"):
         resolve_gold_for_case(bad_case_block)
+
+
+def test_gold_must_name_the_block_that_holds_the_planted_text():
+    """The two halves of the fixture — the bytes and the labels — can disagree
+    while every label still resolves. Re-pointing gold at block 0 of its own
+    turn mislabelled 52 of 180 dev directives onto a content-free lead-in, and
+    the whole suite stayed green: every other check asks only whether the id is
+    a block that exists, and the wrong block is still a block."""
+    cases = generate(seed=42, n=20, split="dev")
+    multi = [
+        (case, plant)
+        for case in cases
+        for plant in case.planted_decisions
+        if plant[1] != 0  # a turn whose decision is not in its first block
+    ]
+    assert multi, "the corpus no longer has a multi-block plant to check this against"
+
+    case, (uuid, block_idx, kind, text) = multi[0]
+    resolve_gold_for_case(case)  # the honest plant resolves
+
+    off_by_one = Case(
+        transcript_bytes=case.transcript_bytes,
+        planted_decisions=[(uuid, block_idx - 1, kind, text)],
+    )
+    with pytest.raises(ValueError, match="resolves to a block holding"):
+        resolve_gold_for_case(off_by_one)
 
 
 def test_corpus_sha256_checksums():
