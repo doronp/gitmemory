@@ -23,7 +23,7 @@ import math
 import os
 import re
 
-from ..jsonl import iter_records
+from ..jsonl import LineTooLong, iter_records
 from ..records import Block, Event, Session, Turn, canonical_json, sha256_text
 
 AGENT = "claude-code"
@@ -262,10 +262,13 @@ def parse(path: str) -> Session:
             reason = "other"
         skipped[reason] = skipped.get(reason, 0) + 1
 
-    def count_error(_lineno: int, _exc: Exception) -> None:
+    def count_error(_lineno: int, exc: Exception) -> None:
         nonlocal seen
         seen += 1
-        bump("json_decode_error")
+        # A line refused for its size is not a line `json` refused, and folding
+        # the two loses the only signal that content was dropped for a reason
+        # the reader chose rather than one the file forced. [E7 parsing-F4]
+        bump("line_too_long" if isinstance(exc, LineTooLong) else "json_decode_error")
 
     # Pass 1: decide what each line is, and find the session id. Nothing is
     # constructed yet — ids depend on the session id, which may first appear

@@ -1493,3 +1493,32 @@ def test_a_short_session_id_is_passed_through_untouched(tmp_path):
     uid = "3f2b9c14-7a55-4e0d-9d3e-1c6b8a204f77"
     lines = [{"type": "user", "uuid": "u0", "sessionId": uid, "message": {"content": "x"}}]
     assert cc.parse(write(tmp_path, "c.jsonl", lines)).session_id == uid
+
+
+def test_a_refused_line_is_named_not_folded_into_a_decode_error(tmp_path, monkeypatch):
+    """`skipped` is the contract that says nothing was swallowed silently.
+
+    A line refused for its size is not a line `json` refused, and one counter
+    for both loses the only signal that content was dropped for a reason the
+    reader chose rather than one the file forced. The accounting identity has
+    to keep holding either way — it is what makes the counter worth reading.
+    [E7 parsing-F4]
+    """
+    path = tmp_path / "s.jsonl"
+    with open(path, "wb") as fh:
+        fh.write(json.dumps(user("u1", "hello")).encode() + b"\n")
+        fh.write(b'{"type":"user","uuid":"u2","message":{"content":"' + b"A" * 9000 + b'"}}\n')
+        fh.write(b"{not json}\n")
+        fh.write(json.dumps(user("u3", "bye")).encode() + b"\n")
+
+    # The cap is lowered rather than the fixture grown: a genuine 32 MiB line
+    # would put half a second into every run of the suite to test a number.
+    original = cc.iter_records
+    monkeypatch.setattr(
+        cc, "iter_records", lambda p, on_error=None: original(p, on_error, max_line=4096)
+    )
+    s = check_adapter(cc, str(path))
+
+    assert [t.uuid for t in s.turns] == ["u1", "u3"]
+    assert s.skipped == {"line_too_long": 1, "json_decode_error": 1}
+    assert len(s.turns) + sum(s.skipped.values()) == s.records_seen

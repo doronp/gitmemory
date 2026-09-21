@@ -2293,3 +2293,97 @@ def test_a_store_the_daemon_really_made_is_not_caught_by_the_directory_check(hom
     transcript(src, 5, start=5)
     store.capture(src, "claude-code", "sess", home=home)
     assert store.verify(home) == []
+
+
+# --- E7 parsing-F4: one line the reader will not hold ----------------------
+
+
+def test_a_line_past_the_cap_is_refused_before_it_is_read(tmp_path):
+    """A physical line's length is chosen by whatever the agent fetched.
+
+    Everything an agent reads lands verbatim in the transcript, so a large HTTP
+    body pasted into a tool result is one line, and the reader copied it five
+    more times: measured in a fresh interpreter per run, a 33.6 MB line peaked
+    at 266 MB RSS and a 134.2 MB line at 1,002 MB — 7.5-7.9x. `index.build` and
+    `derive` both call `parse`, in the daemon.
+
+    The cap is checked by *reading* at most `max_line + 1` bytes, not by
+    measuring a line already in memory: the second is a cap that has already
+    been paid. The assertion is `tracemalloc`, not RSS — the allocator's
+    high-water mark is not a number a test can depend on, and Python-level
+    allocation is.
+
+    The reader keeps going. A long line that ended the iteration would let one
+    pasted payload truncate the transcript, which is worse than the memory.
+    """
+    from gitmemory import jsonl
+
+    cap = 1 << 20
+    source = tmp_path / "s.jsonl"
+    with open(source, "wb") as fh:
+        fh.write(b'{"i":0}\n')
+        fh.write(b'{"pad":"' + b"A" * (32 * cap) + b'"}\n')
+        fh.write(b'{"i":2}\n')
+
+    import tracemalloc
+
+    errors: list[Exception] = []
+    tracemalloc.start()
+    records = list(
+        jsonl.iter_records(str(source), on_error=lambda _n, e: errors.append(e), max_line=cap)
+    )
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+
+    assert [r.obj for r in records] == [{"i": 0}, {"i": 2}], "the rest of the file was lost"
+    assert [type(e).__name__ for e in errors] == ["LineTooLong"]
+    assert peak < 8 * cap, f"held {peak} bytes for a {32 * cap}-byte line, cap {cap}"
+
+
+def test_the_offset_after_a_refused_line_is_still_true(tmp_path):
+    """The drain has to advance the cursor by the whole physical line.
+
+    Offsets are the store's only ordering authority and what `recall` seeks to.
+    A drain that forgot the bytes it skipped would leave every following record
+    pointing into the middle of the payload — and `conformance._spans_are_real`
+    would then read something that is not a JSON object.
+    """
+    from gitmemory import jsonl
+
+    cap = 4096
+    source = tmp_path / "s.jsonl"
+    long_line = b'{"pad":"' + b"A" * (4 * cap) + b'"}\n'
+    tail = b'{"i":2}\n'
+    with open(source, "wb") as fh:
+        fh.write(b'{"i":0}\n' + long_line + tail)
+
+    rec = [r for r in jsonl.iter_records(str(source), max_line=cap) if r.obj == {"i": 2}][0]
+    assert rec.offset == 8 + len(long_line)
+    assert jsonl.read_span(str(source), rec.offset, rec.length) == tail.rstrip(b"\n")
+
+
+def test_a_blank_line_is_still_skipped_without_copying_it(tmp_path):
+    """`raw.strip()` was a whole copy of the line to answer "is it empty?".
+
+    `isspace` answers it in place, and the two agree on every ASCII whitespace
+    byte — including the ones nobody types. This is the test that says so,
+    because "equivalent" was an argument, not a measurement.
+
+    The records and the offsets are not what discriminates — a narrower blank
+    test still yields both objects at the right offsets, because the offsets
+    come off `line_start`, which is counted before anything looks at content.
+    What discriminates is `errors`: a vertical tab is whitespace to `strip` and
+    to `isspace`, and is not whitespace to JSON. Miss it and the line reaches
+    `raw_decode`, which reports a decode error for a line that holds nothing.
+    """
+    from gitmemory import jsonl
+
+    source = tmp_path / "s.jsonl"
+    with open(source, "wb") as fh:
+        fh.write(b'{"i":0}\n\n   \n\t\n\x0b\n\x0c\n\r\n{"i":1}\n')
+
+    errors: list[Exception] = []
+    records = list(jsonl.iter_records(str(source), lambda _n, e: errors.append(e)))
+    assert [r.obj for r in records] == [{"i": 0}, {"i": 1}]
+    assert records[1].offset == len(b'{"i":0}\n\n   \n\t\n\x0b\n\x0c\n\r\n')
+    assert errors == [], "a line of whitespace is not a line json refused"

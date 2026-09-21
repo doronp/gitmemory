@@ -3234,6 +3234,50 @@ MUTANTS = [
         "    if False:\n        return value",
         "test_a_short_session_id_is_passed_through_untouched",
     ),
+    # --- E7 parsing-F4 ---
+    (
+        "there is no cap on a physical line",
+        "jsonl.py",
+        "            if len(raw) > max_line:",
+        "            if False:",
+        "test_a_line_past_the_cap_is_refused_before_it_is_read",
+    ),
+    (
+        # The drain, not the cap: a refused line whose bytes are not counted
+        # leaves every later offset pointing into the middle of the payload.
+        "the refused line's bytes are not counted, so later offsets are wrong",
+        "jsonl.py",
+        "                    line_start += len(raw)\n                if on_error:",
+        "                if on_error:",
+        "test_the_offset_after_a_refused_line_is_still_true",
+    ),
+    (
+        "a refused line ends the read instead of skipping",
+        "jsonl.py",
+        "                if on_error:\n"
+        "                    on_error(lineno, LineTooLong"
+        '(f"line {lineno} exceeds {max_line} bytes"))\n'
+        "                continue",
+        "                if on_error:\n"
+        "                    on_error(lineno, LineTooLong"
+        '(f"line {lineno} exceeds {max_line} bytes"))\n'
+        "                break",
+        "test_a_line_past_the_cap_is_refused_before_it_is_read",
+    ),
+    (
+        "isspace is not strip after all",
+        "jsonl.py",
+        "            if raw.isspace():",
+        '            if raw in (b"\\n", b""):',
+        "test_a_blank_line_is_still_skipped_without_copying_it",
+    ),
+    (
+        "a line refused for its size is counted as a line json refused",
+        "src/gitmemory/adapters/claude_code.py",
+        '        bump("line_too_long" if isinstance(exc, LineTooLong) else "json_decode_error")',
+        '        bump("json_decode_error")',
+        "test_a_refused_line_is_named_not_folded_into_a_decode_error",
+    ),
 ]
 
 
