@@ -190,8 +190,8 @@ narrower than "the blind is broken, the number is worthless":
 
 So, restoration, both parts required before the scored run:
 
-1. **Fresh surface.** Round 3 regenerates all four template sets and both filler
-   vocabularies. The forms the reviewer read do not appear in the graded corpus.
+1. **Fresh surface.** Round 2 of the corpus regenerates all four template sets
+   and both filler vocabularies. The forms the reviewer read do not appear in the graded corpus.
 2. **Fresh author.** The extractor is written by an agent that has not read
    `bench/`. It may run the generator and look at the sessions it emits — that is
    the `dev` split doing its job — but not the source that produced them. The
