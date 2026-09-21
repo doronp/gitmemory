@@ -318,7 +318,19 @@ def test_a_bare_filename_in_a_tool_argument_lands_in_the_paths_column(home, src)
 def test_a_wildcard_in_a_query_is_a_word_not_a_prefix_scan(home, src):
     """`hel*` unhandled is an FTS5 prefix query over the whole corpus. What
     stops it is tokenising to `\\w+` — the star is not a word character, so it
-    never reaches MATCH. Quoting is a second, independent guard; see below."""
+    never reaches MATCH. Quoting is a second, independent guard; see below.
+
+    Two guards, and this test pins neither on its own: drop the tokeniser and
+    quoting makes the star literal, drop the quoting and the tokeniser has
+    already eaten it. A vacuity audit deleted each in turn and this test stayed
+    green both times. Each is pinned by a test that needs only one of them —
+    the tokeniser by `test_a_hyphenated_query_matches_either_half` and
+    `test_an_identifier_is_a_phrase_and_a_hyphenation_is_an_or`, the quoting by
+    `test_a_bareword_operator_in_a_query_is_searched_for_not_obeyed` and
+    `test_an_operator_in_a_query_cannot_reach_the_parser`. What this one proves
+    is the pair, which is the thing a user actually gets.
+    [E4, review: vacuity audit]
+    """
     db = built(home, src, [user("u1", "hello marmoset")])
     assert index.search(db, "marmoset")
     assert index.search(db, "hel*") == []
@@ -800,17 +812,42 @@ def test_cli_verify_accepts_a_store_that_is_merely_empty(tmp_path, capsys):
 
 def test_cli_recall_survives_a_corrupt_database(home, src, capsys):
     """A truncated database is an ordinary state after a full disk. It must
-    report, not traceback — `main` catching sqlite3.Error is what does that."""
+    report, not traceback.
+
+    The second half of that sentence used to read "`main` catching sqlite3.Error
+    is what does that", and it is not: `_check_schema` asks `meta` first, a file
+    of arbitrary bytes has no `meta`, and the `sqlite3.DatabaseError` is
+    converted there into a `ValueError` that `main` has caught since E3. A
+    vacuity audit dropped `sqlite3.Error` from the handler and the whole suite
+    stayed green — this test cannot see that clause, and the one below only
+    proved something *could* raise it, never that anything catches it.
+
+    Left here as the ValueError path, which is a real path and worth a test. The
+    clause itself is pinned below. [E4, review: vacuity audit]
+    """
     built(home, src, [user("u1", "marmoset")]).close()
     Path(index.db_path(home)).write_bytes(b"not a database")
     assert main(["--home", home, "recall", "marmoset"]) == 2
     assert "error:" in capsys.readouterr().err
 
 
-def test_search_rejects_nothing_it_can_reach_the_database_with(home, src):
+def test_search_rejects_nothing_it_can_reach_the_database_with(home, src, capsys):
     """`sqlite3.Error` in `main`'s handler is load-bearing only if something can
-    actually raise it; this is that something, pinned."""
+    actually raise it; this is that something, pinned — and then driven through
+    `main`, because "something can raise it" and "the handler catches it" are
+    two claims and this test only made the first.
+
+    A dropped `fts` leaves `meta` intact, so `_check_schema` passes and the
+    failure happens where nothing converts it. That makes `sqlite3.Error` the
+    only clause in `main` that can return 2 here, which is the whole point of
+    the clause. [E4, review: vacuity audit]
+    """
     db = built(home, src, [user("u1", "marmoset")])
     db.execute("DROP TABLE fts")
     with pytest.raises(sqlite3.Error):
         index.search(db, "marmoset")
+    db.commit()
+    db.close()
+
+    assert main(["--home", home, "recall", "marmoset"]) == 2
+    assert "error:" in capsys.readouterr().err

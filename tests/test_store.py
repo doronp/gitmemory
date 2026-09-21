@@ -164,10 +164,22 @@ def test_capture_is_byte_identical_across_runs(home, src, tmp_path):
 
 
 def test_compact_boundaries_accumulate_within_a_generation(home, src):
+    """The second capture must not re-offer the first one's boundary.
+
+    It used to pass `[512, 128]`, which is the test handing back the very offset
+    it is checking got carried: with the union against the previous manifest
+    deleted, the answer is still `[128, 512]` because 128 arrived again in the
+    argument. A vacuity audit removed `carried` from the union and the only test
+    that failed was `test_a_bad_boundary_already_in_a_manifest_heals_on_the_next_capture`
+    — the one test named for this property could not see it.
+
+    `[512]` alone, so 128 can only be in the result if the manifest carried it.
+    The sort is still checked by the same assertion. [E4, review: vacuity audit]
+    """
     transcript(src, 5)
     store.capture(src, "claude-code", "sess", home=home, boundaries=[128])
     transcript(src, 5, start=5)
-    store.capture(src, "claude-code", "sess", home=home, boundaries=[512, 128])
+    store.capture(src, "claude-code", "sess", home=home, boundaries=[512])
     assert manifest(home)["compact_boundaries"] == [128, 512]
 
 
@@ -1042,7 +1054,17 @@ def test_a_crashed_capture_is_adopted_on_the_next_run(home, src):
 def test_an_orphan_holding_pruned_bytes_is_kept_not_overwritten(home, src):
     """[E2] The fable-pruner case. The orphan is the only surviving copy of the
     pre-rewrite bytes, so deleting it is the exact loss generations exist to
-    prevent — and `os.replace` onto the colliding name is deleting it."""
+    prevent.
+
+    The sentence that used to end this docstring — "and `os.replace` onto the
+    colliding name is deleting it" — described a different test. No name
+    collides here: the rewrite diverges the session into `g01`, so the next
+    capture never writes into `g00` at all. Swapping the refusal for a bare
+    `os.replace` leaves this passing, and the test that fails is
+    `test_a_colliding_segment_is_never_overwritten` below, where the orphan is
+    *torn* and adoption refuses it, which is the only way to reach the collision.
+    [E4, review: vacuity audit]
+    """
     transcript(src, 5)
     store.capture(src, "claude-code", "sess", home=home)
     base = manifest(home)["size"]

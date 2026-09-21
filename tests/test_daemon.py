@@ -383,7 +383,18 @@ def test_capture_one_records_the_compaction_boundary(tmp_path):
 
 
 def test_a_transcript_the_adapter_cannot_parse_is_still_captured(tmp_path):
-    """The parse is only ever for boundaries. Losing the bytes over it is the real failure."""
+    """The parse is only ever for boundaries. Losing the bytes over it is the real failure.
+
+    "Cannot parse" here means *yields nothing*, not *raises*: `iter_records`
+    skips a line JSON refuses, so this input reaches the adapter and comes back
+    as a session with zero events, and no exception is ever raised. Worth
+    keeping — bytes in, no boundaries out, which is the degraded mode the
+    design promises — but it is not a test of the exception path, and a vacuity
+    audit proved it: making a parse failure cost the capture leaves this green.
+    The raising path is `test_an_agent_with_no_adapter_still_captures_its_bytes`
+    and `test_the_watcher_survives_an_adapter_that_raises_anything_at_all`.
+    [E4, review: vacuity audit]
+    """
     home = str(tmp_path / "home")
     src = _write(str(tmp_path / "proj" / "a.jsonl"), "}{ not jsonl at all\n")
     cap = daemon.capture_one(home, src, "claude-code")
@@ -465,6 +476,14 @@ def test_the_interval_elapsing_captures_without_any_hook_at_all(tmp_path):
 
 
 def test_an_unchanged_transcript_is_not_recaptured(tmp_path):
+    """The observable answer, not the short circuit that makes it cheap.
+
+    Deleting the unchanged-file fast path leaves this green: the store's own
+    no-op path still appends nothing and still commits nothing, so the visible
+    result is identical and only the work is wasted. That cost is pinned by
+    `test_an_unchanged_transcript_is_not_rehashed_on_every_pass`.
+    [E4, review: vacuity audit]
+    """
     home = str(tmp_path / "home")
     root = tmp_path / "proj"
     _write(str(root / "a.jsonl"), TURN)

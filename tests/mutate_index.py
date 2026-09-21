@@ -678,6 +678,25 @@ MUTANTS = [
         "",
         "test_the_pinned_gpgsign_survives_a_global_the_isolation_let_through",
     ),
+    # The second pass of the same audit. Both tests below named their property
+    # and could not see it: the first handed itself back the boundary it was
+    # checking got carried, and the second exercised a corrupt database that
+    # `_check_schema` converts to a `ValueError` long before `sqlite3.Error` in
+    # `main`'s handler can be reached.
+    (
+        "a manifest's own boundaries are no longer carried into the next capture",
+        "store.py",
+        "    kept_boundaries, dropped = _clean_boundaries([*carried, *(boundaries or [])], end)",
+        "    kept_boundaries, dropped = _clean_boundaries([*(boundaries or [])], end)",
+        "test_compact_boundaries_accumulate_within_a_generation",
+    ),
+    (
+        "main stops handling sqlite3.Error, so a query that reaches the database tracebacks",
+        "__main__.py",
+        "    except (OSError, RecursionError, RuntimeError, ValueError, sqlite3.Error) as exc:",
+        "    except (OSError, RecursionError, RuntimeError, ValueError) as exc:",
+        "test_search_rejects_nothing_it_can_reach_the_database_with",
+    ),
 ]
 
 
