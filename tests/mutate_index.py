@@ -629,6 +629,21 @@ MUTANTS = [
         "'$H'",
         "test_a_refusal_cannot_rewrite_the_agents_terminal",
     ),
+    # --- the vacuity audit ---
+    #
+    # This index answers "does the named test catch its mutation?". It cannot
+    # answer "is there a mutation nobody named?", so a separate audit went the
+    # other way: take each test's claim, mutate the behaviour it describes, and
+    # see whether the suite notices. This is the one that came back with the
+    # suite fully green. Listed here so the second attempt at pinning it is
+    # held the same way the first one was not.
+    (
+        "the no-op early return is deleted; the manifest is rewritten every time",
+        "store.py",
+        "        if prior and not diverged and kept_boundaries == carried:",
+        "        if False:",
+        "test_nothing_new_rewrites_nothing",
+    ),
 ]
 
 

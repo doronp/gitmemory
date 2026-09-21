@@ -113,15 +113,34 @@ def test_a_stranger_can_check_it_with_cat_and_shasum(home, src):
 
 
 def test_nothing_new_rewrites_nothing(home, src):
+    """Not "the same bytes" — *no write*. The byte check could not fail.
+
+    This test compared the manifest's bytes across a no-op capture and called
+    that a pin. It is not one: `canonical_json` has no timestamp and no nonce,
+    so an unchanged manifest rewritten is byte-identical by construction. A
+    vacuity audit deleted the early return in `_capture` and the whole suite
+    stayed green — 750 passed — which means nothing anywhere was holding the
+    behaviour in place. The assertion's own message ("a no-op capture would
+    commit a diff") was wrong in the same direction: identical content is also
+    nothing for git to commit.
+
+    What the early return buys is that no write happens at all, and
+    `_write_atomic` publishes by `os.replace` of a fresh temp file, so the
+    inode is the exact witness: rewritten means a new one. Kept the byte
+    comparison too — it is cheap, and it is what catches a manifest that grows
+    a field that varies run to run. [E4, review: vacuity audit]
+    """
     transcript(src, 10)
     store.capture(src, "claude-code", "sess", home=home)
     path = os.path.join(home, "sessions", "claude-code", "sess", "g00.json")
     before = Path(path).read_bytes()
+    ino = os.stat(path).st_ino
 
     cap = store.capture(src, "claude-code", "sess", home=home)
 
     assert cap.appended == 0 and cap.segment is None
-    assert Path(path).read_bytes() == before, "a no-op capture would commit a diff"
+    assert Path(path).read_bytes() == before, "a no-op capture changed the manifest"
+    assert os.stat(path).st_ino == ino, "a no-op capture rewrote the manifest"
 
 
 def test_empty_source_is_recorded_not_skipped(home, src):
