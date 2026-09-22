@@ -2344,6 +2344,60 @@ def test_a_directory_called_scratch_is_not_an_abandonment(home, src):
     )
 
 
+# --- E5 fix 2, reviewed: an object list that admitted an idiom --- #
+
+
+def test_scratching_the_surface_is_not_abandoning_it(home, src):
+    """Giving the verb an object fixed the directory and admitted an idiom.
+
+    `scratch(es|ed|ing)? (that|the|this|…)` matches *"scratches the"* in "this
+    only scratches the surface", which is not an abandonment of anything — it is
+    a remark about how far the work got. Joined to any first-person plan, which
+    is most of what an assistant says next, the stop/start pair fires and the
+    block is written into the graph as a reversal.
+
+    The object is what makes the verb an abandonment, so the idiom is excluded by
+    its object rather than by dropping the inflections: "he scratched the plan"
+    is a real abandonment in the same tense. [E5 fix 2 review, F6]
+    """
+    assert _assistant_says(home, src, "This only scratches the surface — let's use a "
+                                      "deeper scan.") == []
+    assert _assistant_says(home, src, "That barely scratches the surface of the "
+                                      "problem, so let's start again.") == []
+
+    # The ceiling the one-word exclusion buys, asserted so it is visible rather
+    # than discovered. `surface` is refused in the object position whatever it
+    # heads, so a real abandonment of a thing called "the surface …" is declined
+    # with the idiom. Telling them apart needs to know whether `surface` is the
+    # head noun or a modifier, which is a parser and not a lookahead; the idiom
+    # is common in chat and the noun phrase is not, so the trade is taken.
+    assert _assistant_says(home, src, "Scratch the surface probes; I'll use the "
+                                      "full scan.") == []
+
+    # The rest of the object list is untouched, which is what makes the
+    # exclusion narrow rather than a retreat from the whole branch.
+    assert [
+        d.kind
+        for d in _assistant_says(home, src, "Scratch the cron job; I'll use a systemd "
+                                            "timer.")
+    ] == ["reversal"]
+
+
+def test_the_objects_the_verb_actually_takes_include_the_plural_ones(home, src):
+    """`them`, `those` and `these` were left out of the list, silently.
+
+    A list written by hand from one corpus gets the objects that corpus happened
+    to contain. These three are the same construction as `that` — the speaker
+    striking something already in play — and all three came back as nothing.
+    """
+    for body in (
+        "Scratch those, I'll use a deque.",
+        "Scratch them — I'll use a bounded queue.",
+        "Scratch these, we'll use the cache.",
+    ):
+        assert [d.kind for d in _assistant_says(home, src, body)] == ["reversal"], body
+
+
 # --- E5 fix 1, reviewed: `_injected` was wider than its own comment --- #
 #
 # The filter that keeps the CLI's own text out of the prose stream was reported

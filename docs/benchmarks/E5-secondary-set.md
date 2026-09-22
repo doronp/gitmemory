@@ -452,6 +452,37 @@ not the ratio. The claim that survives is narrow — of the seven assistant node
 it still writes into the graph on these sessions, none is known to be wrong —
 and it rests on seven items in four projects by one developer.
 
+## Fix 4 — an object list that admitted an idiom and lost three objects
+
+Not from this set. Fix 2's review read `_ABANDON` line by line and found that the
+repair which gave the verb an object — added because bare `scratch` matched the
+directory `scratch/` — took its object list from the one corpus it was written
+against, and so got that corpus's objects.
+
+| | before | after |
+|---|---|---|
+| *"this only scratches the surface — let's use a deeper scan"* | `reversal` | **nothing** |
+| *"scratch those / them / these, I'll use a deque"* | nothing | **`reversal`** |
+| *"scratch the cron job; I'll use a systemd timer"* | `reversal` | `reversal` |
+
+The idiom is the costly half. *"Scratches the surface"* is a remark about how far
+the work got, and `the` admitted it; joined to any first-person plan — which is
+most of what an assistant says next — the stop/start pair fires and the block is
+written into the graph as a change of course. `them`, `those` and `these` are the
+quiet half: the same construction as `that`, and all three came back as nothing.
+
+The exclusion is on the object, not on the inflections: *"he scratched the plan"*
+is a real abandonment in the same tense, so dropping `-es/-ed/-ing` would have
+cost more than it saved. It buys a ceiling, and the test asserts it rather than
+leaving it to be discovered — `surface` is refused in the object position
+whatever it heads, so a real abandonment of a thing called *"the surface probes"*
+is declined along with the idiom. Telling those apart needs to know whether
+`surface` is the head noun or a modifier, which is a parser and not a lookahead.
+
+Free on every board that exists: dev 1.0000/0.9319, held-out 1.0000/0.7428,
+probes 23/25/14/14, user side 0/12/2, assistant side 7 of 7 — all unchanged.
+Two mutation rows, both CAUGHT. [E5 fix 2 review, F6]
+
 ## What it does not measure
 
 - **Recall rests on two items.** With two gold directives, recall is 0, 0.5 or

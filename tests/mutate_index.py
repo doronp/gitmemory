@@ -1690,7 +1690,7 @@ MUTANTS = [
     (
         "`scratch` goes back to matching the directory of that name",
         "derive.py",
-        r"scratch(?:es|ed|ing)? (?:that|the|this|my|our|its?|all)",
+        r"scratch(?:es|ed|ing)? (?:that|these|those|them|the|this|my|our|its?|all)",
         r"scratch(?:es|ed|ing)?",
         "test_a_directory_called_scratch_is_not_an_abandonment",
     ),
@@ -4072,7 +4072,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "64 mutants",
+        "a full pass is 4" + "66 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4268,6 +4268,21 @@ MUTANTS = [
         '        "gold": matched,',
         "test_the_shipped_extractor_still_scores_what_the_write_ups_claim",
     ),
+    # --- E5 fix 2 reviewed: an object list that admitted an idiom ----------- #
+    (
+        "the abandonment verb goes back to accepting the surface idiom",
+        "derive.py",
+        '    r"(?! surface\\b)"\n',
+        "",
+        "test_scratching_the_surface_is_not_abandoning_it",
+    ),
+    (
+        "the plural objects fall back out of the abandonment verb",
+        "derive.py",
+        'r"|scratch(?:es|ed|ing)? (?:that|these|those|them|the|this|my|our|its?|all)"',
+        'r"|scratch(?:es|ed|ing)? (?:that|the|this|my|our|its?|all)"',
+        "test_the_objects_the_verb_actually_takes_include_the_plural_ones",
+    ),
 ]
 
 
@@ -4383,9 +4398,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 464 mutants x two suite runs, which
+    The filter exists because a full pass is 466 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 463 or trusting the new one untested.
+    to mean either waiting for the other 465 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

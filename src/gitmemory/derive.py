@@ -1093,7 +1093,15 @@ _ABANDON = re.compile(
     r"\b(?:stop(?:s|ped|ping)? (?:using|with)|stop(?:s|ped|ping)? [\w-]+ing"
     r"|ceas(?:e|es|ed|ing)|quit [\w-]+ing|drop(?:s|ped|ping)?|abandon(?:s|ed|ing)?"
     r"|discard(?:s|ed|ing)?|ditch(?:es|ed|ing)?|scrap(?:s|ped|ping)?"
-    r"|scratch(?:es|ed|ing)? (?:that|the|this|my|our|its?|all)"
+    # The object is what makes this verb an abandonment, and the list was
+    # written from one corpus, so it got that corpus's objects: `them`, `those`
+    # and `these` were missing and came back as nothing, and `the` admitted
+    # "only scratches the surface", which is a remark about how far the work got
+    # rather than a decision to stop. The idiom is excluded by its object, not by
+    # dropping the inflections — "he scratched the plan" is a real abandonment in
+    # the same tense. [E5 fix 2 review, F6]
+    r"|scratch(?:es|ed|ing)? (?:that|these|those|them|the|this|my|our|its?|all)"
+    r"(?! surface\b)"
     r"|(?:has|have|had|needs?) to go|must go"
     r"|retir(?:e|es|ed|ing)|shelv(?:e|es|ed|ing)|forget(?:s|ting)? (?:about )?the"
     r"|mov(?:e|es|ed|ing) (?:away from|off|on from)|back(?:s|ed|ing)? out of"
