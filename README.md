@@ -69,9 +69,9 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | Retrieval across a compaction boundary | 470 LongMemEval instances, 4 compaction modes, 14 calibration gates | **0.7456** turn recall, against **0.0000** for the live window |
 | Decision extraction | held-out split, gate pre-registered at precision ≥ 0.85 / recall ≥ 0.60 | **1.0000 / 1.0000** — and see below |
 | The same extractor, in a vocabulary its corpus does not contain | two adversarial probes hand-written by a reviewer, both since spent | 26/32 and 27/32 |
-| The same extractor again, on a probe written blind and scored once | 32 items in a domain chosen to share no vocabulary with the corpus | **14/32** |
+| The same extractor again, on two probes written blind and each scored once | 32 items apiece, in two unrelated domains chosen to share no vocabulary with the corpus or with each other | **14/32** and **14/32** |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **813 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| The suite | on a fresh checkout, no downloads | **814 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
 | Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **440** negative controls |
 
 The 322 conformance cases replay claude-code-log's MIT fixtures — third-party,
@@ -84,7 +84,7 @@ git -C .conformance/claude-code-log checkout 6ad029e   # the pin in docs/DESIGN.
 ```
 
 `.conformance/` is gitignored; `GITMEMORY_CC_FIXTURES` points at the
-`test/test_data` of a clone somewhere else. **The count above says 813 because
+`test/test_data` of a clone somewhere else. **The count above says 814 because
 that is what a fresh checkout collects.** It said 1127 for two epochs, which was
 true only on a machine that had already cloned the corpus — into a scratch
 directory, so the test written to stop this README quoting an unreachable number
@@ -97,12 +97,12 @@ It is not evidence the extractor reads English. The gate has now read 1.0000
 through five rounds of real defects, every one of which it scored identically
 with and without.
 
-Probe C is what that gate cannot see. It was written by an agent that read only
-this README and the design document — never the extractor, never the other
-probes — in a domain (theatrical show control) chosen so that lexical overlap
-with the corpus is impossible. It was frozen unscored and scored once. **14 of
-32**, against 26 and 27 for the two earlier probes, which are spent because each
-set the brief for a revision and then graded it.
+Probes C and D are what that gate cannot see. Each was written by an agent that
+read only this README and the design document — never the extractor, never the
+other probes — in a domain chosen so that lexical overlap with the corpus is
+impossible. Each was frozen unscored and scored once. **14 of 32**, against 26
+and 27 for the two earlier probes, which are spent because each set the brief
+for a revision and then graded it.
 
 The 18 misses are two facts, and they point in opposite directions:
 
@@ -116,9 +116,19 @@ The 18 misses are two facts, and they point in opposite directions:
   could find it. Seven of eleven directives were missed, all plain positive
   standing rules ("Patch file stays YAML.") with no prohibition to match on.
 
-The extractor was **not** changed in response, because editing it against C's
-own miss list would turn the one unspent measurement into a fourth piece of
-training data. [The full record](docs/benchmarks/E5-probe-C.md).
+D was commissioned to ask whether that was C's domain rather than the
+extractor, and the answer is no. Aviation line maintenance, an author with no
+knowledge of C's theatrical show control, **and the same 14** — 10/10, 4/11,
+0/11, the identical split, with the four directives that land being the same two
+constructions (a prohibition, or "use X, not Y"). Two of D's reversals came back
+labelled `directive`: the rule extracted is the right one and only its kind is
+wrong, which is a different defect from not seeing it, and is why the shortfall
+is reported as 14 rather than 16.
+
+The extractor was **not** changed in response to either, because editing it
+against a probe's own miss list turns the unspent measurement into more training
+data. Full records: [C](docs/benchmarks/E5-probe-C.md),
+[D](docs/benchmarks/E5-probe-D.md).
 
 ## What is *not* measured, said on the dashboard itself
 
@@ -193,7 +203,7 @@ Under construction, epoch by epoch.
 | E2 | Segment store, contiguity proof, `verify`, redaction gate | passed |
 | E3 | Index + retrieval + CLI | passed — [gate report](docs/benchmarks/E3-longmemeval.md) |
 | E4 | Hook shim + watcher + git daemon | in review |
-| E5 | Derivation and decision graph | passed — [gate report](docs/benchmarks/E5-decision-gate.md); three artifacts per generation. Reopened by [probe C](docs/benchmarks/E5-probe-C.md): user-reverses-own-instruction is 0 of 11 |
+| E5 | Derivation and decision graph | passed — [gate report](docs/benchmarks/E5-decision-gate.md); three artifacts per generation. Reopened by [probe C](docs/benchmarks/E5-probe-C.md) and held open by [probe D](docs/benchmarks/E5-probe-D.md), which replicates it in an unrelated domain: user-reverses-own-instruction is 0 of 11, twice |
 | E6 | Dashboard | passed — seven views over the index, served read-only on loopback, [review record](docs/reviews/E6-standalone-review.md) |
 | E7 | RC1: security review, private repo | review closed — six surfaces, 68 findings, [round record](docs/reviews/E7-security-round.md); the fixes then reviewed twice over, [pair review](docs/reviews/E7-pair-review.md); every row of the control index run, and the seven it broke on fixed. Remaining: the repository itself |
 

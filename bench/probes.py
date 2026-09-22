@@ -1,4 +1,4 @@
-"""Three adversarial probes in vocabularies no fixture split uses.
+"""Four adversarial probes in vocabularies no fixture split uses.
 
 The gate fixture scores 1.0000/1.0000 and has done through five rounds of real
 defects. That is not a contradiction: the generator writes in one register, and
@@ -12,12 +12,19 @@ numbers pinned in `bench/test_probes.py` are therefore a regression floor, not
 evidence of generalisation, and optimising against them would be optimising
 against training data.
 
-**C is the generalisation number**, scored once, on 2026-09-21, and it reads
-**14/32** against A's 26 and B's 27. The gap is the finding, not a defect in the
-probe: A and B were written to attack precision and C was written to attack
-recall, and the extractor turns out to be badly lopsided. C scores 10/10 on the
-items that are not decisions and 4/22 on the ones that are. See
-`docs/benchmarks/E5-probe-C.md`. C is spent the moment anyone tunes against it.
+**C and D are the generalisation numbers**, each scored once — C on 2026-09-21,
+D on 2026-09-22 — and both read **14/32** against A's 26 and B's 27. The gap is
+the finding, not a defect in the probes: A and B were written to attack
+precision, C and D to attack recall, and the extractor turns out to be badly
+lopsided. Both score 10/10 on the items that are not decisions and 4/22 on the
+ones that are.
+
+D exists because one number from one domain cannot tell you whether the domain
+was the problem. It was written blind, in aviation line maintenance, by an
+author who had not seen C or its theatrical show control, and it replicates C
+exactly — same total, same split, same four constructions hit. See
+`docs/benchmarks/E5-probe-C.md` and `docs/benchmarks/E5-probe-D.md`. Each is
+spent the moment anyone tunes against it.
 
 Scored by class and aside separately — see `ASIDE`.
 
@@ -25,6 +32,10 @@ Run: `python -m bench.probes`
 """
 
 from __future__ import annotations
+
+import hashlib
+import re
+from pathlib import Path
 
 from gitmemory.derive import _decision_kind
 
@@ -754,7 +765,61 @@ CASES_C = [
 ]
 
 
-PROBES = {"A": CASES_A, "B": CASES_B, "C": CASES_C}
+# --------------------------------------------------------------------------- #
+# Probe D
+#
+# Written blind by an agent that read only `README.md` and `docs/DESIGN.md` —
+# never this file, never the extractor, never A, B or C — in aviation line
+# maintenance vocabulary, and committed unscored. Composition matches C's so the
+# two numbers compare: 11 reversals, 11 directives, 10 non-decisions.
+#
+# Read out of the frozen markdown rather than transcribed into this file, which
+# is the opposite of what A, B and C do. Transcribing 32 sentences by hand is 32
+# chances to change one, and a probe whose items drifted is worth nothing at all;
+# the digest below is what makes the file the original rather than a copy of it.
+#
+# The eleven reversals are all the *user* retracting their own earlier
+# instruction — the shape `_decision_kind` declares out of reach in a source
+# comment. They are scored in the class anyway, exactly as C scored its eleven,
+# because C's 14/32 is the number this probe exists to be compared against.
+# --------------------------------------------------------------------------- #
+
+PROBE_D_ITEMS = Path(__file__).resolve().parent.parent / "docs/benchmarks/E5-probe-D-items.md"
+
+# `shasum -a 256 docs/benchmarks/E5-probe-D-items.md` at the commit that froze it.
+PROBE_D_SHA256 = "8f53260b00ffcb2dd91d49c3c35eb6dce2ba5d013cb55ed54239628a91659031"
+
+_EXPECTED = {"DIRECTIVE": "directive", "REVERSAL": "reversal", "NOT-A-DECISION": None}
+_ROW = re.compile(r"\|\s*(\d+)\s*\|\s*([A-Z-]+)\s*\|\s*(.+?)\s*\|\s*(.+?)\s*\|\s*$")
+
+
+def _probe_d() -> list[tuple[str, str, str, str | None]]:
+    """Probe D's 32 items, read out of the frozen file and checked against it.
+
+    The digest is the point. Everything else here is a markdown table parser,
+    which is not interesting; a probe that can be edited after it is scored is.
+    """
+    raw = PROBE_D_ITEMS.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != PROBE_D_SHA256:
+        raise RuntimeError(f"probe D has been edited since it was scored: {digest}")
+
+    cases = []
+    for line in raw.decode().splitlines():
+        if row := _ROW.match(line):
+            _, label, text, _gold = row.groups()
+            if label not in _EXPECTED:
+                continue
+            group = "none" if label == "NOT-A-DECISION" else label.lower()
+            cases.append((group, "user", text, _EXPECTED[label]))
+    if len(cases) != 32:
+        raise RuntimeError(f"probe D is 32 items; parsed {len(cases)}")
+    return cases
+
+
+CASES_D = _probe_d()
+
+PROBES = {"A": CASES_A, "B": CASES_B, "C": CASES_C, "D": CASES_D}
 
 
 # Groups held out of the class score. Two reasons, one rule: neither measures a

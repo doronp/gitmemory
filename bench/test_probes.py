@@ -11,8 +11,9 @@ So the numbers here are the second measurement, and they are deliberately
 in words the corpus does not contain.
 
 A and B are spent: each set the brief for a round and then scored its result, so
-they are training data now. C is not — it was written blind, frozen, and scored
-once — and 14 is what the extractor is worth on text nobody shaped for it.
+they are training data now. C and D are not — each was written blind, frozen,
+and scored once — and 14 is what the extractor is worth on text nobody shaped
+for it, twice, in two unrelated domains.
 
 That is why these assertions are a floor and not an equality: a regression is a
 defect worth a red test. An improvement in A or B is not evidence of anything.
@@ -30,13 +31,18 @@ from bench.probes import PROBES, score
 # A 23/32, B 26/32. The dev fixture read 1.0000/1.0000 both times.
 #
 # C is 14 and that is not a typo. A and B each set the brief for a round and
-# then scored its result, so they are training data; C was written blind,
-# frozen, and scored once, and it is the only generalisation number here.
-# Raising C by editing the extractor against C's own misses would convert the
-# one honest measurement into a fourth piece of training data. Don't. The fix
-# for what C found needs a probe D, written by someone who has not read C.
-# `docs/benchmarks/E5-probe-C.md` is the record.
-FLOOR = {"A": 26, "B": 27, "C": 14}
+# then scored its result, so they are training data; C and D were each written
+# blind, frozen, and scored once, and they are the only generalisation numbers
+# here. Raising either by editing the extractor against its own miss list would
+# convert an honest measurement into a fourth piece of training data. Don't.
+# `docs/benchmarks/E5-probe-C.md` and `E5-probe-D.md` are the records.
+#
+# D is 14 as well, measured 2026-09-22 on b63f4f7, and the coincidence is the
+# finding: same total as C, same split inside it — 10/10 non-decisions, 4/11
+# directives, 0/11 reversals — in a domain (aviation line maintenance) chosen
+# with no knowledge of C's (theatrical show control). C's shape was not its
+# domain's doing.
+FLOOR = {"A": 26, "B": 27, "C": 14, "D": 14}
 
 
 @pytest.mark.parametrize("name", sorted(FLOOR))
