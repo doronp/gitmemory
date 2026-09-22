@@ -2304,16 +2304,26 @@ def test_a_cleanup_justified_by_no_longer_needing_it_is_not_a_reversal(home, src
 
 def test_a_directory_called_scratch_is_not_an_abandonment(home, src):
     """`scratch` is a verb in "scratch the cron job" and a very common directory
-    name everywhere else. It matched `scratch/` and `main.py.oldscratch` on real
-    sessions, so it takes an object now.
+    name everywhere else. It matched `scratch/` on real sessions, so it takes an
+    object now. (Not `main.py.oldscratch`, which this said for three commits: the
+    token is in the corpus but `\\b` never let the branch reach it. See
+    `_ABANDON`.)
 
-    Found while writing this: "Scratch that" never reaches `_PIVOT`, which
-    lists it. `_REPAIR` claims `scratch ` first — as the speaker striking their
-    own slip of the keyboard — and the guards run before the rules. So does
-    probe A's "Scratch the cron approach; a systemd timer is the right tool
-    here", which is why that ceiling item fails. Recorded, not fixed here: one
-    fix per commit, and this one is a guard ordering question rather than a
-    wording one.
+    Found while writing this: "Scratch that" never reaches `_PIVOT`, which lists
+    it. `_REPAIR` claims `scratch that` first — as the speaker striking their own
+    slip of the keyboard — and the guards run before the rules. Recorded, not
+    fixed here: one fix per commit, and this one is a guard ordering question
+    rather than a wording one.
+
+    **Probe A's ceiling item is not this.** "Scratch the cron approach; a systemd
+    timer is the right tool here" was cited here and in the benchmark write-up as
+    the same guard-ordering casualty, and it is not: `_REPAIR`'s object list is
+    `that|this|my last|my previous|the last|the previous`, and "the cron" is none
+    of them, so `_REPAIR` never fires on it at all. It fails one layer down —
+    `_ABANDON` matches "Scratch the" and neither `_ADOPT` nor `_COMMIT` fires,
+    because "is the right tool here" names the replacement with no adoption verb
+    and no first-person commitment. Reordering the guards, which is what the
+    recorded diagnosis implies, would not have moved it. [E5 fix 2 review, F7]
     """
     body = "Let me check what scratch/ contains - it looks like a dev artifact. I'll use the cache."
     assert _assistant_says(home, src, body) == []
@@ -2321,6 +2331,17 @@ def test_a_directory_called_scratch_is_not_an_abandonment(home, src):
     assert [
         d.kind for d in _assistant_says(home, src, "Dropping that, I'll use the cache.")
     ] == ["reversal"], "the abandonment pair still fires"
+
+    # The corrected diagnosis, asserted rather than narrated: a `== []` here
+    # would hold under either story, and the wrong one survived three commits
+    # precisely because nothing distinguished them.
+    ceiling = "Scratch the cron approach; a systemd timer is the right tool here"
+    assert _assistant_says(home, src, ceiling) == []
+    assert not derive._REPAIR.search(ceiling), "_REPAIR was never the reason"
+    assert derive._ABANDON.search(ceiling), "_ABANDON is"
+    assert not derive._ADOPT.search(ceiling) and not derive._COMMIT.search(ceiling), (
+        "and it is alone, which is a recall gap in the stop/start pair"
+    )
 
 
 # --- E5 fix 1, reviewed: `_injected` was wider than its own comment --- #

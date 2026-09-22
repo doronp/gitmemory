@@ -376,13 +376,24 @@ precision on real text against recall on fiction, stated as a trade.
 
 ### Recorded, not fixed
 
-`_REPAIR` (*"ignore/disregard/scratch/strike …"*) claims `scratch ` before
-`_PIVOT`, which lists *"scratch that"* — the guards run before the rules, so
-*"Scratch that, I'll use the cache"* is not a reversal and neither is probe A's
-ceiling item *"Scratch the cron approach; a systemd timer is the right tool
-here"*. Found while writing the negative test for the `scratch` branch, pinned
-there as the behaviour it actually has, and left alone: this is a guard-ordering
-question rather than a wording one, and it predates fix 2.
+`_REPAIR` (*"ignore/disregard/scratch/strike that…"*) claims `scratch that`
+before `_PIVOT`, which lists *"scratch that"* — the guards run before the rules,
+so *"Scratch that, I'll use the cache"* is not a reversal. Found while writing
+the negative test for the `scratch` branch, pinned there as the behaviour it
+actually has, and left alone: this is a guard-ordering question rather than a
+wording one, and it predates fix 2.
+
+**Probe A's ceiling item was wrongly filed under the same heading**, here and in
+the test, for three commits. *"Scratch the cron approach; a systemd timer is the
+right tool here"* never reaches `_REPAIR` at all: that predicate's object list is
+`that | this | my last | my previous | the last | the previous`, and *"the cron"*
+is none of them. It fails a layer down — `_ABANDON` matches *"Scratch the"* and
+neither `_ADOPT` nor `_COMMIT` fires, because *"is the right tool here"* names
+the replacement with no adoption verb and no first-person commitment. The two
+diagnoses imply different fixes: reordering the guards, which is what the
+recorded one suggests, would not have moved this item by a single point. The
+test now asserts which predicate is responsible instead of only asserting the
+empty result, which held under either story. [E5 fix 2 review, F7]
 
 ## Fix 3 — a conjunction over a block is not a conjunction over an assertion
 

@@ -1079,9 +1079,16 @@ _ADOPT = re.compile(
 #     resultative: it describes the state *after* a change, which is the
 #     retrospective register this module already declines elsewhere, and none
 #     of the five was announcing anything.
-#   - bare `scratch` matched the directory `scratch/` and the filename
-#     `main.py.oldscratch`. The verb takes an object, so it now needs one; the
+#   - bare `scratch` matched the directory `scratch/`, and the bare word where
+#     a path is being named. The verb takes an object, so it now needs one; the
 #     bare "scratch that" it used to cover is in `_PIVOT`.
+#
+#     This used to name `main.py.oldscratch` as the second example. That token
+#     really is in the corpus, and the branch really did fire five times, but
+#     never on that: the alternative sits inside `\b(?:…)\b`, and there is no
+#     word boundary between `old` and `scratch`. An example that cannot occur,
+#     attached to a defect that did, costs the next reader the half hour it
+#     took to notice. [E5 fix 2 review, F7]
 _ABANDON = re.compile(
     r"\b(?:stop(?:s|ped|ping)? (?:using|with)|stop(?:s|ped|ping)? [\w-]+ing"
     r"|ceas(?:e|es|ed|ing)|quit [\w-]+ing|drop(?:s|ped|ping)?|abandon(?:s|ed|ing)?"
