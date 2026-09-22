@@ -12,9 +12,17 @@ reporter did not use, before it is accepted.**
 |---|---|---|
 | S1 | A manifest the gate cannot read opts its generation out of the seam scan | fixed — `UnreadableManifest`, `sessions(strict=)` |
 | S1b | The refusal, and every other exception, prints an unmasked path | fixed — `_safe_exc` |
+| S2 | The owner-data scan reads the working tree; a push sends the object graph | fixed — `_history_scan` over `gitrepo.pushable_objects` |
 | S4 | A FIFO planted in the store hangs `verify` and adoption, under the lock | fixed — `store._regular` before every segment `open` |
+| S6 | A rejected manifest takes the stray-file sweep down with it | fixed — `_verify_one` composes; the sweep always runs |
+| S7 | The shim strips C0 from the one value it echoes, and claims more | fixed — `LC_ALL=C tr -cd` over printable ASCII |
+| S8 | The shell's own job report escapes the shim's redirects | fixed — a brace group around the write |
+| S9 | `home` and `.git` are re-chmodded on every start; the spool is not | fixed — `init` makes and repairs `spool/` |
+| S10 | Every write failure is silent, and nothing said what that costs | accepted — the asymmetry is deliberate; `hook/README.md` states the cost |
+| S11 | `find_session` defaults to searching the real `~/.claude/projects` | fixed — required `projects_root`, plus an autouse home-isolation fixture |
 | S12a | The gate opens what a tracked symlink points at, and blocks on a FIFO | fixed — `redact.contents`, used by the file scan and the seam scan |
-| S12b | The owner-data *test* scanner does the same | open |
+| S12b | The owner-data *test* scanner does the same | fixed — `os.readlink`, so the link text is what is scanned |
+| S13 | 23 of 27 evasions walk past the owner-data patterns | fixed — trailing `/` dropped, `re.I` everywhere, the file name scanned |
 | F1 | `.git` pointing at a repository the store did not make | fixed — `_assert_own_git_dir`, in `init` **and** `commit` |
 | — | The mutation harness scored a mutant that does not parse as CAUGHT | fixed — `verdict` reads both runs; a compile check on every row |
 | — | Two tests proved "this does not block" by blocking, wedging the pass | fixed — `_deadline`, and the `WEDGED` verdict |
@@ -297,3 +305,213 @@ tidiness: with the call removed from `init`, `_assert_no_foreign_config` still
 refuses the gitfile, so a test asserting only "it raises" stays green. What goes
 red is the assertion that the foreign repository has none of gitmemory's
 settings in it.
+
+## S2, S12b, S13 — three holes in the test that stops this repo shipping its author's machine
+
+`tests/test_no_owner_data.py` is the one gate whose failure mode is a public
+repository containing somebody's private paths. All three findings are against
+it, and they compose: S2 says it looks in the wrong place, S12b says it reads
+the wrong bytes, S13 says its patterns miss.
+
+**S2 — the working tree is not what a push sends.** The scan walked tracked and
+untracked files. A file committed and then deleted is gone from `git ls-files`
+and present in every clone for ever. `_history_scan` now asks the object graph,
+through `gitrepo.pushable_objects` — the same feed the egress gate already uses,
+so "what would leave this machine" has one definition and both gates read it.
+It streams blobs, trees **and** commits through one `git cat-file --batch` pipe,
+which is what makes commit *messages* scannable, and that mattered immediately:
+**the first thing it caught was the commit message of the commit that
+introduced it.** Two paths naming an account, written by the author of the
+scanner, in the same change. A gate is only real if it can catch you.
+
+**S12b — `read_text()` on a symlink reads the target.** Git stores a symlink as
+mode `120000` with the link text as the blob; the target is not in the
+repository at all. So the scanner opened files outside the tree — which is
+itself the thing this test exists to prevent — and never read the bytes that
+ship. On the fixture, the only hit the old scanner produced was a read it should
+not have made, and it found none of the six planted leaks. `os.readlink` reads
+what is committed. Same finding as S12a, one directory over; they were fixed
+separately because the products are different (`redact.contents` is the gate's,
+this is the test's) and sharing code between them would put the test's
+correctness downstream of the code it is checking.
+
+**S13 — 23 evasions, 4 caught.** The trailing `/` on the two home patterns is
+the whole finding: it required a path *component* after the home, so the two
+most likely pastes — an `export HOME=` line and a "run it from" line — went
+straight through. It bought nothing the character class did not already buy. The
+private-tree pattern was the one without `re.I`, so a capitalised directory name
+walked past it. And the file *name* was never scanned, though it ships with the
+content.
+
+Dropping the trailing `/` made the scanner fail on its own history: `/Users/x`
+appears as a regex sample in ~20 old blobs of `mutate_index.py`, and history
+cannot be edited. `PLACEHOLDERS` excuses that exact span and only that span. An
+earlier draft excused the *sample* spans too, which would have blinded the
+positive control — those are precisely what the control plants.
+
+Two mutation rows had to be written as string concatenations, broken across a
+`+`. The scanner reads `mutate_index.py`, so a row cannot spell out a span its
+own patterns match; both halves rejoin before the mutant is applied.
+
+**1100 tests, 414 negative controls. 13/13 of the affected rows CAUGHT.**
+
+## S6 — the one check that finds unattested bytes, switched off from inside the file under suspicion
+
+`_verify_one` ran ten checks with an early `return` on each, and the stray-file
+sweep — the check whose entire job is to find bytes no manifest attests — was
+the last statement after all of them. Any earlier failure took it down, and the
+attacker picks which failure to show.
+
+Measured end-to-end through `verify()` rather than by reading the function,
+which is what made the second half of the finding visible: **`_verify_unattested`
+does not cover for it.** That sweep marks a generation directory attested when a
+manifest for it *exists*, not when it verifies, so it skips the directory as
+somebody else's job. Nobody reports the bytes. Reading `_verify_one` alone would
+have suggested a duplicated message; running the whole command showed a hole.
+
+Plant a transcript in a generation directory and break the manifest: **eight of
+eight tamperings hid the plant**, each reporting one innocuous-looking line
+instead. After the fix, eight of eight are seen — and a ninth case with it, a
+NUL in a segment path, which is a `str` that passes every type check and then
+raises out of `os.lstat`. That one only surfaces because the checks are now
+wrapped for the same reason `verify` wraps them: a manifest is untrusted data,
+and "the directory is always swept" is only worth having if nothing in the file
+being checked can switch it off.
+
+Three details the tests pin:
+
+- The sweep says a **different sentence** when the manifest was rejected.
+  `listed` is empty or partial then, so a sound generation's own segments land
+  in the sweep too; calling those "unrecorded" would point at the directory when
+  the finding is in the manifest.
+- The directory name comes off the manifest's **filename**, not its declared
+  `generation` — the same "trust the location, not the declaration" move
+  `_verify_manifest` already makes for agent and session, and the only way the
+  sweep can run at all when `generation` is what failed.
+- The blanket guard is a mutation row of its own, because a fix that holds only
+  for failures somebody predicted is not the fix.
+
+**1109 tests, 417 negative controls. 3/3 new rows CAUGHT.**
+
+## S7, S8, S9, S10 — the shim, which runs inside somebody else's program
+
+Four findings against `hook/gitmemory-hook.sh` and the one directory it writes
+to. All four reproduced against the shipped file before anything was edited.
+
+**S7 — a denylist that claimed parity with an allowlist.** The refusal message
+is the only place the shim puts an environment variable's value into an agent's
+transcript, and it stripped control characters with `tr -d '\000-\037'` under a
+comment saying it held itself to `records.safe_text`. That standard also spells
+out DEL, the C1 block, the bidi marks and U+2028/9. Measured: **DEL, U+009B (a
+working CSI wherever C1 is decoded), U+202E and U+2028 all reached stderr
+intact.** The denylist could not be extended, either — those are multi-byte in
+UTF-8 and `tr` deletes bytes, so removing the lead byte of an override leaves
+the other two and the terminal sees a mangled sequence rather than nothing. It
+is now `LC_ALL=C tr -cd '\040-\176'`, and the message says `(printable ASCII
+only)`, because a value written in a non-Latin script comes out empty and an
+empty value must not read as unset.
+
+The test is parametrised over all five classes but **asserts the allowlist**
+rather than the five — every byte of the message is printable ASCII — so a sixth
+way in fails here without anyone having thought of it first.
+
+**S8 — the shell speaks after the redirect is over.** The shim's `2>/dev/null`
+is on the write; the shell's job report is printed when it *reaps* the child,
+which is later. With `ulimit -f` set in the environment, a payload over the
+limit killed `cat` with SIGXFSZ and `/bin/sh` announced it — this script's path
+and a line number — straight into the agent's stderr. The failure itself was
+always handled correctly; the noise was the whole symptom, which is the same
+shape as the earlier `set -C` finding. A brace group with its own redirect
+catches it, and a group is not a subshell, so it costs no fork on the one path
+in this system a user waits for.
+
+**S9 — the third directory that holds transcript bytes.** `home` and `.git` are
+re-chmodded on every start, for the fs-F2 reason: a mode set once is a mode set
+never. `spool/` holds whole unredacted payloads under a naming grammar anyone
+can guess, and nothing ever looked at it. The shim creates it correctly, under
+`umask 077` — but `mkdir -p` sets a mode only when it creates, and the `[ -d ]`
+fast path means an existing spool is never looked at again. Measured, one left
+at 0777 stayed 0777 across every fire. Fixed in `gitrepo.init` rather than the
+shim: there it is free and idempotent and settled by the same argument as the
+other two, while in the shim it would be a fork on the hot path. The records
+inside are 0600, which is not the point — a traversable directory with
+predictable names is enough.
+
+**S10 — accepted, not fixed.** Two refusals are loud and every write failure is
+silent. That asymmetry is deliberate: a refusal is a configuration you fix once,
+and a message on the write path would fire at every compaction for as long as a
+disk stayed full, which is the noise this shim exists not to make. The finding
+was right that nothing said so. `hook/README.md` now does, including the two
+things a broken run costs beyond the one capture — the single line of shell
+noise above, and the fact that a record is as large as its payload. **The size
+cap is not coming:** `head -c` costs the same one fork but closes the pipe
+early, and an agent that does not handle `EPIPE` on its own hook would die.
+Trading a large file for a killed session is the wrong way round for a program
+whose first rule is never to disturb the caller.
+
+## S11 — a default that reads the developer's own machine
+
+`find_session(session_id)` defaulted to searching the real
+`~/.claude/projects`. No caller in the tree used it that way, which is exactly
+why it survived: it changed nothing today. The watcher's stated rule is that
+watch roots have **no** default and a misconfigured run is loud rather than
+guessing; a helper over the same data with a silent default is that rule with
+one exception nobody chose, waiting for a second caller.
+
+The signature alone does not close it, because the other route to somebody's
+transcripts is the environment. `$HOME` feeds `expanduser` and `$GITMEMORY_HOME`
+feeds `resolve_home`, so a test that omits a root gets the real one and passes.
+`tests/conftest.py` — the repository's first — points `HOME` at a directory
+under `tmp_path` for every test and drops `GITMEMORY_HOME`. **Set, not deleted:**
+an unset `HOME` sends `expanduser` to the password database, which finds the
+real home anyway.
+
+This is the fix `clean_env` already carried for the hook tests, after a mutation
+run wrote 74 files into a developer's home, applied once instead of per file. An
+autouse fixture is invisible at every call site it protects, so the one thing
+that can go wrong with it — somebody deletes a line and everything still passes
+— is the thing nothing would catch. It gets its own negative control:
+`tests/test_isolation.py` compares `$HOME` against the password database's
+answer, which is the copy the fixture cannot reach.
+
+The signature is pinned by an `inspect` test rather than a behavioural one, and
+the docstring says why: with the default restored, a test that omits the root
+reads whatever home it is pointed at and passes. The behaviour being removed is
+not observable from outside.
+
+## Negative controls, the rest of the round
+
+Seventeen more rows: eight across S2/S12b/S13, three for S6, four for S7/S8/S9
+(one of those a repair to the row S7 invalidated), two for S11. Three existing
+rows were repaired rather than added: one whose anchor the S6 refactor moved,
+and two in the S2 group rewritten as string concatenations, because the scanner
+reads `mutate_index.py` and a row cannot spell out a span its own patterns
+match. **422 rows in total.**
+
+| Row | Test |
+|---|---|
+| the scan sees the checkout and not the object graph | `test_the_history_scan_finds_leaks_the_checkout_no_longer_has` |
+| the history scan skips the blobs it cannot decode | `test_the_history_scan_finds_leaks_the_checkout_no_longer_has` |
+| the owner-data scan follows a link out of the repository | `test_the_scanner_finds_leaks_that_are_really_there` |
+| the owner-data scan ignores the file name | `test_the_scanner_finds_leaks_that_are_really_there` |
+| a placeholder span excuses more than the one it names | `test_the_scanner_finds_leaks_that_are_really_there` |
+| the home patterns need a trailing separator again | `test_the_patterns_would_actually_catch_something` |
+| the private-tree pattern is case-sensitive again | `test_the_patterns_would_actually_catch_something` |
+| a tracked file the scan cannot read is not reported | `test_nothing_tracked_is_a_file_the_scanner_cannot_read` |
+| a rejected manifest takes the generation sweep down with it | `test_a_rejected_manifest_does_not_hide_a_plant_beside_it` |
+| a crash in the manifest checks switches the generation sweep off | `test_a_rejected_manifest_does_not_hide_a_plant_beside_it` |
+| the sweep calls a rejected manifest's segments unrecorded | `test_a_rejected_manifest_does_not_hide_a_plant_beside_it` |
+| the shim's allowlist goes back to the C0 denylist it was | `test_a_refusal_cannot_rewrite_the_agents_terminal` |
+| the shim echoes an environment variable's control characters | `test_a_refusal_cannot_rewrite_the_agents_terminal` |
+| the outer redirect goes, so the shell's own job report reaches the agent | `test_a_file_size_limit_does_not_put_the_shells_own_noise_in_the_transcript` |
+| init makes the spool but never repairs one that already exists | `test_the_spool_is_owner_only_whatever_it_was` |
+| find_session gets its real-home default back | `test_the_adapter_has_no_default_place_to_look_for_transcripts` |
+| the suite-wide home isolation is switched off | `test_no_test_can_see_the_account_that_is_running_it` |
+
+Every one CAUGHT by its intended test. The suite stands at **1120 tests**.
+
+The last row is the one worth reading twice. Its mutant removes the home
+isolation and then runs the **whole** suite against a real home — which is
+acceptable only because that is precisely the state the suite was in one commit
+earlier, green, with `clean_env` already carrying the hook tests. Checked
+afterwards: no `~/.gitmemory`, nothing of gitmemory's in the developer's home.
