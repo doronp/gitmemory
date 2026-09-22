@@ -16,6 +16,7 @@ are written before it exists on purpose:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -1125,8 +1126,18 @@ def test_an_assistant_changing_course_is_a_reversal(home, src):
     """The second label, and the one that decays fastest out of context: six
     turns later the transcript still contains the abandoned approach, and a
     reader who does not know it was dropped will reintroduce it.
+
+    This fixture used to read "I'll replace the polling loop with an inotify
+    watch." and it was the wrong sentence. Replacing one thing with another is
+    what writing code *is*; nothing in that sentence says the polling loop was
+    ever the assistant's idea rather than the code it was handed. Three
+    adjudicators reading the same shape on real sessions called it narration
+    every time. The sentence below abandons something instead of substituting
+    it, which is the shape the label is actually for. See
+    `test_a_bare_substitution_from_the_assistant_is_not_a_reversal` and
+    `docs/benchmarks/E5-secondary-set.md`.
     """
-    turn = "I'll replace the polling loop with an inotify watch."
+    turn = "Giving up on the polling loop; I'll use an inotify watch."
     session = parsed(
         home, src, [user("u1", "Why is the watcher so slow?"), assistant("a1", [text(turn)])]
     )
@@ -1277,13 +1288,27 @@ def test_decisions_come_back_in_the_order_they_occur(home, src):
 
 def test_the_same_sentence_is_labelled_by_who_said_it(home, src):
     """The two labels are defined by speaker, not by wording: from the user
-    "store it in Parquet instead of CSV" is a rule to obey, from the assistant
-    it is a course change already taken. Collapsing them loses the distinction
-    the per-slice breakdown is built on.
+    "drop the CSV writer" is a rule to obey, from the assistant it is a course
+    change already taken. Collapsing them loses the distinction the per-slice
+    breakdown is built on.
+    """
+    line = "Drop the CSV writer and use Parquet instead."
+    session = parsed(home, src, [user("u1", line), assistant("a1", [text(line)])])
+    assert [k for k, _ in labelled(session)] == ["directive", "reversal"]
+
+
+def test_a_bare_substitution_from_the_assistant_is_not_a_reversal(home, src):
+    """The asymmetry is sharper than the test above shows, and it is fix 2.
+
+    "Store it in Parquet instead of CSV" is a directive from the user — it
+    governs later work however CSV got there — and from the assistant it is
+    *nothing*, because a substitution frame does not say the thing being put
+    down was ever the assistant's own position. Writing code is substitution
+    all day long. On real sessions this one shape was 31 of 52 wrong nodes.
     """
     line = "Store it in Parquet instead of CSV."
     session = parsed(home, src, [user("u1", line), assistant("a1", [text(line)])])
-    assert [k for k, _ in labelled(session)] == ["directive", "reversal"]
+    assert [k for k, _ in labelled(session)] == ["directive"]
 
 
 def test_restating_an_agreed_rule_is_not_a_new_decision(home, src):
@@ -1874,7 +1899,7 @@ def test_a_decision_is_frozen_and_hashable(home, src):
 
 DECIDED = [
     user("u1", "Keep every timestamp in UTC; no local time anywhere in the tree."),
-    assistant("a1", [text("I'll replace the polling loop with an inotify watch.")]),
+    assistant("a1", [text("Giving up on the polling loop; I'll use an inotify watch.")]),
 ]
 
 
@@ -2190,3 +2215,109 @@ def test_the_canonical_json_of_an_unknown_block_is_not_prose(home, src):
     ), "the fixture made no JSON block"
     assert derive.decisions(session) == [], "an unknown block's JSON became a decision"
     assert "wombat" not in json.dumps(derive.ideas(session, count=20)), "JSON ranked as an idea"
+
+
+# --- E5 fix 2: a substitution is not a reversal without a recant --- #
+#
+# 52 of the 61 `reversal` nodes the extractor wrote on real sessions were
+# narration, and the substitution frame on its own was 31 of them. Writing code
+# is substitution all day long; what makes it a *reversal* is that the thing
+# being put down was the assistant's own position, and a predicate over one
+# block only knows that if the block says so. These fix the three things that
+# count as saying so, and the two `_ABANDON` branches that were not
+# abandonments. See `docs/benchmarks/E5-secondary-set.md`.
+
+
+def _assistant_says(home, src, body):
+    """The decisions in a one-block assistant turn.
+
+    A fresh store *and* a fresh transcript per call. `write` opens the source
+    `ab`, so a second call appends a second line to the same file — and both
+    lines carry uuid `a1`, which the parser dedupes. Reusing the fixtures would
+    therefore have re-scored the *first* body every time, and the loops below
+    would have asserted three times about one item.
+    """
+    tag = hashlib.sha256(body.encode()).hexdigest()[:8]
+    home = f"{home}-{tag}"
+    Path(home).mkdir()
+    src = str(Path(src).with_name(f"{tag}.jsonl"))
+    return derive.decisions(parsed(home, src, [assistant("a1", [text(body)])]))
+
+
+def test_the_assistant_conceding_a_point_and_substituting_is_a_reversal(home, src):
+    """A concession presupposes a position that was contested. With a
+    substitution frame beside it, the block says which position and what
+    replaces it — which is the whole shape, in one block, with no context.
+    """
+    assert [d.kind for d in _assistant_says(home, src, "You're right. Parquet, not CSV.")] == [
+        "reversal"
+    ]
+
+
+def test_the_assistant_trying_a_different_approach_is_a_reversal(home, src):
+    """"A different approach" is a comparative, and a comparative presupposes a
+    salient prior member of the class. Narrower than it looks: "a different
+    file" or "a different value" is not here, because only the plan can be the
+    thing reversed.
+    """
+    body = "The checker chokes on that. Let me try a different approach, a plain return instead."
+    assert [d.kind for d in _assistant_says(home, src, body)] == ["reversal"]
+
+
+def test_the_assistant_saying_it_will_not_work_and_substituting_is_a_reversal(home, src):
+    """A verdict that the thing does not work presupposes it was being relied
+    on to work. The sentence that motivated this one is probe B's "Hmm, that's
+    not going to work. Dropping the thread pool and doing it synchronously
+    instead."
+    """
+    body = "That's not going to work. I'll do it synchronously instead."
+    assert [d.kind for d in _assistant_says(home, src, body)] == ["reversal"]
+
+
+def test_narrating_an_edit_is_not_a_reversal(home, src):
+    """The negative half, and the expensive one. All three of these were
+    emitted on real sessions and all three were adjudicated narration: a repair,
+    the next step of the user's own plan, and a bug report. Nothing in any of
+    them says the assistant is leaving a position it held.
+    """
+    for body in (
+        "I need to pass a Path object instead of a string. Let me fix this:",
+        "Now I'll replace the complex cross-session navigation with a simple link.",
+        "It seems like the code is still falling back to the regular generate_html "
+        "function instead of using the combined link version.",
+    ):
+        assert _assistant_says(home, src, body) == [], body
+
+
+def test_a_cleanup_justified_by_no_longer_needing_it_is_not_a_reversal(home, src):
+    """`no longer` is resultative: it describes the state after a change rather
+    than announcing one, which is why it fired five times on real sessions and
+    never on an abandonment. Both of these are cleanups whose *reason* is given
+    in the frame.
+    """
+    for body in (
+        "Now I need to remove the unused import since we're no longer using convert_jsonl_to_html.",
+        "Let me also remove the TODO comment that's no longer needed:",
+    ):
+        assert _assistant_says(home, src, body) == [], body
+
+
+def test_a_directory_called_scratch_is_not_an_abandonment(home, src):
+    """`scratch` is a verb in "scratch the cron job" and a very common directory
+    name everywhere else. It matched `scratch/` and `main.py.oldscratch` on real
+    sessions, so it takes an object now.
+
+    Found while writing this: "Scratch that" never reaches `_PIVOT`, which
+    lists it. `_REPAIR` claims `scratch ` first — as the speaker striking their
+    own slip of the keyboard — and the guards run before the rules. So does
+    probe A's "Scratch the cron approach; a systemd timer is the right tool
+    here", which is why that ceiling item fails. Recorded, not fixed here: one
+    fix per commit, and this one is a guard ordering question rather than a
+    wording one.
+    """
+    body = "Let me check what scratch/ contains - it looks like a dev artifact. I'll use the cache."
+    assert _assistant_says(home, src, body) == []
+    assert _assistant_says(home, src, "Scratch that, I'll use the cache.") == [], "_REPAIR won"
+    assert [
+        d.kind for d in _assistant_says(home, src, "Dropping that, I'll use the cache.")
+    ] == ["reversal"], "the abandonment pair still fires"

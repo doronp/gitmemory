@@ -15,7 +15,7 @@ distinct blocks — and **9 of those 61** survived adjudication. Precision 0.15.
 | Measurement | Text | Score |
 |---|---|---|
 | Gate, held-out split | synthetic, generated | precision 1.0000, recall 1.0000 |
-| Probe A / B | fiction, spent | 26/32, 27/32 |
+| Probe A / B | fiction, spent | 26/32, 27/32 — **23/32, 25/32 after fix 2** |
 | Probe C / D | fiction, blind, unspent | 14/32, 14/32 |
 | **This set** | **real, third-party, census** | **precision 0.0000, recall 0.0000** |
 
@@ -241,6 +241,133 @@ structural and was not tuned against the miss list — it is a rule about who
 wrote the text, taken from the annotators' machine/human column rather than
 from the extractor's errors — but it was designed after reading this set, and
 that is enough. What the numbers above are now is a floor.
+
+## Fix 2 — a substitution is not a reversal
+
+Root cause 3, the largest one: 52 of the 61 assistant-side `reversal` nodes were
+narration, and the substitution frame alone was 31 of them.
+
+The fix rests on a definition that had never been written down here. **A
+reversal is the assistant putting down its own prior position** — not any
+substitution in the artifact. In the *user* role a frame is enough, because
+"use X instead of Y" governs later work however Y arrived. From the assistant it
+is not, and the reason is specific to this corpus:
+
+> Writing code is substitution all day long.
+
+Passing a `Path` instead of a string, replacing one function with another,
+swapping a loop for a library call — on a coding transcript the substitution
+frame is the ordinary register of the work. Reading (B), *anything replaced*, is
+recoverable from the diff. Reading (A), *a position abandoned*, is not, and that
+is what a memory system is for.
+
+So the assistant branch now needs the block to carry the withdrawal itself.
+Three constructions count, and all three are **presupposition triggers** — the
+presupposition is the whole point:
+
+| trigger | what it presupposes |
+|---|---|
+| a concession — *"you're right"*, *"good catch"*, *"my mistake"* | a position that was contested, now granted |
+| *"a different approach"* | a comparative, and a comparative presupposes a salient prior member |
+| *"that's not going to work"* | the thing was being relied on to work |
+
+None is sufficient alone; each only qualifies a frame. Two constructions still
+stand on their own, because they lexicalise the withdrawal: the announced change
+of course (`_PIVOT` — *"on second thought"*, *"changing my mind"*) and the
+`_ABANDON` + `_ADOPT` pair, every member of `_ABANDON` presupposing that the
+thing had been taken up.
+
+**First-person ownership is deliberately not a trigger.** *"what I wrote"*,
+*"my original code"*, *"here is a summary of what I did"* were tried and
+dropped: they establish that a thing is the speaker's, which is the wrong
+presupposition — the register of a *report* on prior work. Admitting the family
+put two retrospective summaries back into the output to buy one extra true
+reversal. Ownership is not withdrawal.
+
+Two `_ABANDON` branches went at the same time, having fired eight times on real
+sessions and never once on an abandonment. `no longer [\w-]+` is resultative —
+it describes the state *after* a change (*"the TODO comment that's no longer
+needed"*, *"since we're no longer using X"*), which is the retrospective
+register this module already declines elsewhere. Bare `scratch` matched the
+directory `scratch/` and the filename `main.py.oldscratch`; the verb takes an
+object, so it needs one now.
+
+| | before | after |
+|---|---|---|
+| assistant nodes still emitted | 61 | **9** |
+| …adjudicated `reversal` | 9 | **7** |
+| precision | 0.1475 | **0.7778** |
+| user-side tp / fp / fn | 0 / 12 / 2 | 0 / 12 / 2 (unchanged) |
+| probe A, class items | 26/32 | 23/32 |
+| probe B, class items | 27/32 | 25/32 |
+| probe C, assistant class items | 5/5 | 5/5 |
+
+Precision here is `right / still_emitted` — 7/9 — so it rises when the extractor
+*stops* emitting a wrong node, which is exactly what a precision fix does and
+also exactly how a precision fix can be faked. A predicate that silenced all 61
+blocks would read 1.0000. So `bench/test_secondary.py` pins all three numbers,
+`(still_emitted, right, n) == (9, 7, 61)`: `n` is the adjudicated population and
+cannot move, and pinning the other two means a withdrawal shows up as a
+withdrawal rather than as an improvement.
+
+### What it still gets wrong, and what it lost
+
+Two false positives survive, and they are the same shape: a concession opens a
+block that then *investigates* or *reports* rather than reverses.
+
+> *"Oh no! You're absolutely right. When I modified the `generate_html`
+> function… Let me check what happened to the session navigation."* — `fc2e108b`
+>
+> *"Perfect! You were absolutely right about the issue. The problem was that
+> summary messages are generated asynchronously… ## What I Fixed"* — `b811f129`
+
+The concession is real in both. What follows it is a diagnosis and a changelog.
+Separating those needs more than one block's text, which is where this stops.
+
+Two true positives were withdrawn with the 52:
+
+> *"…This is much cleaner than duplicating all the message processing logic. Let
+> me replace the complex `_generate_html_with_combined_link` function with a
+> simple approach"* — `d439a8fe`, a 2-1 split with no explicit marker anywhere
+> in the block.
+>
+> *"The `session_nav.html` component is… more comprehensive than what I wrote…
+> Let me replace my duplicate code with the proper component usage"* —
+> `e926d873`, caught only by the first-person family that was rejected above.
+
+### The cost on the spent probes, priced
+
+Five class items, all assistant `reversals`, and they split two ways:
+
+- **Three are the trade.** *"We'll swap the regex validator for a real parser"*,
+  *"Replacing the hand-written loop with `itertools.groupby`"*, *"Let me pull the
+  caching out of the handler and put it behind the repository interface
+  instead"*. These are a probe author writing a course change in the register of
+  a diff, and they are word-for-word the shape three adjudicators called
+  narration 31 times on real text. Recovering them means giving back the fix.
+- **Two are collateral.** *"Rolling back to the synchronous client for now"* —
+  `_ABANDON` fires, but the replacement arrives as a `to`-complement rather than
+  the `_ADOPT` half the pair requires. *"The mmap approach isn't paying for
+  itself — switching to a plain buffered read"* — a verdict `_RECANT` does not
+  list. Both are genuine withdrawals whose evidence *is* in the block. They are
+  the seed for the next round, not a reason to widen the frame.
+
+The floors in `bench/test_probes.py` are re-pinned at 23 and 25 with that
+reasoning written beside them. Lowering a floor should be hard; what makes it
+legitimate here is that **A and B are spent** — their numbers are training data
+and a regression floor, nothing more. The measurement that decides whether fix 2
+was right is probe E: unwritten, blind, scored once. Until then the claim is
+precision on real text against recall on fiction, stated as a trade.
+
+### Recorded, not fixed
+
+`_REPAIR` (*"ignore/disregard/scratch/strike …"*) claims `scratch ` before
+`_PIVOT`, which lists *"scratch that"* — the guards run before the rules, so
+*"Scratch that, I'll use the cache"* is not a reversal and neither is probe A's
+ceiling item *"Scratch the cron approach; a systemd timer is the right tool
+here"*. Found while writing the negative test for the `scratch` branch, pinned
+there as the behaviour it actually has, and left alone: this is a guard-ordering
+question rather than a wording one, and it predates fix 2.
 
 ## What it does not measure
 

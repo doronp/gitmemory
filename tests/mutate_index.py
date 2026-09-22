@@ -1570,6 +1570,52 @@ MUTANTS = [
         """    if False:""",
         "test_the_canonical_json_of_an_unknown_block_is_not_prose",
     ),
+    # --- E5 fix 2: the substitution frame needs a recant, five ways --------- #
+    #
+    # The guard, then each of the three things it is made of, then the two
+    # `_ABANDON` branches the real sessions showed were not abandonments.
+    (
+        "the assistant's substitution frame goes back to firing on its own",
+        "derive.py",
+        """        if (_SWITCH.search(text) or _CONTRAST.search(text)) and _RECANT.search(text):""",
+        """        if _SWITCH.search(text) or _CONTRAST.search(text):""",
+        "test_a_bare_substitution_from_the_assistant_is_not_a_reversal",
+    ),
+    (
+        "conceding the point stops being evidence of a prior position",
+        "derive.py",
+        r'''    r"\b(?:you(?:'re| are| were) (?:absolutely |completely |totally |quite )?right"''',
+        r'''    r"\b(?:(?!x)x"''',
+        "test_the_assistant_conceding_a_point_and_substituting_is_a_reversal",
+    ),
+    (
+        "a different approach stops being different from this one",
+        "derive.py",
+        """    r" (?:approach|way|route|strategy|tack|plan|direction)\"""",
+        """    r" (?!x)x\"""",
+        "test_the_assistant_trying_a_different_approach_is_a_reversal",
+    ),
+    (
+        "the verdict that it does not work carries no weight",
+        "derive.py",
+        r'''(?:just )?(?:not|never) (?:going to |gonna )?work"''',
+        r'''(?!x)x"''',
+        "test_the_assistant_saying_it_will_not_work_and_substituting_is_a_reversal",
+    ),
+    (
+        "`no longer` comes back to the abandonment class",
+        "derive.py",
+        r"""    r"|step(?:s|ped|ping)? away from)\b",""",
+        r"""    r"|step(?:s|ped|ping)? away from|no longer [\w-]+)\b",""",
+        "test_a_cleanup_justified_by_no_longer_needing_it_is_not_a_reversal",
+    ),
+    (
+        "`scratch` goes back to matching the directory of that name",
+        "derive.py",
+        r"scratch(?:es|ed|ing)? (?:that|the|this|my|our|its?|all)",
+        r"scratch(?:es|ed|ing)?",
+        "test_a_directory_called_scratch_is_not_an_abandonment",
+    ),
     (
         "an artifact is published by rename, never written in place",
         "derive.py",
@@ -1762,8 +1808,12 @@ MUTANTS = [
     (
         "a course change is read as a reversal",
         "derive.py",
-        """        if _SWITCH.search(text) or _CONTRAST.search(text) or _PIVOT.search(text):""",
-        """        if False:""",
+        """        if _PIVOT.search(text):
+            return "reversal"
+        if _ABANDON.search(text) and (_ADOPT.search(text) or _COMMIT.search(text)):""",
+        """        if False:
+            return "reversal"
+        if False:""",
         "test_an_assistant_changing_course_is_a_reversal",
     ),
     (
@@ -1782,8 +1832,8 @@ MUTANTS = [
         # class, which is what "repeating it is giving it up" would look like.
         "repeating something is not abandoning it",
         "derive.py",
-        r"""    r"|step(?:s|ped|ping)? away from|no longer [\w-]+)\b",""",
-        r"""    r"|step(?:s|ped|ping)? away from|again|no longer [\w-]+)\b",""",
+        r"""    r"|step(?:s|ped|ping)? away from)\b",""",
+        r"""    r"|step(?:s|ped|ping)? away from|again)\b",""",
         "test_retrying_a_failed_command_is_not_a_reversal",
     ),
     (
@@ -3944,7 +3994,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "45 mutants",
+        "a full pass is 4" + "51 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4218,7 +4268,7 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 445 mutants x two suite runs, which
+    The filter exists because a full pass is 451 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
     to mean either waiting for the other 439 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in

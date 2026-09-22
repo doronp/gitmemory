@@ -988,19 +988,35 @@ _ADOPT = re.compile(
     re.I,
 )
 
-# Putting something down that was already in play.
+# Putting something down that was already in play. Every member presupposes the
+# thing had been taken up — you cannot abandon what you never adopted — which is
+# why the pair it forms with `_ADOPT` needs no further evidence of a prior
+# commitment in the assistant role. See `_RECANT`.
+#
+# Two branches were removed after they fired eight times on real sessions and
+# never once on an abandonment [E5 fix 2]:
+#
+#   - `no longer [\w-]+` matched "the TODO comment that's no longer needed",
+#     "since we're no longer using X", "no longer depends". `no longer` is
+#     resultative: it describes the state *after* a change, which is the
+#     retrospective register this module already declines elsewhere, and none
+#     of the five was announcing anything.
+#   - bare `scratch` matched the directory `scratch/` and the filename
+#     `main.py.oldscratch`. The verb takes an object, so it now needs one; the
+#     bare "scratch that" it used to cover is in `_PIVOT`.
 _ABANDON = re.compile(
     r"\b(?:stop(?:s|ped|ping)? (?:using|with)|stop(?:s|ped|ping)? [\w-]+ing"
     r"|ceas(?:e|es|ed|ing)|quit [\w-]+ing|drop(?:s|ped|ping)?|abandon(?:s|ed|ing)?"
     r"|discard(?:s|ed|ing)?|ditch(?:es|ed|ing)?|scrap(?:s|ped|ping)?"
-    r"|scratch(?:es|ed|ing)?|(?:has|have|had|needs?) to go|must go"
+    r"|scratch(?:es|ed|ing)? (?:that|the|this|my|our|its?|all)"
+    r"|(?:has|have|had|needs?) to go|must go"
     r"|retir(?:e|es|ed|ing)|shelv(?:e|es|ed|ing)|forget(?:s|ting)? (?:about )?the"
     r"|mov(?:e|es|ed|ing) (?:away from|off|on from)|back(?:s|ed|ing)? out of"
     r"|back away from|walk(?:s|ed|ing)? back|roll(?:s|ed|ing)? back"
     r"|revert(?:s|ed|ing)?|giv(?:e|es|ing) up on|gave up on|get rid of"
     r"|let go of|part ways with|rip(?:s|ped|ping)? out|tear(?:s|ing)? out"
     r"|tore out|throw(?:s|ing)? out|threw out|forgo(?:es|ing)?"
-    r"|step(?:s|ped|ping)? away from|no longer [\w-]+)\b",
+    r"|step(?:s|ped|ping)? away from)\b",
     re.I,
 )
 
@@ -1040,6 +1056,39 @@ _PIVOT = re.compile(
     r"|(?:chang|alter|revers|shift)(?:e|es|ed|ing)? (?:our |the )?"
     r"(?:course|direction|approach|tack|plan)"
     r"|course.correct\w*|backtrack\w*|u-turn|start over|on reflection)\b",
+    re.I,
+)
+
+# Evidence that a position of the speaker's own is being *withdrawn*, as opposed
+# to a thing merely being named. Three presupposition triggers, and the
+# presupposition is the whole point of the class:
+#
+#   - a concession presupposes a position that was contested, and grants it;
+#   - "a different approach" is a comparative, and a comparative presupposes a
+#     salient prior member of the class it compares against;
+#   - a verdict that the thing does not work presupposes the thing was being
+#     relied on to work.
+#
+# None is sufficient alone: this class only ever qualifies a frame. First-person
+# reference to earlier work is deliberately **not** here, though it was tried:
+# "what I wrote", "my original code", "here is a summary of what I did"
+# establish that a thing is the speaker's, which is the wrong presupposition. It
+# is the register of a *report* on prior work, and admitting it put two
+# retrospective summaries back into the output for one extra true reversal.
+# Ownership is not withdrawal.
+# [E5 fix 2 — see docs/benchmarks/E5-secondary-set.md]
+_RECANT = re.compile(
+    r"\b(?:you(?:'re| are| were) (?:absolutely |completely |totally |quite )?right"
+    r"|(?:good|great|nice|excellent) catch"
+    r"|(?:good|great|fair|excellent) point"
+    r"|(?:good|great|excellent|sharp) observation"
+    r"|my (?:mistake|bad|error)|i was wrong|i apologi[sz]e|i'?m sorry"
+    r"|(?:a |an |some )?(?:different|another|alternative|new)"
+    r" (?:approach|way|route|strategy|tack|plan|direction)"
+    r"|(?:that|this|it)(?:'s| is| was)? (?:just )?(?:not|never) (?:going to |gonna )?work"
+    r"|(?:that|this|it) (?:won'?t|doesn'?t|didn'?t|isn'?t going to|wasn'?t going to) work"
+    r"|(?:that|this|the [\w-]+) (?:approach|idea|plan)"
+    r" (?:fail\w*|doesn'?t work|isn'?t work\w*))\b",
     re.I,
 )
 
@@ -1133,15 +1182,34 @@ def _decision_kind(text: str, role: str) -> str | None:
         return None
 
     if role == "assistant":
-        # Three constructions that carry the whole stop/start pair by
-        # themselves: the two-argument replacement verb, the substitution frame,
-        # and the announced change of course.
-        if _SWITCH.search(text) or _CONTRAST.search(text) or _PIVOT.search(text):
+        # Two constructions say by themselves that a prior position is being
+        # left. The announced change of course lexicalises it — "on second
+        # thought", "scratch that", "changing my mind" — and the stop/start
+        # pair gets it from `_ABANDON`, every member of which presupposes the
+        # thing had been taken up. The second half of the pair is still
+        # required: `_ABANDON` alone is a complaint and `_ADOPT` alone is a
+        # plan.
+        if _PIVOT.search(text):
             return "reversal"
-        # Otherwise the pair has to be assembled from two clauses: something put
-        # down, and something taken up in its place. Neither half counts alone —
-        # `_ABANDON` alone is a complaint and `_ADOPT` alone is just a plan.
         if _ABANDON.search(text) and (_ADOPT.search(text) or _COMMIT.search(text)):
+            return "reversal"
+        # The substitution frames are different, and this is the whole of fix 2.
+        # In the user role a frame is enough, because "use X instead of Y"
+        # governs later work however Y arrived. From the assistant it is not:
+        # **writing code is substitution all day long.** Passing a Path instead
+        # of a string, replacing one function with another, swapping a loop for
+        # a library call — on a coding transcript the substitution frame is the
+        # ordinary register of the work, not a marker of a change of course, and
+        # a predicate over one block cannot see which. So the block has to carry
+        # the evidence itself: something the assistant had adopted is being put
+        # down, not merely something being edited.
+        #
+        # Measured: 52 of 61 emitted nodes on real sessions were narration, and
+        # `_CONTRAST` alone was 31 of them. It costs recall on bare substitution
+        # — six probe items phrased as course changes with nothing in the
+        # sentence to say so — and that trade is priced in
+        # `docs/benchmarks/E5-secondary-set.md`. [E5 fix 2]
+        if (_SWITCH.search(text) or _CONTRAST.search(text)) and _RECANT.search(text):
             return "reversal"
     return None
 

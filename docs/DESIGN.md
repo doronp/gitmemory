@@ -403,6 +403,35 @@ turns in 140, and 39% of user-role prose is injected by the CLI rather than
 typed — which is where 19 of the 30 false positives come from. Recorded with the
 extractor unchanged. `docs/benchmarks/E5-secondary-set.md`.**]**
 
+**[E5, fix 1 and fix 2.** Two rounds against that record, each measured and each
+costing something.
+
+*Fix 1 — a block in a human's turn that a program put there is not prose.*
+`derive._injected`, three whole-block shapes plus the adapter's own canonical
+JSON. False positives 30 → 12, machine-authored ones 19 → 1. **Precision did not
+move**: 0/30 and 0/12 are both zero, and the honest reading is that the noise
+left the graph, not that the extractor got right.
+
+*Fix 2 — a substitution is not a reversal.* **A reversal is the assistant
+putting down its own prior position**, which is the definition that had been
+missing: in the user role a substitution frame is enough, because "use X instead
+of Y" governs later work however Y arrived, but on a coding transcript the
+assistant's substitution frame is the ordinary register of the work. Writing
+code is substitution all day long. The frame now needs a presupposition trigger
+beside it — a concession, the comparative "a different approach", or a verdict
+that the thing does not work — each of which presupposes a position that was
+held. First-person ownership ("what I wrote") was tried and rejected: it is the
+register of a report, not a withdrawal. Assistant nodes 61 → 9, of which 7 are
+reversals; precision 0.1475 → **0.7778**, user side unmoved.
+
+The cost is five class items on probes A and B, whose floors drop to 23 and 25.
+Three are the trade — bare substitution, the exact shape adjudicated as
+narration 31 times — and two are collateral withdrawals the new evidence list
+does not reach. A and B are spent, so re-pinning them is bookkeeping rather than
+evidence; **what settles fix 2 is a blind probe E, unwritten.** Both rounds are
+written up in `docs/benchmarks/E5-secondary-set.md`, and **the set is a
+regression floor from fix 1 onward, not a generalisation measure.**]**
+
 Every node carries a `source_ref` to a committed block hash. **No node may exist without one.**
 That rule is what stops a decision diagram from becoming fiction.
 

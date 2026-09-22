@@ -68,13 +68,13 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 |---|---|---|
 | Retrieval across a compaction boundary | 470 LongMemEval instances, 4 compaction modes, 14 calibration gates | **0.7456** turn recall, against **0.0000** for the live window |
 | Decision extraction | held-out split, gate pre-registered at precision ≥ 0.85 / recall ≥ 0.60 | **1.0000 / 1.0000** — and see below |
-| The same extractor, in a vocabulary its corpus does not contain | two adversarial probes hand-written by a reviewer, both since spent | 26/32 and 27/32 |
+| The same extractor, in a vocabulary its corpus does not contain | two adversarial probes hand-written by a reviewer, both since spent | 26/32 and 27/32 — **23/32 and 25/32** once the precision fix below traded five of them away |
 | The same extractor again, on two probes written blind and each scored once | 32 items apiece, in two unrelated domains chosen to share no vocabulary with the corpus or with each other | **14/32** and **14/32** |
 | The same extractor on text nobody wrote for a benchmark | a census of every distinct human turn in a third-party MIT corpus of real sessions — 140 items, labelled blind by three annotators at 139/140 agreement | **precision 0.0000, recall 0.0000** |
-| …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | **9 of 61** — precision 0.15 |
+| …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | 9 of 61 — precision 0.15. After the fix: **52 withdrawn, 7 of the 9 left are reversals**, precision **0.78** |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **829 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **445** negative controls |
+| The suite | on a fresh checkout, no downloads | **836 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **451** negative controls |
 
 The 322 conformance cases replay claude-code-log's MIT fixtures — third-party,
 real-shaped, and not one byte of anybody's own history — through this parser.
@@ -86,7 +86,7 @@ git -C .conformance/claude-code-log checkout 6ad029e   # the pin in docs/DESIGN.
 ```
 
 `.conformance/` is gitignored; `GITMEMORY_CC_FIXTURES` points at the
-`test/test_data` of a clone somewhere else. **The count above says 829 because
+`test/test_data` of a clone somewhere else. **The count above says 836 because
 that is what a fresh checkout collects.** It said 1127 for two epochs, which was
 true only on a machine that had already cloned the corpus — into a scratch
 directory, so the test written to stop this README quoting an unreachable number
@@ -149,8 +149,8 @@ one injected sentence — *"This may or may not be related to the current task"*
 in which `_PROHIBIT` matches **`may not`**. No probe can contain this, because
 every probe item is a sentence somebody wrote on purpose.
 
-The assistant side is larger and worse: 61 distinct blocks called `reversal`, of
-which three adjudicators kept **9**. The substitution frame does most of the
+The assistant side was larger and worse: 61 distinct blocks called `reversal`, of
+which three adjudicators kept **9**. The substitution frame did most of the
 damage — *"pass a Path instead of a string"* is two-sided and is not a change of
 course.
 
@@ -160,6 +160,18 @@ number about the fix. **Then the first fix landed**: a block in a human's turn
 that a program put there is not prose. False positives 30 → 12, machine-authored
 ones 19 → 1. Precision did not move — it was 0/30 and is now 0/12, with still no
 true positive — and saying it improved would be the dishonest version.
+
+**The second fix** is the assistant side, and it rests on a definition: a
+reversal is the assistant putting down *its own prior position*, not any
+substitution in the artifact. Writing code is substitution all day long, so the
+frame now has to be joined by evidence that something was withdrawn — a
+concession, a comparative ("a different approach"), or a verdict that the thing
+does not work. 52 of the 61 nodes went; 7 of the 9 left are reversals, precision
+0.15 → **0.78**. It cost five items on the two spent probes, three of them the
+trade itself and two collateral, and the floors were re-pinned rather than
+argued with. The set is a floor, not a generalisation measure, from fix 1
+onward; what will actually settle fix 2 is a blind probe E that has not been
+written yet.
 
 Unlike a probe this set cannot be replaced by writing another one: there is one
 corpus of real third-party sessions here, so from that fix onward its score is a
@@ -183,10 +195,11 @@ as rows on the page, not as omissions:
 - **Three of the four retriever arms have never run** — only BM25/FTS5 was
   measured. The gate report says so in the arm list.
 - **The decision graph is close to useless on real sessions**, and that is
-  measured rather than suspected. Precision 0.0000 on the user side, 0.15 on the
-  assistant side. Four projects and one developer is not a population, and
-  recall rests on two gold items — but the false-positive count does not, and it
-  is 32 of 32.
+  measured rather than suspected. Precision 0.0000 on the user side — 32 nodes,
+  none of them a directive — and 0.15 on the assistant side, since lifted to
+  0.78 by emitting 52 fewer nodes. Four projects and one developer is not a
+  population, and recall rests on two gold items; the false-positive count does
+  not, and it is still 0 true positives out of 12 on the user side.
 
 ## Getting started
 
@@ -244,7 +257,7 @@ Under construction, epoch by epoch.
 | E2 | Segment store, contiguity proof, `verify`, redaction gate | passed |
 | E3 | Index + retrieval + CLI | passed — [gate report](docs/benchmarks/E3-longmemeval.md) |
 | E4 | Hook shim + watcher + git daemon | in review |
-| E5 | Derivation and decision graph | passed — [gate report](docs/benchmarks/E5-decision-gate.md); three artifacts per generation. Reopened by [probe C](docs/benchmarks/E5-probe-C.md) and held open by [probe D](docs/benchmarks/E5-probe-D.md), which replicates it in an unrelated domain: user-reverses-own-instruction is 0 of 11, twice. Then [the secondary set](docs/benchmarks/E5-secondary-set.md) scored it on real third-party sessions: **precision 0.0000 / recall 0.0000** on 140 human turns, 9 of 61 on the assistant side |
+| E5 | Derivation and decision graph | passed — [gate report](docs/benchmarks/E5-decision-gate.md); three artifacts per generation. Reopened by [probe C](docs/benchmarks/E5-probe-C.md) and held open by [probe D](docs/benchmarks/E5-probe-D.md), which replicates it in an unrelated domain: user-reverses-own-instruction is 0 of 11, twice. Then [the secondary set](docs/benchmarks/E5-secondary-set.md) scored it on real third-party sessions: **precision 0.0000 / recall 0.0000** on 140 human turns, 9 of 61 on the assistant side. Two fixes since: machine-injected blocks out of the prose stream, and the assistant substitution frame now needs a withdrawal beside it — assistant precision 0.15 → 0.78, user side unmoved |
 | E6 | Dashboard | passed — seven views over the index, served read-only on loopback, [review record](docs/reviews/E6-standalone-review.md) |
 | E7 | RC1: security review, private repo | review closed — six surfaces, 68 findings, [round record](docs/reviews/E7-security-round.md); the fixes then reviewed twice over, [pair review](docs/reviews/E7-pair-review.md); every row of the control index run, and the seven it broke on fixed. Remaining: the repository itself |
 

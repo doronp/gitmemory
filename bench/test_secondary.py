@@ -62,7 +62,7 @@ def test_the_extractor_scores_zero_on_real_text():
     0.0000/0.0000 before the first fix too.
 
     The same extractor reads 1.0000/1.0000 on the held-out synthetic split and
-    26/32 and 27/32 on the two spent probes. This is the number that says what
+    23/32 and 25/32 on the two spent probes. This is the number that says what
     those are worth. It is pinned exactly, including the false-positive count,
     because "it got better" and "it got worse" are both things a reader of this
     file needs to be told rather than allowed to assume.
@@ -103,17 +103,30 @@ def test_the_injected_block_filter_took_out_eighteen_of_the_nineteen():
     assert s["machine_fp"] == 1
 
 
-def test_nine_of_the_sixty_one_assistant_reversals_are_reversals():
-    """The largest thing the extractor emits on real sessions is also the least
-    right: 61 distinct assistant blocks called `reversal`, of which three
-    adjudicators kept 9. Precision 0.15.
+def test_seven_of_the_nine_assistant_reversals_left_are_reversals():
+    """The largest thing the extractor emitted on real sessions was also the
+    least right: 61 distinct assistant blocks called `reversal`, of which three
+    adjudicators kept 9. Precision 0.1475.
+
+    **Fix 2 withdrew 52 of the 61.** Nine are still emitted and seven of those
+    are reversals — precision 0.7778 against the same denominator, which is why
+    `n` stays 61. A withdrawal and a correction can only be told apart if the
+    population is held at what the extractor emitted when the labels were
+    written; see `assistant_score`.
+
+    Two true positives went with the 52, and they are the price: `d439a8fe`, a
+    2-1 split with no marker in the block at all, and `e926d873`, which only the
+    first-person-ownership family caught — the family that was tried and
+    rejected for putting two retrospective summaries back in. Both are recorded
+    in `docs/benchmarks/E5-secondary-set.md`.
 
     This is an adjudication, not a labelling round — the items *are* the
     output — so there is no recall figure and none is claimed. A reversal the
     extractor never flagged is invisible here by construction.
     """
     a = secondary.assistant_score(secondary.assistant_items())
-    assert (a["right"], a["n"]) == (9, 61)
+    assert (a["still_emitted"], a["right"], a["n"]) == (9, 7, 61)
+    assert round(a["precision"], 4) == 0.7778
     assert a["unanimous"] == 58
     manifest = json.loads(secondary.MANIFEST.read_text())
     assert manifest["unanimous_assistant"] == 58

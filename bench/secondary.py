@@ -173,8 +173,9 @@ def _join(
 
     `may_shrink` is for the assistant side alone, whose population *is* the
     extractor's output: a fix that stops emitting an adjudicated block is the
-    point, and the row survives with no text so precision keeps its original
-    denominator. An *extra* block is still fatal in both directions — it is
+    point, and the row survives with no text so the withdrawal stays visible and
+    countable. It does *not* hold the precision denominator — see
+    `assistant_score`. An *extra* block is still fatal in both directions — it is
     output nobody adjudicated, and scoring it against nothing would count an
     unlabelled guess as a win.
     """
@@ -297,8 +298,15 @@ def assistant_score(adjudicated: list[dict]) -> dict:
     `n` is the adjudicated population, held fixed at whatever the extractor
     emitted when the labels were written. A fix that stops emitting a block
     leaves the row with `text: None`, so it drops out of `still` and out of
-    `right` — precision rises against the same denominator, which is the only
-    way a withdrawal and a correction can be told apart.
+    `right`.
+
+    **`precision` is `right / still_emitted`, and that denominator shrinks.**
+    It is the honest measure of what the extractor writes *now*, and it is also
+    trivially gameable: a predicate that silenced every adjudicated block would
+    read 1.0000 on an empty output. Nothing here can detect that, so it is the
+    caller's job — `bench/test_secondary.py` pins `still_emitted` and `right`
+    alongside `n`, and a fix that withdraws more than it should fails on the
+    count rather than passing on the ratio.
     """
     still = [row for row in adjudicated if row["text"] is not None]
     right = sum(row["gold"] == "reversal" for row in still)

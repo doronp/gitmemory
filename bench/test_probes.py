@@ -42,7 +42,36 @@ from bench.probes import PROBES, score
 # directives, 0/11 reversals — in a domain (aviation line maintenance) chosen
 # with no knowledge of C's (theatrical show control). C's shape was not its
 # domain's doing.
-FLOOR = {"A": 26, "B": 27, "C": 14, "D": 14}
+#
+# **A 26 -> 23 and B 27 -> 25, lowered deliberately by E5 fix 2.** Five class
+# items, all in the assistant `reversals` group, and the trade is priced in
+# `docs/benchmarks/E5-secondary-set.md`:
+#
+#   - three are bare substitution — "We'll swap the regex validator for a real
+#     parser", "Replacing the hand-written loop with `itertools.groupby`",
+#     "Let me pull the caching out of the handler and put it behind the
+#     repository interface instead". That is the shape the fix exists to stop
+#     scoring, because on real sessions it is how an assistant narrates an
+#     ordinary edit: 31 of 52 wrong calls, adjudicated 3-0. These are a probe
+#     author writing a course change in the register of a diff, and the
+#     extractor cannot tell the two apart from one block.
+#   - two are genuine withdrawals the new evidence list does not reach —
+#     "Rolling back to the synchronous client for now" (`_ABANDON` fires, but
+#     the replacement is a `to`-complement rather than the `_ADOPT` half the
+#     pair requires) and "The mmap approach isn't paying for itself — switching
+#     to a plain buffered read" (a verdict `_RECANT` does not list). These are
+#     collateral, not the trade, and they are the seed for the next round.
+#
+# Lowering a floor is the thing this file exists to make hard, so: the reason
+# it is legitimate here is that **A and B are spent**. Their numbers are
+# training data, a regression floor and nothing else, and the honest response to
+# a precision fix that costs them is to re-pin them and say so — not to add the
+# six sentences back and call the extractor improved. The measurement that
+# decides whether fix 2 was right is probe E, which is unwritten, blind, and
+# will be scored once. Until then the claim is precision on real text
+# (0.1475 -> 0.7778) against recall on fiction, and it is stated as a trade
+# rather than as a win.
+FLOOR = {"A": 23, "B": 25, "C": 14, "D": 14}
 
 
 @pytest.mark.parametrize("name", sorted(FLOOR))
