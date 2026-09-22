@@ -32,7 +32,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from .store import resolve_home
+from .store import _mkdir, resolve_home
 
 TIMEOUT = 120  # seconds; a `gc` on a large store is the slow case, not a hang
 
@@ -187,6 +187,13 @@ def _env() -> dict[str, str]:
     #
     # None of this is trusted. `init` proves the isolation rather than assuming
     # it; see `_assert_no_foreign_config`. [E4, review: Gemini r3 §3]
+    #
+    # What is **not** scrubbed, said here because the argument above reads as
+    # though the subprocess were sealed: `PATH`. `subprocess.run(["git", …])`
+    # resolves `argv[0]` through it, so a `git` planted earlier in `PATH` runs
+    # — measured, and left as it is. Anyone who can do that owns every tool the
+    # user runs, and resolving to an absolute path at import would only move
+    # the same lookup earlier in the same process. [E7 fs-F8]
     env["GIT_CONFIG_NOSYSTEM"] = "1"
     env["HOME"] = os.devnull
     env.pop("XDG_CONFIG_HOME", None)
@@ -363,8 +370,21 @@ def init(home: str | None = None) -> str:
     created by an older version picks up a setting added by a newer one.
     """
     home = resolve_home(home)
-    os.makedirs(home, mode=0o700, exist_ok=True)
-    # `mode=` applies only when `makedirs` creates the directory. A home the
+    # `store._mkdir`, not `os.makedirs`: the mode argument applies to the leaf
+    # only, so every directory `makedirs` had to create on the way came out at
+    # `0777 & ~umask`. The reviewer measured that at umask 022 and called it
+    # harmless, which it is — the leaf is the barrier and those directories
+    # hold nothing but the path to it. At umask 000 it is not: measured,
+    # `GITMEMORY_HOME=<base>/a/b/store` left `<base>/a` and `<base>/a/b` at
+    # 0777, and a world-writable parent of the store is a rename away from
+    # standing the store up somewhere the attacker chose. `_mkdir` passes the
+    # mode per level, where umask can only take bits off 0700 and never add
+    # any. Its symlink refusal cannot fire on a legitimate layout: `home` came
+    # back from `resolve_home`, so every component that exists is already the
+    # real one, and a link at a component that does not exist yet is the race
+    # `_mkdir` is there for. [E7 fs-F9]
+    _mkdir(home)
+    # `mode=` applies only when a directory is created. A home the
     # user made first — `mkdir ~/.gitmemory` under the default 022 umask —
     # stays 0755 for ever, as does one restored by a `tar` or an `rsync`
     # without `-p`. Measured: with home at 0755 the chain from `/` down to

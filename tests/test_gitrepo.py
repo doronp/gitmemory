@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import subprocess
 import time
+from pathlib import Path
 
 import pytest
 
@@ -988,3 +989,41 @@ def test_the_home_mode_is_re_applied_on_every_start_not_just_the_first(tmp_path)
 
     assert os.stat(home).st_mode & 0o077 == 0
     assert os.stat(os.path.join(home, ".git")).st_mode & 0o077 == 0
+
+
+# --- E7 fs-F9: the directories made on the way to the store ------------------
+
+
+def test_the_directories_made_on_the_way_to_the_store_are_owner_only(tmp_path):
+    """`os.makedirs(mode=...)` sets the leaf and leaves the rest at the umask.
+
+    `store._mkdir` exists because of this exact bug and its docstring says so;
+    `init` was still calling `makedirs`. At umask 022 the intermediates came
+    out 0755, which is harmless — they hold nothing but the path to a 0700
+    store. At umask 000 they came out **0777**, and a world-writable parent of
+    the store is one rename away from standing the store up somewhere the
+    attacker chose, with `init` then chmod'ing and populating that. [E7 fs-F9]
+    """
+    old = os.umask(0o000)  # the case the reviewer's 022 measurement missed
+    try:
+        home = gitrepo.init(str(tmp_path / "a" / "b" / "store"))
+    finally:
+        os.umask(old)
+
+    made = [tmp_path / "a", tmp_path / "a" / "b", Path(home)]
+    assert [oct(os.stat(p).st_mode & 0o777) for p in made] == ["0o700"] * 3
+
+
+def test_a_home_whose_parents_already_exist_is_left_as_the_user_had_it(tmp_path):
+    """The store locks down what it creates, not what it was pointed at.
+
+    `_mkdir` stops at the first directory that is already there, so a home
+    inside `~/work` does not silently re-mode `~/work`. [E7 fs-F9]
+    """
+    parent = tmp_path / "work"
+    parent.mkdir()
+    os.chmod(parent, 0o755)
+
+    gitrepo.init(str(parent / "store"))
+
+    assert oct(os.stat(parent).st_mode & 0o777) == "0o755"

@@ -3591,6 +3591,23 @@ MUTANTS = [
         "        return os.path.exists(os.path.join(home, rel))",
         "test_a_dangling_symlink_is_not_excused_by_being_deep",
     ),
+    # --- E7 fs-F9 ---
+    (
+        "the directories on the way to the store are made at the umask",
+        "gitrepo.py",
+        "    _mkdir(home)",
+        "    os.makedirs(home, mode=0o700, exist_ok=True)",
+        "test_the_directories_made_on_the_way_to_the_store_are_owner_only",
+    ),
+    (
+        # The over-reaching direction: locking down the *existing* parents is a
+        # store that re-modes directories the user only pointed it at.
+        "the store re-modes the directories it was pointed at",
+        "gitrepo.py",
+        "    _mkdir(home)",
+        "    _mkdir(home)\n    os.chmod(os.path.dirname(home), 0o700)",
+        "test_a_home_whose_parents_already_exist_is_left_as_the_user_had_it",
+    ),
 ]
 
 
