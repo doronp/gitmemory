@@ -355,20 +355,16 @@ MUTANTS = [
         "    pass",
         "test_an_index_from_another_schema_is_refused_not_answered",
     ),
-    (
-        # Re-anchored onto the same line as "a --db path is resolved before the
-        # symlink refusal sees it", deliberately: one `realpath` now holds two
-        # behaviours and each gets its own row and its own named test. It used
-        # to revert an `os.path.abspath` on `target`, which had been dead since
-        # this `realpath` landed — `dirname("out.db")` is `""` and
-        # `realpath("")` is the working directory — and scored MISSED for that
-        # reason. [E7 pair review]
-        "a bare --db filename has no directory to create",
-        "index.py",
-        "        parent = os.path.realpath(parent)",
-        "        parent = parent",
-        "test_a_bare_filename_is_a_usable_db_path",
-    ),
+    # There is no row for `test_a_bare_filename_is_a_usable_db_path`, and the
+    # test says why. It had one — reverting an `os.path.abspath` on `target` —
+    # which scored MISSED because that call had been dead since index-F9 added
+    # `realpath` on the caller's parent. Re-anchoring onto the `realpath` scored
+    # MISSED too: `--db out.db` works with neither, because `_mkdir("")`,
+    # `os.path.join("", name)` and `mkstemp(dir="")` all tolerate an empty
+    # parent and resolve against the working directory. The behaviour is real
+    # and tested; it is held by three tolerances rather than one line, so there
+    # is no single-line mutant to write. A row that can only ever score MISSED
+    # is worse than no row. [E7 pair review]
     (
         "the retriever hands back lengths instead of offsets",
         "index.py",
@@ -3864,7 +3860,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "31 mutants",
+        "a full pass is 4" + "30 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4023,9 +4019,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 431 mutants x two suite runs, which
+    The filter exists because a full pass is 430 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 430 or trusting the new one untested.
+    to mean either waiting for the other 429 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

@@ -560,14 +560,19 @@ def build(home: str | None = None, *, path: str | None = None) -> Stats:
     # so what leaked was the directory listing: that a store exists here, how
     # big its index is, when it last built. [E7 index-F9]
     #
-    # `realpath` on a caller-supplied parent, and it is what makes `--db out.db`
-    # work as well: `dirname("out.db")` is `""`, `makedirs("")` raises ENOENT,
-    # and `realpath("")` is the working directory. An `os.path.abspath` on
-    # `target` above used to be the reason that flag worked, and stopped being
-    # the reason when this line landed — dead on both branches, since
-    # `resolve_home` already returns a realpath. The mutation harness found it
-    # the same way it found the digest loop: the row reverting the `abspath`
-    # left its named test green. [E7 pair review]
+    # `target` above used to carry an `os.path.abspath`, whose comment said it
+    # was what made `--db out.db` work: `dirname("out.db")` is `""` and
+    # `os.makedirs("")` is ENOENT. The mutation harness found it dead — reverting
+    # it left its named test green — and it is dead twice over. This is not
+    # `makedirs`: `_mkdir`'s walk is `while path:`, so an empty parent is zero
+    # levels to create rather than an error, and `os.path.join("", name)` is
+    # `name`, which resolves against the working directory like any relative
+    # path. The flag works because three separate things tolerate `""`, not
+    # because of any one line — so `test_a_bare_filename_is_a_usable_db_path`
+    # has no negative control, and `tests/mutate_index.py` says so where a
+    # reader would go looking for the missing row. [E7 pair review]
+    #
+    # `realpath` is here for the symlinked parent below and nothing else.
     #
     # `_mkdir` refuses symlinks and the caller's are theirs to follow: `/tmp` is
     # a symlink on macOS, so

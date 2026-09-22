@@ -211,10 +211,20 @@ def test_a_slice_with_no_gold_does_not_read_as_a_failed_one(tmp_path):
 def test_a_derive_that_fails_to_import_is_not_reported_as_unwritten(tmp_path, monkeypatch):
     """`except ImportError` around the import reported "no decisions yet" for
     any failure inside derive — a missing numpy, a typo in a dependency — and
-    swallowed the cause."""
+    swallowed the cause.
+
+    `__file__` is a real string rather than another ImportError, and that is the
+    whole difference between this test and the one it was. Raising on every
+    attribute meant the E5:R8 line above the check — `print(f"scoring
+    {derive.__file__}")`, which landed later — tripped first, so the check this
+    test is named for was never reached. The mutation harness found it: reverting
+    the check left the test green. Only `decisions` raises now. [E7 pair review]
+    """
     out = small_fixture(tmp_path)
 
     class Broken:
+        __file__ = "<broken>"
+
         def __getattr__(self, name):
             raise ImportError("numpy is required for LexRank and is not installed")
 

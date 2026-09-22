@@ -922,9 +922,18 @@ def test_a_meta_that_is_not_a_table_cannot_run_forever(tmp_path):
 
 
 def test_a_bare_filename_is_a_usable_db_path(home, src, tmp_path, monkeypatch, capsys):
-    """`--db out.db` has no dirname, and `makedirs("")` raises ENOENT — on the
-    most obvious value anyone would pass to a flag documented as "database
-    path". [E3]"""
+    """`--db out.db` has no dirname — the most obvious value anyone would pass
+    to a flag documented as "database path", and the one that goes through the
+    empty string. [E3]
+
+    This test has no row in `tests/mutate_index.py`, deliberately. It had two,
+    and both scored MISSED: nothing here is load-bearing on its own. `_mkdir`'s
+    walk is `while path:`, so `""` is zero levels to create rather than the
+    `makedirs("")` ENOENT the original comment blamed; `os.path.join("", name)`
+    is `name`; a relative path resolves against the working directory. Three
+    tolerances, no single line to revert. A row that can only ever score MISSED
+    costs a reader more than the missing row does. [E7 pair review]
+    """
     write(src, [user("u1", "the peculiar marmoset")])
     assert main(["--home", home, "capture", src]) == 0
     monkeypatch.chdir(tmp_path)

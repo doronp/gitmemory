@@ -207,23 +207,37 @@ dead**, which is a different and more interesting thing than a weak test.
   turns a lone surrogate into six ASCII characters before either sees it, so
   there is nothing for `_encodable` to lose. The loop is gone; the row anchors
   on the line that does the work.
-- `os.path.abspath` on the index target was what made `--db out.db` work:
-  `dirname("out.db")` is `""` and `makedirs("")` is `ENOENT`. Then index-F9's
-  fix added `realpath` on the caller-supplied parent, and `realpath("")` is the
-  working directory. Dead on the other branch too, since `resolve_home` already
-  returns a realpath. Removed, and the row re-anchored onto the `realpath` line
-  — deliberately sharing an anchor with the row for the symlink behaviour. One
-  line, two behaviours, two rows, two named tests.
+- `os.path.abspath` on the index target claimed, in its own comment, to be what
+  made `--db out.db` work: `dirname("out.db")` is `""` and `makedirs("")` is
+  `ENOENT`. Removed, because reverting it left the named test green and the
+  suite green.
+
+The digest row re-anchored onto the line that had been doing its work since E6.
+The `--db` row did not, and that is the more interesting half. Re-anchored onto
+index-F9's `realpath` — `realpath("")` being the working directory — it scored
+MISSED again. So the reasoning was walked instead of assumed, and none of it
+held: this code does not call `makedirs`, `_mkdir`'s walk is `while path:` so an
+empty parent is zero levels to create rather than an error, `os.path.join("",
+name)` is `name`, and a relative path resolves against the working directory
+like any other. The flag works because three separate things tolerate the empty
+string. There is no line to revert, so **the row was deleted** and both
+`tests/mutate_index.py` and the test's own docstring say why — a row that can
+only ever score MISSED sends the next reader to audit an attribution that was
+never wrong.
 
 Neither line was wrong and neither was a bug. Both were comments claiming to be
 the reason something worked, three fixes after they had stopped being the
 reason, which is the kind of thing that survives every review that reads code
-for defects.
+for defects. The `--db` comment had been wrong about *two* mechanisms — the one
+it named and the one that replaced it — and a passing test said nothing about
+either, because the behaviour was never in one place to begin with.
 
 ## What it cost
 
-**1121 → 1127 tests, 423 → 431 negative controls**, for four fixes and the
-harness repair below.
+**1121 → 1127 tests, 423 → 430 negative controls**, for four fixes and the
+harness repair below. Seven rows added and one deleted — the deletion is in the
+section above, and is the only row this project has ever removed for being
+unanswerable rather than obsolete.
 
 Every one of the four has a row in `tests/mutate_index.py` that reverts it, and
 the named test must go red when it does. Two of the rows are the two ends of one

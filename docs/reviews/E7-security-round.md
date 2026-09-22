@@ -70,8 +70,9 @@ Per report: parsing 15, carry-ins 14, secrets 11, fs 10, index 10, dashboard 8.
 
 At the round's close the suite had gone **960 → 1121 tests** and the
 negative-control index **265 → 423 rows**: 161 tests and 158 controls, for 56
-fixes. The [pair review](E7-pair-review.md) then added 5 and 7, for four more
-fixes — **1126 and 430** today.
+fixes. The [pair review](E7-pair-review.md) then added 6 and 7, for four more
+fixes, and removed one row that could only ever score MISSED — **1127 and 430**
+today.
 
 One of each is this page's own doing: writing the paragraph above meant reading
 `main`'s docstring in the harness, which justified its name filter with "146
