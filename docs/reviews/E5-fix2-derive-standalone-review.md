@@ -18,8 +18,10 @@ said that did not end in a commit is gone; that is the cost, and the reason
 `docs/reviews/` gets the file at the time from here on.
 
 Baseline at the start of the round: 847 tests offline, 462 mutation rows. At
-the end: **854 tests offline, 1176 with the conformance corpus, 474 mutation
-rows**, `ruff check` clean.
+the end of the seven items: 854 tests offline, 1176 with the conformance
+corpus, 474 mutation rows. Four more entries were added to this register after
+that, each with its own commit, and the round closes at **864 tests offline,
+1186 with the corpus, 486 mutation rows** (`568f768`), `ruff check` clean.
 
 ## Status
 

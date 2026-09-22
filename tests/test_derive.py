@@ -2923,7 +2923,9 @@ def test_a_rule_can_say_a_thing_stays_the_way_it_is(home, src):
     The user branch reads a substitution frame and a prohibition, so every rule
     it sees is one that names something rejected. A rule stated positively —
     what a thing *is*, and goes on being — had no home, and probes C, D and E
-    miss 24 user directives between them mostly of that shape.
+    miss 16 user directives between them mostly of that shape (4027f25; this rule
+    is what took it down from 22, and the 24 both sites used to say was the
+    total across all five probes rather than these three).
 
     The persistence verbs are the corner of the class that carries the meaning
     in the verb rather than in the syntax: saying a thing stays as it is *is*
@@ -2953,6 +2955,16 @@ def test_the_persistence_verb_needs_the_position_the_report_does_not_have(home, 
     ("patch file stays") or no subject at all, because they are imperatives.
     That is the same discriminator the contracted negation uses two classes up,
     and for the same reason.
+
+    What the guard implements is narrower than what that paragraph describes:
+    six pronouns immediately in front of the verb, and nothing else. "The build
+    keeps failing", "Tests keep flaking" and "You keep getting build errors" are
+    all aspectual reports and all come back `directive`; so does "I still keep
+    getting build errors", one word being enough to defeat a fixed-width
+    lookbehind. The general claim would want a parse. The cost of the gap is
+    zero on this corpus — the shape occurs once in the 89 real user prose blocks
+    and it is the pronoun-adjacent form — so it is recorded here rather than
+    fixed. [E5 fix7 review]
 
     `keep-alive` is the other one, and it is not subtle: it arrives five to a
     block inside pasted HAR files. `good to keep as milestone information` is
@@ -2984,7 +2996,14 @@ def test_keep_this_in_mind_is_the_same_reminder_as_keep_in_mind(home, src):
     precision on the test split.
 
     No lookahead on the new alternative, unlike its neighbours: bare `remember`
-    and `recall` are ordinary words that need one, and `in mind` is not.
+    and `recall` are ordinary words that need one. `in mind` needs one less
+    often, which is not the same as never — *"Keep the option you have in mind
+    out of the config"* is a prohibition with the particle inside its object,
+    and the alternative eats it and returns nothing. The separable form matches
+    no block of the 147 real texts in the census either way, so the gap and the
+    guard both cost zero here; it is recorded rather than narrowed, because a
+    lookahead that told the relative clause from the idiom is the parse this
+    module does not do. [E5 fix7 review]
     """
     for body in (
         "Please keep this instruction in mind. Deferral records stay in UTC.",

@@ -649,8 +649,14 @@ _BACKREF = re.compile(
     # `keep X in mind` and `bear X in mind` are separable, and the fixed strings
     # below only ever matched the un-separated form — "please keep this
     # instruction in mind" walked straight past a guard that claims exactly it.
-    # No lookahead on this one: the particle `in mind` is the whole
-    # disambiguation, so nothing after it has to be checked. [E5 root cause 4]
+    # No lookahead on this one: the particle `in mind` is most of the
+    # disambiguation, so nothing after it is checked. Not all of it — "Keep the
+    # option you have in mind out of the config" is a prohibition with the
+    # particle inside its object, and this alternative swallows the sentence
+    # whole. Telling a relative clause from the idiom is a parse, the separable
+    # form occurs in none of the 147 real texts of the census, and the joined
+    # form is what the corpus writes; recorded, not narrowed.
+    # [E5 root cause 4; E5 fix7 review]
     r"|(?:please |just )?(?:bear|keep)(?:s|ing)? [\w ]{1,30}?in mind\b"
     r"|(?:please |just )?(?:remember|recall|bear in mind|keep in mind)"
     r"(?=\s*[:,;—–]|\s+(?:that|to|we|you|i|it|this|these|the|our|your|what"
@@ -1060,7 +1066,9 @@ _PROHIBIT = re.compile(
 # done, this names what may not be changed.
 #
 # It is one narrow corner of a wide hole. Probes C, D and E between them miss
-# 24 user directives and most of them are positive standing rules with nothing
+# 16 user directives — 18 across all five, measured on 4027f25; the 24 this line
+# said for a while was the five-probe total taken before this rule closed six of
+# them — and most of them are positive standing rules with nothing
 # lexical to match on at all — "Every task card carries the AMM reference",
 # "Dispatch checks run the MEL first" — which is a subject noun phrase and a
 # simple-present verb, and telling that from a bug report ("the exported types
@@ -1071,8 +1079,21 @@ _PERSIST = re.compile(
     # Not `I keep getting build errors`. A subject in front turns the verb
     # aspectual — it reports repetition rather than requiring constancy — and
     # the imperative, which is how half of these rules are written, has none.
-    # Same reasoning as the contracted negation in `_PROHIBIT`, and the same
-    # shape: position, not vocabulary.
+    #
+    # **This is six pronouns, not the general claim, and the difference is not
+    # small.** "The build keeps failing", "Tests keep flaking" and "You keep
+    # getting build errors" are all reports and all come back `directive`; so
+    # does "I still keep getting build errors", because a fixed-width lookbehind
+    # is a fixed width and one word in between defeats it. The guard catches the
+    # pronoun-adjacent form and that is the whole of it.
+    #
+    # Left as it is on purpose. Testing for *any* subject is the parse this
+    # module refuses to do, and the six are not arbitrary: they are what the
+    # census has. The aspectual shape occurs once in the 89 real user prose
+    # blocks and it is the pronoun-adjacent form, so the measured cost of the
+    # gap is zero — but that is the corpus's doing, not the rule's, and a corpus
+    # with more bug reports in it is where the false positives come from.
+    # Recorded rather than fixed. [E5 fix7 review]
     r"(?<!\bi )(?<!\bwe )(?<!\bit )(?<!\bthey )(?<!\bthis )(?<!\bthat )"
     # Not `keep-alive`, which is a header value and arrives five at a time in
     # pasted HAR files.

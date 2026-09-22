@@ -79,7 +79,13 @@ def test_the_extractor_scores_zero_on_real_text():
 
     **0/6/2 -> 1/7/1 is the first true positive this set has ever produced**, and
     it is worth exactly one sentence of celebration: `_PERSIST` reads *"I'd like
-    to keep it the same 3 simple files"* as a standing rule, which it is. The new
+    to keep it the same 3 simple files"* as a standing rule, which it is. The
+    credit is to the block and not to that clause, though: the verb matches
+    twice in it, and the first hit is *"while keeping it simple and dependency
+    free"* — a condition on the task being asked for, not a standing rule. The
+    verdict is block-level, so the right one being in there is enough to score
+    it; a span-level extractor would have to choose, and nothing here does. The
+    new
     false positive beside it is *"Keep it same overall length as the pros or
     cons"* — a lexical twin of the true positive, in the same register, from the
     same kind of turn. No rule in this module separates them, three annotators

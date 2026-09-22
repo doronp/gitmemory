@@ -563,7 +563,7 @@ CAUGHT. No behaviour changed, so every board is unchanged by construction.
 Root cause 2, which had sat open through five fixes: `_PROHIBIT` reads a bare
 negation as a prohibition. Probe E put real instances on it, and the count is
 what settles it. Of the 89 distinct user prose blocks here, the contracted
-negated `do` occurs **21 times in 20 blocks**:
+negated `do` occurs **21 times in 19 blocks**:
 
 | | occurrences |
 |---|---|
@@ -684,7 +684,7 @@ Three guards, and they are most of the rule:
 
 | not admitted | why | where it comes from |
 |---|---|---|
-| *"**I keep** getting mysterious build errors"* | a subject in front makes the verb aspectual — it reports repetition, which is what you write when something is broken. The imperative, which is how half of these rules are written, has no subject | the real corpus |
+| *"**I keep** getting mysterious build errors"* | a subject in front makes the verb aspectual — it reports repetition, which is what you write when something is broken. The imperative, which is how half of these rules are written, has no subject. The guard is narrower than that sentence: six pronouns immediately in front and nothing else, so *"The build keeps failing"* and *"I still keep getting build errors"* are both missed | the real corpus |
 | `keep-alive` | a header value; arrives five to a block in pasted HAR files | the real corpus |
 | *"good to **keep as** milestone information"* | with no object between verb and `as`, the frame appraises the thing instead of constraining it. *"keep it as YAML"* has the object and still counts | the real corpus |
 
