@@ -4362,7 +4362,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "17 mutants",
+        "a full pass is 5" + "19 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4440,10 +4440,31 @@ MUTANTS = [
         # for two epochs.
         "the readme test count is whatever this machine collects",
         "tests/test_docs.py",
-        '    offline = _collect(GITMEMORY_CC_FIXTURES=os.path.join(ROOT, "no-such-corpus"))\n'
+        '    offline = _collect(**NO_CORPUS)\n'
         '    assert int(claimed.group(1).replace(",", "")) == offline, (',
         '    offline = _collect()\n    assert int(claimed.group(1).replace(",", "")) == offline, (',
         "test_the_readme_test_count_is_the_test_count",
+    ),
+    (
+        # The same bug through the door the fix above did not cover: switching
+        # off one corpus by name, in a repository that now has two. This is the
+        # literal state the tree was in for the length of one commit, and the
+        # test above caught it — on the one machine that had cloned pi.
+        "the offline collect leaves the second corpus switched on",
+        "tests/test_docs.py",
+        '    "GITMEMORY_PI_FIXTURES": os.path.join(ROOT, "no-such-corpus"),\n',
+        "",
+        "test_the_readme_test_count_is_the_test_count",
+    ),
+    (
+        # Count the corpus cases by one test's name, in a suite where two tests
+        # are parametrised over the same 162 fixtures. Undercounts by 162 and
+        # says nothing while doing it; the README's 322 was this arithmetic.
+        "the conformance count counts one of the two tests that replay the corpus",
+        "tests/test_docs.py",
+        '    cases = sum(1 for line in out.splitlines() if line.endswith(".jsonl]"))',
+        '    cases = sum(1 for line in out.splitlines() if "test_third_party_corpus[" in line)',
+        "test_the_readme_conformance_count_is_the_conformance_count",
     ),
     (
         # The scanner's floor. Nothing in the tree violates the rule any more,
@@ -4876,7 +4897,7 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 517 mutants x two suite runs, which
+    The filter exists because a full pass is 519 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
     to mean either waiting for the other 501 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in

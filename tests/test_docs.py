@@ -15,8 +15,21 @@ import sys
 
 import pytest
 from test_claude_code import CC_FIXTURES, _corpus
+from test_pi import _corpus as _pi_corpus
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Every corpus env var, pointed at nothing. There are two now, and the second
+# one arrived without this constant: adding the pi adapter put four cases into
+# the "fresh checkout" count on whichever machine had cloned pi, which is
+# exactly the drift `test_the_readme_test_count_is_the_test_count` exists to
+# catch — reached a second time through a door the first fix did not cover.
+# One name, so a third corpus cannot re-open it by being forgotten in one of
+# the two call sites below.
+NO_CORPUS = {
+    "GITMEMORY_CC_FIXTURES": os.path.join(ROOT, "no-such-corpus"),
+    "GITMEMORY_PI_FIXTURES": os.path.join(ROOT, "no-such-corpus"),
+}
 
 
 def _read(rel: str) -> str:
@@ -48,7 +61,7 @@ def test_the_readme_test_count_is_the_test_count():
 
     Collected **with the conformance corpus switched off**, and that is the
     whole of [E7 pair review]. `tests/test_claude_code.py` parametrises two
-    tests over every `.jsonl` in claude-code-log's `test/test_data` — 322 cases
+    tests over every `.jsonl` in claude-code-log's `test/test_data` — 324 cases
     — and the default location for that clone is a directory in `/tmp`. So the
     headline number was 1127 on the machine that had cloned it and 805 on a
     fresh checkout, and this test, whose entire job is to stop the README
@@ -63,7 +76,7 @@ def test_the_readme_test_count_is_the_test_count():
     claimed = re.search(r"(\d[\d,]*) tests", _read("README.md"))
     assert claimed, "the README no longer states a test count"
 
-    offline = _collect(GITMEMORY_CC_FIXTURES=os.path.join(ROOT, "no-such-corpus"))
+    offline = _collect(**NO_CORPUS)
     assert int(claimed.group(1).replace(",", "")) == offline, (
         f"README says {claimed.group(1)} tests; a checkout with no corpus collects {offline}"
     )
@@ -101,14 +114,35 @@ def test_the_readme_conformance_count_is_the_conformance_count():
     machine can check, checked by a test that quietly passes everywhere else.
     [E7 pair review]
     """
-    if not _corpus():
-        pytest.skip("claude-code-log's corpus is not cloned; see the README for the command")
+    if not _corpus() or not _pi_corpus():
+        pytest.skip("the third-party corpora are not cloned; run tests/fetch_fixtures.sh")
 
     claimed = re.search(r"(\d[\d,]*) conformance cases", _read("README.md"))
     assert claimed, "the README no longer states a conformance count"
 
-    offline = _collect(GITMEMORY_CC_FIXTURES=os.path.join(ROOT, "no-such-corpus"))
-    assert int(claimed.group(1).replace(",", "")) == _collect() - offline
+    # Counted by node id, not as `_collect() - _collect(**NO_CORPUS)`. With no
+    # corpus an empty `parametrize` still collects one placeholder per
+    # parametrised test, so that delta undercounts by exactly the number of
+    # them — which is how the README came to say 322 where claude-code-log's
+    # 162 fixtures are replayed 324 times, by *two* tests. Undercounting is the
+    # benign direction and that is not a defence; see the negative-control test
+    # below, where the same excuse was refused for the same reason.
+    #
+    # ponytail: the parameter is the fixture path, so "id ends in .jsonl]" is
+    # the whole rule — it counts every corpus-parametrised test without this
+    # test having to know their names, which is what went wrong the first time
+    # (`test_third_party_corpus[` alone misses `test_canonical_output_has_no_
+    # floats`). It would over-count a future non-corpus test parametrised over
+    # .jsonl paths; there is none, and one would be a strange thing to write.
+    out = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    cases = sum(1 for line in out.splitlines() if line.endswith(".jsonl]"))
+    assert int(claimed.group(1).replace(",", "")) == cases
 
 
 def test_the_design_document_does_not_promise_a_file_that_is_not_written():

@@ -64,6 +64,31 @@ code, not merely the copyright line.** Verbatim upstream texts:
 - `dev-docs/dag.md` documents the six shapes that legitimately appear as DAG
   roots. Read, not copied.
 
+### pi — MIT, Copyright (c) 2025 Mario Zechner
+<https://github.com/earendil-works/pi>
+
+- `packages/coding-agent/src/session/session-entries.ts` and
+  `session-manager.ts` are the source of truth for the entry union, the
+  256-byte rewritable `title` slot, and the rewrite paths that make the format
+  *not* strictly append-only. Read to write `adapters/pi.py`; no code copied.
+  Every claim the adapter's docstring makes about the format cites a file and
+  line at the pinned rev, so a reader can check it rather than trust it.
+- `packages/coding-agent/test/fixtures/` (2 `.jsonl` fixtures) joins the
+  conformance corpus, fetched at test time by `tests/fetch_fixtures.sh`. These
+  in particular could not be vendored even if the licence invited it: each one
+  carries its author's home directory in a `cwd` field, and this repository
+  does not carry anybody's absolute paths, its own owner's least of all.
+
+### oh-my-pi — MIT, Copyright (c) 2025 Mario Zechner and (c) 2025-2026 Can Bölük
+<https://github.com/can1357/oh-my-pi>
+
+- A fork of pi writing the same JSONL dialect, which is why one adapter reads
+  both and `"omp"` is an alias rather than a second entry in `ADAPTERS`. Its
+  `packages/coding-agent/test/fixtures/` (2 `.jsonl`) is the other half of the
+  pi corpus, fetched the same way and for the same reason — the two forks'
+  fixtures differ in bytes, so replaying both is what proves the dialect claim
+  rather than assuming it.
+
 ### agentcairn — Apache-2.0, Copyright 2026 Charles C. Figueiredo
 <https://github.com/ccf/agentcairn>
 
