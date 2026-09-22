@@ -15,6 +15,7 @@ perfect attribution. One row in the index was in exactly that state.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -135,6 +136,22 @@ def test_every_exit_code_above_one_is_broken_not_caught(suite):
     assert verdict(suite, FAILED, "test_whatever")[1] == "BROKEN"
 
 
+def test_a_usage_error_is_not_reported_as_a_mutant_that_does_not_import():
+    """[E7 pair review] Same tag, different sentence, because the sentence is
+    what a reader acts on.
+
+    A row selected one parametrisation by its prose id — `test_… and segments as
+    a dict` — and pytest's `-k` has no string literals, so it collected
+    everything and exited 4 without running a test. The note said the mutant did
+    not import. It imported fine; it was never reached. An hour of subprocess
+    was spent on a report about the wrong file, and the row above passes either
+    way because it only reads the tag.
+    """
+    note = verdict(FAILED, 4, "test_whatever")[2]
+    assert "-k" in note and "exited 4" in note
+    assert "does not import" not in note
+
+
 @pytest.mark.parametrize("suite,intended", [(TIMED_OUT, GREEN), (FAILED, TIMED_OUT)])
 def test_a_run_that_never_returned_is_wedged_not_caught(suite, intended):
     """[E7] The verdict this round paid thirty-three minutes to learn it needed.
@@ -223,6 +240,50 @@ def test_the_suite_run_deselects_the_one_test_a_mutant_is_meant_to_break(monkeyp
 
     path, _, name = mutate.ANCHOR_TEST.partition("::")
     assert f"def {name}(" in (ROOT / path).read_text(), f"{mutate.ANCHOR_TEST} names no test"
+
+
+def test_a_verdict_reaches_the_log_before_the_next_row_runs():
+    """[E7 pair review] The log of an hour-long pass has to be readable as a log.
+
+    Python block-buffers `print` when stdout is a file or a pipe; the pytest
+    subprocesses inherit that same descriptor and are not buffered by this
+    process at all. So the verdicts arrive in batches, after output belonging to
+    rows below them, and the obvious reading — *this `FAILED` line explains the
+    verdict under it* — is wrong. Half an hour of a triage went into a 2 MB log
+    that way, attributing one row's failure to another row three places later.
+
+    Two real interpreters against a pipe, because that is the arrangement that
+    has the bug: under `capsys` there is no buffering to get wrong, and a test
+    that asserts on `flush=True` in the source is a test of the spelling.
+
+    The environment is pinned rather than inherited, and that is the whole
+    second half of this test. `PYTHONUNBUFFERED=1` in the ambient environment
+    flushes the child's every print whether `say` asks for it or not, so the
+    row that removes `flush=True` scores SURVIVED — and the first thing a
+    reader does when the verdicts interleave is re-run the harness under
+    `PYTHONUNBUFFERED=1` to make the log legible, which is exactly the state in
+    which this test stops testing anything. It scored SURVIVED for that reason
+    before this line existed. [E7 pair review]
+    """
+    child = "import subprocess, sys; subprocess.run([sys.executable, '-c', \"print('child')\"])"
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "tests")}
+    env.pop("PYTHONUNBUFFERED", None)
+
+    def order(emit: str) -> list[str]:
+        out = subprocess.run(
+            [sys.executable, "-c", f"import mutate_index as m; {emit}; {child}"],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        return out.stdout.split()
+
+    # The floor, and it is the mutant: an unflushed print in this same
+    # arrangement has to come out *behind* the child, or there is no buffering
+    # here to get wrong and the assertion below passes on nothing.
+    assert order("print('verdict')") == ["child", "verdict"]
+    assert order("m.say('verdict')") == ["verdict", "child"]
 
 
 def test_every_mutation_row_anchors_exactly_once():
@@ -314,6 +375,39 @@ def test_every_mutation_row_names_a_test_that_exists():
     # alone, which is how a typo becomes a row that silently runs the suite.
     nameless = [n for n, _, _, _, expr in MUTANTS if not re.search(r"\btest_\w+", expr)]
     assert not nameless, f"rows selecting no test function: {nameless}"
+
+
+def test_every_mutation_row_selects_with_an_expression_pytest_can_parse():
+    """[E7 pair review] The case above checks the names in the expression. This
+    checks that the expression is one.
+
+    `test_… and segments as a dict` names a real test and a real parametrisation
+    and is not a `-k` expression: the grammar is identifiers joined by
+    and/or/not, with no string literals, so pytest collects the whole suite and
+    exits 4 having run nothing. That row sat in the index for a full pass and
+    came back BROKEN — a verdict about the mutant, for a defect in the row.
+
+    Parsed with pytest's own parser rather than a grammar restated here, because
+    a second-hand grammar is what goes stale when `-k` grows a token. Private
+    import on purpose and not guarded: if it moves, this test says so, where a
+    skip would leave the check quietly switched off.
+    """
+    from _pytest.mark.expression import Expression
+
+    def parses(expr: str) -> bool:
+        try:
+            Expression.compile(expr)
+        except SyntaxError:
+            return False
+        return True
+
+    # The floor. A checker that accepts everything passes the loop below in
+    # silence, and the bad shape is the one this test is named for.
+    assert parses("test_a_manifest_the_gate_cannot_read and dict")
+    assert not parses("test_a_manifest_the_gate_cannot_read and segments as a dict")
+
+    bad = [f"{name}: -k {expr}" for name, _, _, _, expr in MUTANTS if not parses(expr)]
+    assert not bad, "rows whose -k pytest cannot parse:\n  " + "\n  ".join(bad)
 
 
 def test_every_mutation_row_has_a_distinct_name():

@@ -1429,14 +1429,21 @@ def test_background_framing_is_not_an_instruction(home, src):
     "since then" — reports how things were. The frame marks it, and it marks it
     even when the tense of the clause behind is ambiguous, which is why the
     frame is what the guard keys on.
+
+    The two framed clauses are prohibitions, and that is the [E7 pair review]
+    half of this test. They were *"the old build never ran the tests"* and
+    *"the previous team never wrote tests"* — reports of the past that the
+    extractor does not read as decisions in the first place, so deleting the
+    `for context|fyi|fwiw` branch this test is named for left it green. A guard
+    can only be tested on an input it is the only thing stopping.
     """
     control = "No CI-less merges from here on."
     session = parsed(
         home,
         src,
         [
-            user("u1", "For context, the old build never ran the tests."),
-            user("u2", "FYI, the previous team never wrote tests."),
+            user("u1", "For context, we don't vendor dependencies."),
+            user("u2", "FYI, never rebase a shared branch."),
             user("u3", "Back in 2019 we had no CI whatsoever."),
             user("u4", "Since then we never rebuilt the index."),
             user("u5", "Early on we decided not to use an ORM."),
@@ -1727,6 +1734,14 @@ def test_a_hedge_is_a_hedge_on_either_side_of_the_auxiliary(home, src):
     "I really don't think" and "I don't really think" are one sentence written
     twice. The slot was open on one side only, so the frame missed, the negation
     was left sitting there on its own, and the hedge was filed as a rule.
+
+    The two perfect-tense lines carry a participle that is spelled like a bare
+    verb — *run*, *let* — and that is the [E7 pair review] half of this test.
+    The one they replace was *"I honestly have never needed that flag"*, which
+    nothing reads as a rule with or without the frame, so deleting both adverb
+    slots from the perfect frame left the test green. *"We have never run
+    migrations by hand"* is the sentence the frame exists for: strip it and the
+    directive class sees `never run` and files a report of the past as an order.
     """
     control = "Don't add a cache in the request path."
     session = parsed(
@@ -1737,8 +1752,9 @@ def test_a_hedge_is_a_hedge_on_either_side_of_the_auxiliary(home, src):
             user("u2", "We honestly don't want another moving part."),
             user("u3", "I'm genuinely not convinced we should forbid the cache."),
             user("u4", "We are not at all sure, so no rewrite this week."),
-            user("u5", "I honestly have never needed that flag."),
-            user("u6", control),
+            user("u5", "I honestly have never run migrations by hand."),
+            user("u6", "We have honestly never let a secret into the repo."),
+            user("u7", control),
         ],
     )
     assert labelled(session) == [("directive", control)]

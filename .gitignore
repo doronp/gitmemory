@@ -14,6 +14,13 @@ graphify-out/
 # and the committed checksum is what says it has not moved — committing the
 # dump as well would be a second copy of the corpus that could disagree.
 bench/fixture-dev/
+# claude-code-log's MIT fixtures, cloned by whoever wants to run the 322
+# conformance cases. The default used to be a directory in `/tmp`, which is a
+# scratch path this project bans in its documentation for the reason it then
+# proved: the clone outlived the sentence quoting it and not much longer, and
+# the README's test count silently depended on it. Repo-local and ignored, so
+# it survives a reboot and ships nowhere. [E7 pair review]
+.conformance/
 # Review agents are given a git worktree of their own, which lands here. A
 # worktree is a checkout, so git offers to commit it as a gitlink — and did,
 # once. Their scratch is theirs; it is not this repository's history.

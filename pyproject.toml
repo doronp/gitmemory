@@ -38,7 +38,9 @@ target-version = "py313"
 # Review agents get their own git worktree under here, and their scratch is
 # theirs, not ours. Untracked, unignorable by git (a worktree is a checkout),
 # and it should not be able to fail the project's lint.
-extend-exclude = [".claude"]
+# `.conformance` is somebody else's repository, cloned for its fixtures. Its
+# lint is not ours to fail.
+extend-exclude = [".claude", ".conformance"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]

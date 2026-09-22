@@ -177,11 +177,11 @@ about reviewers: a bounded wait looks like a fix and reads like a fix, and six
 agents plus two independent runs all looked at it and none of them said "and
 then it lies". A test running on a loaded machine did.
 
-## The two rows that were not attribution problems
+## The three rows that were not attribution problems
 
-The same full pass produced two `MISSED` verdicts — mutant caught, but not by
+The same full pass produced three `MISSED` verdicts — mutant caught, but not by
 the test named for it. `MISSED` normally means the intended test is decorative
-and some other test is doing the work. Both of these meant something else, and
+and some other test is doing the work. All three meant something else, and
 finding out which required a third harness fix.
 
 **`SURVIVED` was unreachable.** The suite the harness runs includes
@@ -195,8 +195,9 @@ long as that bookkeeping existed. It is deselected in the suite run now, and
 only there: outside a mutation the anchor is supposed to be present, and that
 test has caught a row broken by an ordinary product edit twice.
 
-With that removed, both rows turned out to name **code a later fix had made
-dead**, which is a different and more interesting thing than a weak test.
+With that removed, all three rows turned out to be **a later fix having
+quietly taken over**, which is a different and more interesting thing than a
+weak test.
 
 - `_fill` fed the digest twice for a skipped generation. An E3 loop at the end
   of the function wrote `{"skipped": "<key>: <repr(exc)>"}`; the E6 generation
@@ -211,6 +212,15 @@ dead**, which is a different and more interesting thing than a weak test.
   made `--db out.db` work: `dirname("out.db")` is `""` and `makedirs("")` is
   `ENOENT`. Removed, because reverting it left the named test green and the
   suite green.
+- `bench/gate.py`'s `hasattr(derive, "decisions")` check — the one that must not
+  turn an ImportError from inside `derive` into "no decisions yet" — was never
+  reached by the test named for it. The test replaces `derive` with an object
+  that raises ImportError from *every* attribute, and the E5:R8 line above the
+  check, `print(f"scoring {derive.__file__}")`, was added afterwards. It trips
+  first, the test's `pytest.raises(ImportError)` is satisfied, and the check is
+  never executed. Unlike the two above, the behaviour here is real and is in one
+  line: `__file__` is a plain string on the stub now and only `decisions`
+  raises, so the test exercises what it is named for.
 
 The digest row re-anchored onto the line that had been doing its work since E6.
 The `--db` row did not, and that is the more interesting half. Re-anchored onto
@@ -225,19 +235,130 @@ string. There is no line to revert, so **the row was deleted** and both
 only ever score MISSED sends the next reader to audit an attribution that was
 never wrong.
 
-Neither line was wrong and neither was a bug. Both were comments claiming to be
-the reason something worked, three fixes after they had stopped being the
-reason, which is the kind of thing that survives every review that reads code
-for defects. The `--db` comment had been wrong about *two* mechanisms — the one
-it named and the one that replaced it — and a passing test said nothing about
-either, because the behaviour was never in one place to begin with.
+None of the three was a bug, and that is what makes them hard to find. Each was
+a claim — in a comment, or in a test's choice of what to break — that had been
+true when it was written and was quietly made false by a later fix landing
+above or beside it. The `--db` comment had been wrong about *two* mechanisms,
+the one it named and the one that replaced it, and a passing test said nothing
+about either because the behaviour was never in one place to begin with.
+
+A review that reads code for defects will not find any of this. A green test
+suite will not either: all three tests were green throughout, and two of them
+were green for reasons their authors would not have recognised. Only asking
+*"does this test fail when I remove the thing it is named for"* separates a
+test from a decoration, and only asking it of every row, on a schedule, finds
+the ones that were fine when written.
+
+## The full pass, and the three rows that held nothing at all
+
+With `SURVIVED` reachable, every row was run: **422 rows, 415 caught by their
+intended test, 6 `MISSED`, 1 `BROKEN`.** Three of the six are the section above.
+The other three were not `MISSED` — they were `SURVIVED`, and the pass could not
+say so, for a second reason with the same shape as the first.
+
+**A red baseline makes `SURVIVED` unreachable all over again.** The pass ran in
+its own worktree, which has no clone of the conformance corpus, so
+`test_the_readme_test_count_is_the_test_count` was already failing there before
+any mutant was applied — that is the README defect, found by this pass and
+written up in `tests/test_docs.py`. The suite run carries `-x`. It therefore
+exited 1 on every row whatever the mutant did, and every unpinned row scored
+`MISSED` — "caught, but not by its test" — which sends a reader to audit an
+attribution when the behaviour is held by nothing. The three were re-derived in
+a tree whose baseline was green, without `-x`: under each mutant the only red
+test was the harness's own bookkeeping, 1126 passed, nothing else moved.
+
+The three, and none of them was a weak test in the way `SURVIVED` usually means:
+
+- **`for context|fyi|fwiw` is deletable.** The test's two framed examples were
+  *"the old build never ran the tests"* and *"the previous team never wrote
+  tests"* — reports of somebody else's past, which the extractor does not read
+  as decisions at all. The guard was never what stopped them. Replaced with two
+  framed *prohibitions*, which the directive class does claim and which the
+  frame is the only thing declining. A guard can only be tested on an input it
+  is the only thing stopping.
+- **The perfect-tense hedge frame is load-bearing, and its test's example was
+  not.** `I honestly have never needed that flag` is not read as a rule with the
+  frame or without it. A first probe deleted the whole branch and labelled
+  nothing, which nearly bought the conclusion that it was dead code; a second,
+  written adversarially, showed what it is for: a participle spelled like a bare
+  verb. *"We have never run migrations by hand"* without the frame is `never
+  run` to the directive class, and a report of the past is filed as an order.
+  `run`, `let`, `put`, `set` — the test now carries two of them, one in each
+  adverb slot.
+- **The dashboard row was mutating a column nothing reads.** It swapped
+  `session_id` for `session_key` in the outer `SELECT` of `dash_requests`, on
+  the theory that the per-generation key is what would double the bill. The
+  dedup partitions on `agent, request_id` alone; the projected column plays no
+  part in it. So the mutant renamed an output nobody asserts on and the test
+  stayed green through a full pass — the *row* was wrong, not the test. It now
+  puts `generation` into the window, which is the thing the test's own docstring
+  describes: grouping per generation bills the conversation twice.
+
+## `BROKEN` was a sentence about the wrong file
+
+The seventh: `a non-list segments field skips without telling the gate`, reported
+as *"the mutant does not import"*. The mutant imports. The row selected one
+parametrisation by its prose id — `test_… and segments as a dict` — and pytest's
+`-k` is identifiers joined by and/or/not with **no string literals**, so pytest
+9.1.1 collected the whole suite and exited 4 having run nothing. Re-derived
+directly from the command line, which is a route the harness does not use.
+
+Three repairs, because the row was only the first of them:
+
+- the row selects `… and dict`, the one word of that id no other case of the
+  test contains;
+- `verdict` keeps the `BROKEN` tag for exit 4 — it is still not evidence — but
+  stops saying the mutant did not import, because that sentence sent this
+  reader to the mutant;
+- and a two-second pre-flight, `test_every_mutation_row_selects_with_an_expression_pytest_can_parse`,
+  parses every row's expression with pytest's own parser. The hour-long pass
+  should not be the thing that finds a typo in a row.
+
+## The row that the workaround switched off
+
+The flush repair above got the usual row — delete `flush=True`, expect
+`test_a_verdict_reaches_the_log_before_the_next_row_runs` to go red — and it
+scored **`SURVIVED`**, while applying the same mutant by hand and running the
+same test made it fail in a tenth of a second. Two routes, two answers, and the
+difference between them was the environment: the harness had been started with
+`PYTHONUNBUFFERED=1`.
+
+Of course it had. That is what you set when the verdicts interleave and you want
+the log readable *now* — the workaround for the defect, applied by the person
+about to check that the defect is fixed. The test spawned its child with
+`{**os.environ, ...}`, so the flag reached the child, the child flushed whether
+`say` asked or not, and the one test in the suite whose subject is buffering was
+the one test the flag silently disarmed. It would have passed on a laptop and
+failed in CI, or the reverse, and the mutation record would have said the
+behaviour was pinned either way.
+
+The test now pins the environment instead of inheriting it, and the pin has a
+floor that is the mutant itself: an unflushed `print` in the same arrangement has
+to come out *behind* the child, or there is no buffering here to get wrong and
+the assertion that follows proves nothing. Re-measured under
+`PYTHONUNBUFFERED=1` — the environment that hid it — the row now scores
+`CAUGHT`.
+
+The general shape is worth the paragraph: **a test that reads `os.environ` lets
+the machine it runs on decide the verdict**, and the environments a harness is
+run under are not a random sample. They are exactly the ones a tired reader
+reached for.
 
 ## What it cost
 
-**1121 → 1127 tests, 423 → 430 negative controls**, for four fixes and the
-harness repair below. Seven rows added and one deleted — the deletion is in the
-section above, and is the only row this project has ever removed for being
-unanswerable rather than obsolete.
+**1127 → 1133 tests, 423 → 437 negative controls**, for four fixes, the harness
+repair below, and the seven rows above. Eight rows added and one deleted — the
+deletion is in the section above, and is the only row this project has ever
+removed for being unanswerable rather than obsolete. Both test counts are
+corpus-inclusive, and that unit is the last thing this round retired.
+
+**The 1127 is retired, and finding out why is the last thing this round did.**
+It was the count on a machine that had cloned claude-code-log's corpus; a fresh
+checkout collects 811. The test that exists to stop the README quoting a number
+nobody else can reproduce was itself asserting one, and passed for two epochs
+because the clone happened to still be in `/tmp`. The README now states the
+offline count and names the corpus separately, and no environment default in
+this repository points into a scratch directory.
 
 Every one of the four has a row in `tests/mutate_index.py` that reverts it, and
 the named test must go red when it does. Two of the rows are the two ends of one

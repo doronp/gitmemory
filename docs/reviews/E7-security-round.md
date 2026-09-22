@@ -71,8 +71,10 @@ Per report: parsing 15, carry-ins 14, secrets 11, fs 10, index 10, dashboard 8.
 At the round's close the suite had gone **960 → 1121 tests** and the
 negative-control index **265 → 423 rows**: 161 tests and 158 controls, for 56
 fixes. The [pair review](E7-pair-review.md) then added 6 and 7, for four more
-fixes, and removed one row that could only ever score MISSED — **1127 and 430**
-today.
+fixes, and removed one row that could only ever score MISSED; the full mutation
+pass that followed it added 6 and 7 again, for three rows that held nothing and
+one that could not be run — **1133 and 437** today, where the test figure counts
+the 322 conformance cases and the README's does not.
 
 One of each is this page's own doing: writing the paragraph above meant reading
 `main`'s docstring in the harness, which justified its name filter with "146
@@ -103,9 +105,9 @@ output rather than its exit code:
   it fails for every mutant by construction, and "did the suite go red" was
   being answered by the harness. Every unpinned row scored MISSED instead,
   which reads as *some other test caught it* and sends you to look at the
-  attribution rather than at the hole. Found from the two MISSED rows in the
-  first full pass, [both of which turned out to be
-  real](E7-pair-review.md#the-two-rows-that-were-not-attribution-problems).
+  attribution rather than at the hole. Found from the MISSED rows in the first
+  full pass, [all three of which turned out to be
+  real](E7-pair-review.md#the-three-rows-that-were-not-attribution-problems).
 
 It also *found* one, by costing three hours of full CPU: under that load
 `verify` gave up on a session lock and reported 71 live segments as litter,

@@ -13,6 +13,9 @@ import re
 import subprocess
 import sys
 
+import pytest
+from test_claude_code import CC_FIXTURES, _corpus
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -21,30 +24,67 @@ def _read(rel: str) -> str:
         return fh.read()
 
 
-def test_the_readme_test_count_is_the_test_count():
-    """ "732 tests" in a file nobody runs is a claim, not a fact.
-
-    Collected rather than run: the count is what the suite *contains*, this test
-    included, and collection is a second of subprocess against twenty of a full
-    run. `-p no:cacheprovider` so the collection does not write a `.pytest_cache`
-    into the repository it is measuring. [E4, review: docs 6]
+def _collect(**env_extra: str) -> int:
+    """Collected rather than run: the count is what the suite *contains*, this
+    test included, and collection is a second of subprocess against twenty of a
+    full run. `-p no:cacheprovider` so the collection does not write a
+    `.pytest_cache` into the repository it is measuring. [E4, review: docs 6]
     """
-    claimed = re.search(r"(\d[\d,]*) tests", _read("README.md"))
-    assert claimed, "the README no longer states a test count"
-
     out = subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "--collect-only", "-p", "no:cacheprovider"],
         cwd=ROOT,
         capture_output=True,
         text=True,
         check=False,
+        env=dict(os.environ, **env_extra),
     ).stdout
     found = re.search(r"(\d+)(?:/\d+)? tests? collected", out)
     assert found, out[-2000:]
+    return int(found.group(1))
 
-    assert int(claimed.group(1).replace(",", "")) == int(found.group(1)), (
-        f"README says {claimed.group(1)} tests; the suite collects {found.group(1)}"
+
+def test_the_readme_test_count_is_the_test_count():
+    """ "732 tests" in a file nobody runs is a claim, not a fact.
+
+    Collected **with the conformance corpus switched off**, and that is the
+    whole of [E7 pair review]. `tests/test_claude_code.py` parametrises two
+    tests over every `.jsonl` in claude-code-log's `test/test_data` — 322 cases
+    — and the default location for that clone is a directory in `/tmp`. So the
+    headline number was 1127 on the machine that had cloned it and 805 on a
+    fresh checkout, and this test, whose entire job is to stop the README
+    claiming a number nobody else sees, was the thing asserting the unreachable
+    one. It passed for two epochs because the clone happened to still be there;
+    it failed the moment a scratch cleanup removed it.
+
+    The README states the number a fresh checkout gets, and names the corpus
+    separately with the command to fetch it — the treatment the LongMemEval
+    download already had.
+    """
+    claimed = re.search(r"(\d[\d,]*) tests", _read("README.md"))
+    assert claimed, "the README no longer states a test count"
+
+    offline = _collect(GITMEMORY_CC_FIXTURES=os.path.join(ROOT, "no-such-corpus"))
+    assert int(claimed.group(1).replace(",", "")) == offline, (
+        f"README says {claimed.group(1)} tests; a checkout with no corpus collects {offline}"
     )
+
+
+def test_the_readme_conformance_count_is_the_conformance_count():
+    """The other half, and it only runs where the corpus is.
+
+    Skipped rather than asserted-away on a machine without the clone, because
+    the alternative is the failure above: a number in the README that only one
+    machine can check, checked by a test that quietly passes everywhere else.
+    [E7 pair review]
+    """
+    if not _corpus():
+        pytest.skip("claude-code-log's corpus is not cloned; see the README for the command")
+
+    claimed = re.search(r"(\d[\d,]*) conformance cases", _read("README.md"))
+    assert claimed, "the README no longer states a conformance count"
+
+    offline = _collect(GITMEMORY_CC_FIXTURES=os.path.join(ROOT, "no-such-corpus"))
+    assert int(claimed.group(1).replace(",", "")) == _collect() - offline
 
 
 def test_the_design_document_does_not_promise_a_file_that_is_not_written():
@@ -112,6 +152,46 @@ def test_the_design_document_cites_nothing_in_tmp():
     for rel in ("docs/DESIGN.md", "README.md", "hook/README.md", "docs/watching.md"):
         for n, line in enumerate(_read(rel).splitlines(), 1):
             assert "/tmp/" not in line, f"{rel}:{n} cites a scratch path: {line.strip()}"
+
+
+def test_no_environment_default_points_into_a_scratch_directory():
+    """The rule above, applied to the code the documents describe.
+
+    `tests/test_claude_code.py` defaulted `GITMEMORY_CC_FIXTURES` to
+    `/tmp/gm-e0/claude-code-log/test/test_data`, and 322 of the suite's cases
+    are parametrised over whatever is there. So the suite had two sizes, the
+    README quoted the larger one, and the test that checks the README agreed —
+    on one machine, for as long as nobody cleaned `/tmp`. When somebody did, the
+    count test failed and the 322 cases vanished silently, which is the worse
+    half: a parametrisation over an empty list is not an error.
+
+    The ban is on the *default* rather than on the string. A `/tmp` path passed
+    to a function under test is an inert argument and there are dozens; a `/tmp`
+    path behind `os.environ.get` is what the suite does when nobody says
+    otherwise. [E7 pair review]
+    """
+    default = re.compile(r"environ\.get\([^)]*?/tmp/")
+    # The floor, because a scan that matches nothing passes loudest. Assembled
+    # from pieces for the reason the mutation index does it: a sample written
+    # out in full is a violation in the file being scanned, and this test found
+    # its own first draft.
+    assert default.search('os.environ.get("X", "/tm' + 'p/gm-e0/x")')
+    assert not default.search('shutil.rmtree("/tm' + 'p/gm-scratch")')
+
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "__pycache__"]
+        for name in filenames:
+            if not name.endswith(".py"):
+                continue
+            rel = os.path.relpath(os.path.join(dirpath, name), ROOT)
+            hit = default.search(_read(rel))
+            assert not hit, f"{rel} defaults an environment variable to {hit.group(0)!r}"
+
+    # The shape that gets past the regex: a default bound to a name first is not
+    # inside the `environ.get(...)` span, and that is the very form the corpus
+    # default took after being written out over five lines. Asserted on the
+    # value, which is the only thing that cannot be reworded around.
+    assert str(CC_FIXTURES).startswith(ROOT + os.sep), CC_FIXTURES
 
 
 def test_the_unbuilt_retrieval_arms_are_not_described_as_built():

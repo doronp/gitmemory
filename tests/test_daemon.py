@@ -1976,8 +1976,20 @@ def test_a_standing_init_failure_is_not_logged_once_per_poll(tmp_path, monkeypat
     lines: list[str] = []
     # Stopped from the poll sleep, not from `log`: the whole point is that the
     # later passes say nothing, so a counter on the log would never fire.
+    #
+    # Through `_on_pass`, and that is the [E7 pair review] half of this test. It
+    # was written as a bare `monkeypatch.setattr(daemon.time, "sleep", ...)`,
+    # which is the exact patch `_on_pass` exists to replace — `subprocess`'s own
+    # wait loop sleeps too, `gitrepo` always passes a timeout, and a `git
+    # config` slow enough to be polled twice arrives here as a pass boundary. It
+    # flaked about one run in twenty of this file and once in a full suite,
+    # sometimes as one log line short and sometimes as none at all, because the
+    # ten passes were spent inside `gitrepo.init` before the first one finished.
+    # The helper's docstring is the write-up of that same bug, found in three
+    # other tests two epochs ago; this one was written afterwards and did not
+    # use it.
     passes = iter(range(10))
-    monkeypatch.setattr(daemon.time, "sleep", lambda _s: next(passes))
+    _on_pass(monkeypatch, lambda: next(passes))
     with pytest.raises(StopIteration):
         daemon.run(home, poll=0, interval=0, log=lines.append)
 
@@ -1985,3 +1997,31 @@ def test_a_standing_init_failure_is_not_logged_once_per_poll(tmp_path, monkeypat
     # passes after it report one, and a *changed* error list is said
     # immediately by design. Ten passes, two lines — before the fix it was ten.
     assert sum("git init:" in m for m in lines) == 2, lines
+
+
+def test_the_pass_counter_counts_passes_and_not_every_sleep(monkeypatch):
+    """A floor under `_on_pass`, which seven tests above now stop themselves with.
+
+    The helper is a test helper and had no test, so the one thing it does — tell
+    `run`'s poll apart from `subprocess`'s wait loop by duration — was held up
+    by nothing but the comment explaining it. The test above was written without
+    the helper and reproduced the flake it was written for, two epochs later, so
+    "everybody knows" is not holding this. Deterministic, because it asks the
+    discriminator directly rather than racing a `git` subprocess for it.
+    [E7 pair review]
+    """
+    fired: list[float] = []
+    slept: list[float] = []
+    monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))
+    _on_pass(monkeypatch, lambda: fired.append(0.0), poll=0)
+
+    time.sleep(0)  # `run`'s own poll
+    assert fired == [0.0] and slept == []
+
+    # `subprocess.Popen._wait`'s doubling sequence, which starts at 0.0005 and
+    # is never zero. Passed through to the real sleep — which this test has
+    # itself replaced, so the assertion is that it arrives there and not here.
+    for delay in (0.0005, 0.001, 0.002):
+        time.sleep(delay)
+    assert fired == [0.0], "a subprocess wait was counted as a pass"
+    assert slept == [0.0005, 0.001, 0.002]

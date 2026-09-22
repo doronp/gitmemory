@@ -2197,10 +2197,18 @@ MUTANTS = [
         "test_the_unmeasured_panel_names_what_is_not_known",
     ),
     (
+        # The window, not the projection. This row used to swap `session_id`
+        # for `session_key` in the outer `SELECT` list, on the theory that the
+        # per-generation key is what would double the bill — and the dedup does
+        # not read that column. It partitions on `agent, request_id` alone, so
+        # the mutant renamed an output column nothing asserts on and the test
+        # stayed green through a full pass. Putting `generation` in the
+        # partition is the thing the test's own docstring describes: *"grouping
+        # per generation would bill the conversation twice"*. [E7 pair review]
         "a replayed generation is billed again",
         "index.py",
-        "CREATE VIEW dash_requests AS\nSELECT agent, session_id,",
-        "CREATE VIEW dash_requests AS\nSELECT agent, session_key AS session_id,",
+        "        PARTITION BY agent, request_id ORDER BY generation DESC, seq DESC",
+        "        PARTITION BY agent, request_id, generation ORDER BY seq DESC",
         "test_a_replayed_generation_is_not_billed_twice",
     ),
     (
@@ -2909,8 +2917,15 @@ MUTANTS = [
         "store.py",
         "                raise _Skip(f\"'segments' is {type(raw_segments).__name__}, not a list\")",
         "                continue",
-        "test_a_manifest_the_gate_cannot_read_refuses_the_push_instead_of_passing_it "
-        "and segments as a dict",
+        # `and dict`, not `and segments as a dict`, and that is the [E7 pair
+        # review] half of this row. pytest's `-k` is a Python-ish expression
+        # over identifiers and has no string literals — pytest 9.1.1 collects
+        # the whole suite and then exits 4 on the three bare words, which the
+        # harness reads as "the mutant does not import" and files as BROKEN. The
+        # mutant was fine; the row could not be run. `dict` is the one word of
+        # that parametrize id that appears in no other case of this test, so it
+        # picks out the same single case the prose id names.
+        "test_a_manifest_the_gate_cannot_read_refuses_the_push_instead_of_passing_it and dict",
     ),
     (
         # The lenience `strict` is carved out of. A reader that raised would make
@@ -3860,7 +3875,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "30 mutants",
+        "a full pass is 4" + "37 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -3927,7 +3942,113 @@ MUTANTS = [
         "",
         "test_the_shim_is_silent_under_xtrace_and_does_not_echo_the_home_it_was_given",
     ),
+    # --- E7 pair review: the README count that only one machine could reach ---
+    (
+        # Revert the count test to collecting whatever this machine happens to
+        # have. On a machine with the corpus cloned the collection is 322 cases
+        # larger than the number a stranger gets, which is the state this was in
+        # for two epochs.
+        "the readme test count is whatever this machine collects",
+        "tests/test_docs.py",
+        '    offline = _collect(GITMEMORY_CC_FIXTURES=os.path.join(ROOT, "no-such-corpus"))\n'
+        '    assert int(claimed.group(1).replace(",", "")) == offline, (',
+        '    offline = _collect()\n    assert int(claimed.group(1).replace(",", "")) == offline, (',
+        "test_the_readme_test_count_is_the_test_count",
+    ),
+    (
+        # The scanner's floor. Nothing in the tree violates the rule any more,
+        # so the only thing that can fail is the positive control — which is the
+        # point: a scan with no floor passes on an empty regex.
+        "the scratch-default scan matches nothing and says so cheerfully",
+        "tests/test_docs.py",
+        r'default = re.compile(r"environ\.get\([^)]*?/tmp/")',
+        'default = re.compile(r"(?!x)x")',
+        "test_no_environment_default_points_into_a_scratch_directory",
+    ),
+    (
+        # And the default itself, which is what made the count machine-shaped.
+        # Written as a `+` so the row does not put a scratch path in this file
+        # and trip the very scan it is testing.
+        "the conformance corpus defaults back into a scratch directory",
+        "tests/test_claude_code.py",
+        "CC_FIXTURES = (\n"
+        "    pathlib.Path(__file__).resolve().parent.parent\n"
+        '    / ".conformance"\n'
+        '    / "claude-code-log"\n'
+        '    / "test"\n'
+        '    / "test_data"\n'
+        ")",
+        'CC_FIXTURES = pathlib.Path("/tm" + "p/gm-e0/claude-code-log/test/test_data")',
+        "test_no_environment_default_points_into_a_scratch_directory",
+    ),
+    (
+        # The discriminator seven tests stop themselves with. Without it every
+        # `subprocess` wait long enough to be polled twice counts as a pass, and
+        # `gitrepo` puts a timeout on every `git`, so the tests that drive `run`
+        # end early by however many times the machine was busy.
+        #
+        # There is no row for the other half of this fix — putting
+        # `test_a_standing_init_failure_is_not_logged_once_per_poll` back on the
+        # bare `monkeypatch.setattr(daemon.time, "sleep", ...)` it was written
+        # with. That mutant is the flake itself: it failed about one run in
+        # twenty, which is a row that scores CAUGHT or MISSED depending on the
+        # load on the machine. The behaviour is real and this row is the
+        # deterministic way to hold it. [E7 pair review]
+        "the pass counter counts every sleep in the process again",
+        "tests/test_daemon.py",
+        "        if seconds != poll:",
+        "        if False:",
+        "test_the_pass_counter_counts_passes_and_not_every_sleep",
+    ),
+    (
+        # The pre-flight that would have stopped the row above this one from
+        # costing a full pass. Mutated on the reject half rather than on the
+        # loop, because a loop over an index that is currently clean is green
+        # either way — the floor is the only part of that test a mutant can
+        # reach. [E7 pair review]
+        "an unparseable -k expression is accepted as a parseable one",
+        "tests/test_mutate_harness.py",
+        "        except SyntaxError:\n            return False",
+        "        except SyntaxError:\n            return True",
+        "test_every_mutation_row_selects_with_an_expression_pytest_can_parse",
+    ),
+    (
+        # Split across a `+` for the reason the two other self-mutating rows
+        # are: the literal would otherwise appear twice in this file and the
+        # harness would skip its own row. [E7 pair review]
+        "a usage error is reported as a mutant that does not import again",
+        "tests/mutate_index.py",
+        'why = "pytest refu' + 'sed the run; check -k" if code == 4 else ',
+        'why = "" or ',
+        "test_a_usage_error_is_not_reported_as_a_mutant_that_does_not_import",
+    ),
+    (
+        # The third self-mutating row, and the only one whose subject is the
+        # log rather than the index. Without the flush the verdicts arrive in
+        # batches behind the pytest output of rows below them, which is not a
+        # wrong answer — it is a right answer filed under the wrong row, and
+        # that is worse. [E7 pair review]
+        "the verdicts are block-buffered behind the next row's output",
+        "tests/mutate_index.py",
+        "    print(line, flu" + "sh=True)",
+        "    print(line)",
+        "test_a_verdict_reaches_the_log_before_the_next_row_runs",
+    ),
 ]
+
+
+def say(line: str) -> None:
+    """A verdict, flushed as it is decided.
+
+    Redirect this harness to a file and Python block-buffers these prints while
+    the pytest subprocesses — which inherit the same descriptor and are not
+    buffered by this process at all — write straight through. The verdicts then
+    arrive in the log in batches of half a dozen, sitting after output that
+    belongs to rows further down, and a reader attributing a `FAILED` line to
+    the verdict below it gets the wrong row. Half an hour was spent reading a
+    2 MB log that way before the interleaving was noticed. [E7 pair review]
+    """
+    print(line, flush=True)
 
 
 def run(args: list[str]) -> int:
@@ -4002,7 +4123,16 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
         # tests ran", which has its own verdict two lines down.
         which = "the suite" if suite > 1 else test
         code = suite if suite > 1 else intended
-        return False, "BROKEN", f": the mutant does not import ({which} exited {code})"
+        # 4 is pytest's *usage* error and says nothing about the mutant: the run
+        # never started because the command was wrong. One row selected a
+        # parametrisation by its prose id — `test_… and segments as a dict` —
+        # and `-k` has no string literals, so pytest collected the suite and
+        # exited 4. The note read "the mutant does not import", which is a
+        # sentence about a file pytest never looked at, and it sent the next
+        # reader to the mutant for a defect that was in the row.
+        # [E7 pair review]
+        why = "pytest refused the run; check -k" if code == 4 else "the mutant does not import"
+        return False, "BROKEN", f": {why} ({which} exited {code})"
     if suite == 0:
         return False, "SURVIVED", ""
     if intended == 5:
@@ -4019,9 +4149,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 430 mutants x two suite runs, which
+    The filter exists because a full pass is 437 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 429 or trusting the new one untested.
+    to mean either waiting for the other 436 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this
@@ -4031,7 +4161,7 @@ def main() -> int:
     wanted = sys.argv[1:]
     selected = [m for m in MUTANTS if not wanted or any(w.lower() in m[0].lower() for w in wanted)]
     if wanted and not selected:
-        print(f"no mutant matches {wanted!r}")
+        say(f"no mutant matches {wanted!r}")
         return 2
     bad = []
     for name, filename, find, replace, test in selected:
@@ -4040,7 +4170,7 @@ def main() -> int:
         path = ROOT / filename if "/" in filename else SRC / filename
         original = path.read_text()
         if original.count(find) != 1:
-            print(f"SKIP  {name}: anchor appears {original.count(find)}x in {filename}")
+            say(f"SKIP  {name}: anchor appears {original.count(find)}x in {filename}")
             bad.append(name)
             continue
         path.write_text(original.replace(find, replace))
@@ -4050,10 +4180,10 @@ def main() -> int:
         finally:
             path.write_text(original)
         caught, tag, note = verdict(suite, intended, test)
-        print(f"{tag:<9} {name}{note}")
+        say(f"{tag:<9} {name}{note}")
         if not caught:
             bad.append(name)
-    print(f"\n{len(selected) - len(bad)}/{len(selected)} caught by their intended test")
+    say(f"\n{len(selected) - len(bad)}/{len(selected)} caught by their intended test")
     return 1 if bad else 0
 
 
