@@ -2517,3 +2517,36 @@ def test_cutting_an_attitude_out_does_not_reflow_the_message(home, src):
         "The template is now only showing the combined link instead of the nav."
     )
     assert _assistant_says(home, src, body) == []
+
+
+# --- E5 fix 2, reviewed: an alternative no input could reach --- #
+
+
+def test_owning_a_slip_is_a_repair_whichever_predicate_gets_there_first(home, src):
+    """`_RECANT` listed `my (mistake|bad|error)` and no input could reach it.
+
+    `_REPAIR` lists `my (mistake|bad|error|fault)` — the same three words and one
+    more — and `_REPAIR` is a guard, so it returns `None` before the assistant
+    branch is entered at all. The alternative was unreachable by inclusion, not
+    by accident of the corpus, and it is deleted.
+
+    **This fix has no mutation row, and cannot have one.** Dead code is exactly
+    code every single-edit mutant of which survives: restoring the alternative
+    to `_RECANT` changes no output, because `_REPAIR` still gets there first;
+    removing `_REPAIR`'s branch changes no output either, because `_RECANT` no
+    longer lists the words. Only both edits together bring the behaviour back —
+    measured, and it comes back as `reversal` on all three bodies below. A row
+    is one find/replace in one file, so the negative control this deserves is
+    unexpressible in the harness and is written down here instead.
+
+    The deletion is therefore a small hardening as well as a tidy: before it, a
+    future narrowing of `_REPAIR` would have silently promoted these to
+    reversals through a predicate nobody was looking at. Owning a slip of the
+    keyboard is not withdrawing a position.
+    """
+    for body in (
+        "My mistake — I'll use a bounded queue instead of the lock.",
+        "My bad. Replacing the lock with a queue.",
+        "My error — switching to a deque instead.",
+    ):
+        assert _assistant_says(home, src, body) == [], body

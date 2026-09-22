@@ -1166,7 +1166,14 @@ _RECANT = re.compile(
     r"|(?:good|great|nice|excellent) catch"
     r"|(?:good|great|fair|excellent) point"
     r"|(?:good|great|excellent|sharp) observation"
-    r"|my (?:mistake|bad|error)|i was wrong|i apologi[sz]e|i'?m sorry"
+    # `my (mistake|bad|error)` was here and no input could reach it: `_REPAIR`
+    # lists the same three words plus `fault`, and `_REPAIR` is a guard, so it
+    # returns None before this branch is read. Deleted rather than left as
+    # documentation — an alternative that cannot fire is a claim about the
+    # predicate's coverage that is not true of its behaviour, and the next
+    # reader prices it in. The behaviour is pinned by a test that names neither
+    # regex. [E5 fix 2 review, F5]
+    r"|i was wrong|i apologi[sz]e|i'?m sorry"
     r"|(?:a |an |some )?(?:different|another|alternative|new)"
     r" (?:approach|way|route|strategy|tack|plan|direction)"
     r"|(?:that|this|it)(?:'s| is| was)? (?:just )?(?:not|never) (?:going to |gonna )?work"
