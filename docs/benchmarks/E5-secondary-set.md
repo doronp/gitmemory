@@ -7,6 +7,12 @@ developer's published Claude Code sessions, the decision extractor produced 32
 `directive` nodes and **not one of them was a directive**, while missing both of
 the two that were there.
 
+Seven fixes later it produces 7 and one of them is a directive, which is the
+first non-zero numerator this page has had. The headline above is the number as
+measured, and it stays the headline: fixes 1 to 7 were all tuned against this
+corpus after it was scored, so 0.1250 is a regression floor and 0.0000 is the
+measurement.
+
 The same extractor read **1.0000 / 1.0000** on its held-out synthetic split.
 After fix 2 it reads **1.0000 / 0.7428** there, and the loss is priced below.
 
@@ -19,8 +25,8 @@ a smaller claim than it sounds and is qualified where it is measured.
 |---|---|---|
 | Gate, held-out split | synthetic, generated | 1.0000 / 1.0000 — **1.0000 / 0.7428 after fix 2** |
 | Probe A / B | fiction, spent | 26/32, 27/32 — **23/32, 25/32 after fix 2** |
-| Probe C / D | fiction, blind, unspent | 14/32, 14/32 |
-| **This set** | **real, third-party, census** | **precision 0.0000, recall 0.0000** |
+| Probe C / D | fiction, blind, unspent | 14/32, 14/32 — **16/32, 16/32 after fix 7** |
+| **This set** | **real, third-party, census** | **precision 0.0000, recall 0.0000** — **0.1250 / 0.5000 after fix 7**, on 1 true positive |
 
 `docs/DESIGN.md` §3 promised this set — "30 hand-labeled real-shaped sessions to
 confirm the synthetic set isn't too easy". It did not confirm it.
@@ -187,7 +193,10 @@ draw it. Two went 2–1 to `reversal` and one to `none`; majority stands, and
    construction, which is why it is sufficient alone — but "pass a Path instead
    of a string" is two-sided and is not a course change.
 4. **Positive standing rules are still missed**, confirmed for the third and
-   fourth time (C, D, and both directives here).
+   fourth time (C, D, and both directives here). One corner of it is closed by
+   fix 7 — the verbs that say *stays as it is* — which is where the set's first
+   true positive comes from. The declarative rule with nothing lexical in it is
+   still missed, twenty-odd times across the five probes.
 
 ## What was changed in response
 
@@ -619,6 +628,9 @@ aside, about somebody else's software. Close root cause 4 and it comes back to 1
 on the rule that should always have held it; the floor in `bench/test_probes.py`
 is re-pinned at 13 with that written beside it, and re-pinning it up is for then.
 
+*Then was the next fix.* `_PERSIST` holds this item on the positive rule, as
+predicted, and C is re-pinned at 16 — see fix 7.
+
 Four mutation rows, all CAUGHT by their intended test.
 
 ### What is left of root cause 2
@@ -646,12 +658,132 @@ Each needs its own lookbehind, each fitted to one block, which is the shape this
 class is built against — so they are recorded here rather than guessed at, and
 the order of work is unchanged.
 
+## Fix 7 — a rule can say that a thing stays as it is
+
+Root cause 4, the largest one on the list and the one three probes report
+independently: nothing in `derive.py` claims a **positive standing rule**. Every
+user-side rule the module can see names something rejected — a substitution
+frame (`X instead of Y`) or a prohibition (`never`, `do not`) — so a rule that
+says what a thing *is* has no predicate at all. Collected across the five
+probes, that is **24 missed user directives**, and both gold directives on this
+page.
+
+Most of it is out of reach of a regex. *"Every task card carries the AMM
+reference"*, *"Dispatch checks run the MEL first"* — a subject noun phrase and a
+simple-present verb, which is also the shape of *"the exported types don't
+accurately represent the request body"*, a bug report from the corpus above. One
+of those is a rule and one is a complaint and telling them apart wants a parse.
+
+The **persistence verbs** are the corner of the class that carries the meaning in
+the verb rather than in the syntax: `stays`, `remains`, `keeps`. Asserting that
+something goes on being what it is *is* constraining future work on it, which
+makes `_PERSIST` the positive dual of `_PROHIBIT` — one names what may not be
+done, the other what may not be changed.
+
+Three guards, and they are most of the rule:
+
+| not admitted | why | where it comes from |
+|---|---|---|
+| *"**I keep** getting mysterious build errors"* | a subject in front makes the verb aspectual — it reports repetition, which is what you write when something is broken. The imperative, which is how half of these rules are written, has no subject | the real corpus |
+| `keep-alive` | a header value; arrives five to a block in pasted HAR files | the real corpus |
+| *"good to **keep as** milestone information"* | with no object between verb and `as`, the frame appraises the thing instead of constraining it. *"keep it as YAML"* has the object and still counts | the real corpus |
+
+The first is the same discriminator fix 6 used on the contracted negation, and
+for the same reason: **position, not vocabulary**. On the 89 distinct human prose
+blocks here the verbs occur 10 times across 5 blocks — one gold directive, four
+gold none — which is what set the guards.
+
+| | before | after |
+|---|---|---|
+| user-side tp / fp / fn | 0 / 6 / 2 | **1 / 7 / 1** |
+| …of the fp machine-authored | 1 | 1 |
+| `reversal-by-user` blocks labelled something | 0 of 3 | 0 of 3 (unchanged) |
+| assistant `reversal` | 7 of 7 of 61 | unchanged |
+| gate, dev / held-out | 1.0000 / 0.9319, 1.0000 / 0.7428 | unchanged |
+| probes A / B | 23 (aside 3/5), 25 (1/3) | unchanged |
+| **probe C** | 13 | **16** |
+| **probe D** | 14 | **16** |
+| **probe E** | 20 | **21** |
+
+**This is the first true positive the real-text set has ever produced.** Six
+rounds of fixes moved false positives from 32 to 6 and never once moved the
+numerator: *"I'd like to keep it the same 3 simple files"* is the first sentence
+in 140 that the extractor and three annotators agree is a rule.
+
+### Two defects it exposed on its way in, both independent of it
+
+Neither is `_PERSIST`. Both were open holes that nothing could reach, because
+until now no rule in this module read the word `keep`.
+
+**1. `keep X in mind` is separable and `_BACKREF` only had the joined form.** The
+restatement guard exists to stop a repeated instruction being recorded twice, and
+it listed `keep in mind` and `bear in mind` as fixed strings. A reminder that
+names what it is about — *"Please keep this instruction in mind."* — puts the
+object in the middle and walked straight past a guard that claims exactly it.
+Found by the held-out gate: the first `_PERSIST` dropped test precision to
+**0.8595**, and every loss traced to one synthetic distractor header of that
+shape. The repair takes no lookahead, unlike its neighbours — bare `remember` and
+`recall` are ordinary words and need one; `in mind` is its own disambiguation.
+
+**2. `_DELIBERATION` had `on the one hand … on the other` and not `a case for X
+and a case for Y`.** The same frame in other words. Probe A files it under
+`guard: deliberation`; it cost nothing while nothing read `keeping`, which is how
+a hole stays open for six rounds.
+
+### Three costs, and none of them is rounding
+
+**The new false positive is a lexical twin of the new true positive.**
+
+> tp — *"I'd like to **keep it the same** 3 simple files"*
+> fp — *"**Keep it same** overall length as the pros or cons"*
+
+Same verb, same frame, same register, adjacent turns of the same kind of work.
+Three annotators split them; no rule in this module does, and no rule short of
+knowing what a *file layout* is and what a *draft length* is would. The gain and
+the loss here are one coin, and 1/7/1 should be read as such.
+
+**Three user-reversal items move from a silent miss to `directive`** — one on
+probe C, two on probe D. Probe C's author called this out when the probe was
+written: recording the surviving rule and dropping the retraction is *worse than
+a miss*, because the graph then asserts something the user took back. In fairness
+to the extractor, in these three the actionable content genuinely is the `keep`
+clause — *"…I changed my mind, keep the logic in one place"* — but the reader of
+the graph is not told that anything was withdrawn. The declared ceiling is
+unchanged and this is the cost of it, moved somewhere the census on this page
+cannot see: the three real revocations in this corpus carry no persistence verb,
+so the pin there stays 0 of 3.
+
+**One of probe C's three gains is right for the wrong reason.**
+
+> *"I'd rather eat the slower timecode sync than **keep** the one that drifts, so
+> take the slow one."*
+
+`_PERSIST` fires on the `keep` in the **rejected** alternative. The item is gold
+`directive` and comes back `directive`, and the reason is a word inside the half
+of the sentence the speaker is throwing away. This is the third time this
+repository has had to write that sentence — probe C's buried-clause item in fix
+6, the `pros or cons` guard idea declined below — and it is the reason a probe
+score is a floor and not a claim.
+
+### Declined: `pros or cons` in `_DELIBERATION`
+
+It would take the false positives 7 back to 6 by suppressing the twin above. The
+phrase in that block is a noun phrase naming a section of a prior document, not
+the weighing idiom — so the guard would be right by accident, on an unrelated
+span, which is precisely the `options` failure this page has spent two fixes
+documenting. A green board bought that way is the worst kind. Not done.
+
+Six mutation rows, all CAUGHT by their intended test. Root cause 4 stays open:
+this is one corner of it, and the declarative standing rule — the other twenty or
+so misses — still has no predicate.
+
 ## What it does not measure
 
 - **Recall rests on two items.** With two gold directives, recall is 0, 0.5 or
   1. The precision figure is the solid one: 138 negatives, and 32 false
-  positives when this was written — 6 after the fixes below, and all 6 of the
-  nodes the extractor still emits here.
+  positives when this was written — 7 after the fixes below, and all 7 of the
+  nodes the extractor still emits here. **And one true positive, as of fix 7**,
+  which is what makes 0.1250 a precision figure rather than a zero.
 - **The assistant side has no recall number.** Only what the extractor emitted
   was adjudicated, so a reversal it never flagged is invisible here.
 - **The gate is blind to the recant class.** Neither synthetic split contains a

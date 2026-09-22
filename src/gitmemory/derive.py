@@ -646,6 +646,12 @@ _BACKREF = re.compile(
     r"|(?:just |simply )?(?:a |an |one |another |the )?"
     r"(?:quick |friendly |gentle |final |small |little |brief |last )*"
     r"remind(?:er|ing)(?=\s*[:,;—–]|\s+(?:that|to)\b)"
+    # `keep X in mind` and `bear X in mind` are separable, and the fixed strings
+    # below only ever matched the un-separated form — "please keep this
+    # instruction in mind" walked straight past a guard that claims exactly it.
+    # No lookahead on this one: the particle `in mind` is the whole
+    # disambiguation, so nothing after it has to be checked. [E5 root cause 4]
+    r"|(?:please |just )?(?:bear|keep)(?:s|ing)? [\w ]{1,30}?in mind\b"
     r"|(?:please |just )?(?:remember|recall|bear in mind|keep in mind)"
     r"(?=\s*[:,;—–]|\s+(?:that|to|we|you|i|it|this|these|the|our|your|what"
     r"|when|how|why|never|no|always)\b)"
@@ -686,6 +692,10 @@ _DELIBERATION = re.compile(
     r"|about whether|whether)"
     r"|(?:deliberat|debat|compar|evaluat|assess|mull|agonis|agoniz|wonder|think"
     r"|ponder)\w* (?:\w+ )?(?:between|among|amongst|over|about whether|whether)"
+    # Two cases laid side by side and neither taken. Same shape as "on the one
+    # hand … on the other", and the guard had the second and not the first.
+    # [E5 root cause 4]
+    r"|a case (?:for|against) .{1,60}? (?:and|or) a case (?:for|against)"
     r"|torn between|going back and forth|on the (?:one|other) hand"
     r"|weigh(?:s|ing|ed)?|pros and cons|trade-?offs?|upsides? and downsides?"
     r"|(?:we|i) (?:could|might|may want)|(?:we|you|i) can either"
@@ -1033,6 +1043,38 @@ _PROHIBIT = re.compile(
     re.I,
 )
 
+# The positive standing rule, in the one form that says so in a word. Asserting
+# that something *stays* the way it is is asserting a constraint on future work
+# — "patch file stays YAML", "deferral records stay in UTC", "part serial
+# numbers keep their leading zeros" — which makes it the positive dual of
+# `_PROHIBIT` rather than a second flavour of it: one names what may not be
+# done, this names what may not be changed.
+#
+# It is one narrow corner of a wide hole. Probes C, D and E between them miss
+# 24 user directives and most of them are positive standing rules with nothing
+# lexical to match on at all — "Every task card carries the AMM reference",
+# "Dispatch checks run the MEL first" — which is a subject noun phrase and a
+# simple-present verb, and telling that from a bug report ("the exported types
+# don't accurately represent the request body") wants a parse this module does
+# not do. The persistence verbs are the subset that carries the meaning in the
+# verb, so they are the subset a regex can have. [E5 root cause 4]
+_PERSIST = re.compile(
+    # Not `I keep getting build errors`. A subject in front turns the verb
+    # aspectual — it reports repetition rather than requiring constancy — and
+    # the imperative, which is how half of these rules are written, has none.
+    # Same reasoning as the contracted negation in `_PROHIBIT`, and the same
+    # shape: position, not vocabulary.
+    r"(?<!\bi )(?<!\bwe )(?<!\bit )(?<!\bthey )(?<!\bthis )(?<!\bthat )"
+    # Not `keep-alive`, which is a header value and arrives five at a time in
+    # pasted HAR files.
+    r"\b(?:stays?|remains?|keeps?|keeping)(?![\w-])"
+    # Not `good to keep as milestone information`. With no object between the
+    # verb and `as`, the frame appraises a thing rather than constraining it;
+    # `keep it as YAML` has the object and still counts.
+    r"(?!\s+as\b)",
+    re.I,
+)
+
 # A purpose clause naming what is being kept out. Weaker than a prohibition —
 # it is the *reason* for a rule rather than the rule — so it needs the required
 # half stated beside it.
@@ -1338,8 +1380,10 @@ def _decision_kind(text: str, role: str) -> str | None:
     if role == "user":
         # A substitution frame carries both sides in one phrase; a prohibition
         # is a standing rule by itself ("never touch the vendored tree"); a
-        # purpose clause is only the reason for a rule, so it needs the rule.
-        if _CONTRAST.search(text) or _PROHIBIT.search(text):
+        # persistence verb is the same rule stated positively, about a property
+        # rather than an act; a purpose clause is only the reason for a rule, so
+        # it needs the rule.
+        if _CONTRAST.search(text) or _PROHIBIT.search(text) or _PERSIST.search(text):
             return "directive"
         if _PREVENT.search(text) and _REQUIRE.search(text):
             return "directive"

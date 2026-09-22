@@ -109,7 +109,21 @@ from bench.probes import PROBES, score
 # somebody else's software. So 14 was 13 plus a coincidence, and when the
 # positive-rule hole is closed this comes back to 14 on the rule that should
 # always have held it. Re-pin it up then, and not before.
-FLOOR = {"A": 23, "B": 25, "C": 13, "D": 14, "E": 20}
+#
+# **Then is now, and C is 16.** `_PERSIST` claims the one corner of the positive
+# standing rule that says so in a verb — a thing *stays* as it is — and it takes
+# C to 16, D to 16 and E to 21. It is a corner and not the class: most of what
+# those three probes still miss is a subject noun phrase and a simple-present
+# verb, which wants a parse. The item above is back, on the rule that should
+# have held it and not on the parenthetical.
+#
+# **Three of C's gains and both of D's are the same sentence shape**, so read
+# these as one measurement repeated rather than five. And one of C's is right
+# for the wrong reason — *"I'd rather eat the slower timecode sync than keep the
+# one that drifts"* fires on the `keep` in the **rejected** alternative — which
+# is the third time this file has had to say that a probe item can pass for a
+# reason nobody would defend. `docs/benchmarks/E5-secondary-set.md`, fix 7.
+FLOOR = {"A": 23, "B": 25, "C": 16, "D": 16, "E": 21}
 
 
 def test_probe_e_is_the_authors_file_and_not_a_copy_of_it():

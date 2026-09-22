@@ -71,18 +71,27 @@ def test_the_extractor_scores_zero_on_real_text():
     this set produced, and **12 -> 6** is the second: the contracted negation
     stopped being a prohibition outside imperative position, because on these
     89 user prose blocks `don't`/`doesn't` occurs 21 times and 18 of them report
-    that something is broken. Precision did not move for either, because it is
-    0/6 as it was 0/30 — there is still no true positive, and both gold
-    directives are plain positive standing rules of the shape probes C and D
-    each missed seven times. The set is spent as a generalisation measure from
-    the moment of the first fix; it is a regression floor now.
+    that something is broken. Precision did not move for either, because it was
+    0/6 as it was 0/30 — no true positive, and both gold directives are plain
+    positive standing rules of the shape probes C and D each missed seven times.
+    The set is spent as a generalisation measure from the moment of the first
+    fix; it is a regression floor now.
 
-    See `docs/benchmarks/E5-secondary-set.md`, fixes 1 and 6.
+    **0/6/2 -> 1/7/1 is the first true positive this set has ever produced**, and
+    it is worth exactly one sentence of celebration: `_PERSIST` reads *"I'd like
+    to keep it the same 3 simple files"* as a standing rule, which it is. The new
+    false positive beside it is *"Keep it same overall length as the pros or
+    cons"* — a lexical twin of the true positive, in the same register, from the
+    same kind of turn. No rule in this module separates them, three annotators
+    labelled them differently, and pretending the gain is clean would be the
+    dishonest way to write 1/7/1 up. Precision is 0.1250 and recall 0.5000.
+
+    See `docs/benchmarks/E5-secondary-set.md`, fixes 1, 6 and 7.
     """
     s = secondary.score(secondary.items())
-    assert (s["tp"], s["fp"], s["fn"]) == (0, 6, 2)
-    assert s["precision"] == 0.0
-    assert s["recall"] == 0.0
+    assert (s["tp"], s["fp"], s["fn"]) == (1, 7, 1)
+    assert round(s["precision"], 4) == 0.1250
+    assert round(s["recall"], 4) == 0.5000
 
 
 def test_the_injected_block_filter_took_out_eighteen_of_the_nineteen():
@@ -161,9 +170,17 @@ def test_the_declared_reversal_ceiling_costs_more_than_a_miss():
 
     Probe C predicted the mislabelling and probe D measured it twice. Neither
     predicted *this*: that the cause would be pasted machine text rather than
-    the revocation frame. Pinned at 0 so a regression is visible; if the
-    positive-standing-rule hole is ever closed, check this again, because both
-    of these blocks do contain real instructions beside the revocation.
+    the revocation frame.
+
+    **The guard on this paragraph said to check here when the positive-rule hole
+    closed, and one corner of it now has: still 0.** The three real revocations
+    carry no persistence verb, so `_PERSIST` does not reach them. This is not the
+    all-clear it looks like. On probes C and D the same rule turns three
+    user-reverses-own-instruction items — one and two — from a silent miss into
+    `directive`, because there the revocation and the surviving rule are written
+    into one sentence, the shape this corpus happens not to have in its three. The
+    ceiling still costs more than a miss; it costs it somewhere this census
+    cannot see. `docs/benchmarks/E5-secondary-set.md`, fix 7.
     """
     s = secondary.score(secondary.items())
     assert (s["aside_n"], s["aside_labelled_something"]) == (3, 0)

@@ -8,6 +8,14 @@ measurement that says why.
 
 **Probe C scores the same code 14 of 32.**
 
+> *Since scored, and not part of this measurement:* C read 13 after fix 6 and
+> reads **16** after fix 7, which closed one corner of the positive-standing-rule
+> hole this page reports. Both moves and their costs — including one gain that
+> fires on the rejected half of its sentence, and one user-reversal item that
+> goes from a silent miss to `directive` — are in
+> `docs/benchmarks/E5-secondary-set.md`. The 14 below is the blind number and
+> stays the number this page is about.
+
 | probe | class | directive | reversal | None | aside |
 |---|---|---|---|---|---|
 | A | 26/32 | 6/6 | 5/5 | 15/21 | 2/5 |

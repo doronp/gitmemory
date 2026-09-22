@@ -69,6 +69,30 @@ def test_the_readme_test_count_is_the_test_count():
     )
 
 
+def test_the_readme_negative_control_count_is_the_row_count():
+    """The other number in the same table, and it had drifted for four commits.
+
+    The README said 466 negative controls while the index held 480. It went
+    stale at the first commit after the sentence was written and stayed stale
+    through three more, because the test count beside it is pinned and this one
+    was not — so the half of the row that nobody could check is the half that
+    was wrong, which is the finding the test above was written for, repeated in
+    the next column. `mutate_index` already pins its own docstring against
+    `len(MUTANTS)`; this points the README at the same number.
+
+    Undercounting is the benign direction and that is not a defence: what the
+    claim is for is telling a reader how much of the suite is load-bearing, and
+    a number that drifts one way this time drifts the other way next time.
+    [E5 root cause 4]
+    """
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from mutate_index import MUTANTS
+
+    claimed = re.search(r"\*\*([\d,]+)\*\* negative controls", _read("README.md"))
+    assert claimed, "the README no longer states a negative-control count"
+    assert int(claimed.group(1).replace(",", "")) == len(MUTANTS)
+
+
 def test_the_readme_conformance_count_is_the_conformance_count():
     """The other half, and it only runs where the corpus is.
 

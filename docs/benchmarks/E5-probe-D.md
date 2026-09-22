@@ -1,5 +1,11 @@
 # E5 probe D — the replication
 
+> *Since scored, and not part of this measurement:* D reads **16** after fix 7,
+> which closed one corner of the positive-standing-rule hole this page
+> replicates. Two of its eleven user-reversal items go from a silent miss to
+> `directive` as part of the price; see `docs/benchmarks/E5-secondary-set.md`,
+> fix 7. The 14 below is the blind number.
+
 **14 of 32.** The same number probe C scored, with the same split inside it, in
 a domain chosen without any knowledge of C's.
 

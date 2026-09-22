@@ -94,6 +94,13 @@ seven, E misses three; three probes in three unrelated domains now say the same
 thing, which is that the user branch has no rule claiming a declarative standing
 rule.
 
+One of the three is since closed. *"Put the region on the JOB card once and
+**keep** it off the individual steps"* states its rule in a persistence verb, and
+`_PERSIST` claims that corner of the class — E goes to **21**, C to 16, D to 16.
+The other two here are the corner that is left: a subject noun phrase and a
+simple-present verb, which is also the shape of a bug report.
+`docs/benchmarks/E5-secondary-set.md`, fix 7.
+
 ## Two defects, found by tracing the misses
 
 Neither is the recall ceiling above; both are cases where a rule that claims the
@@ -157,7 +164,8 @@ to see that the repair belonged in `_PIVOT`.
 
 **Probe E's headline stays 19.** 20 is what it scores after being shown its own
 miss list, which is training data, and the floor in `bench/test_probes.py` is
-re-pinned to 20 with that said out loud.
+re-pinned to 20 with that said out loud — 21 after fix 7, for the same reason
+and with the same caveat.
 
 ## What it does not measure
 

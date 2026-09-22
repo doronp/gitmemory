@@ -1997,7 +1997,7 @@ MUTANTS = [
     (
         "a user constraint is read as a directive",
         "derive.py",
-        """        if _CONTRAST.search(text) or _PROHIBIT.search(text):""",
+        """        if _CONTRAST.search(text) or _PROHIBIT.search(text) or _PERSIST.search(text):""",
         """        if False:""",
         "test_a_user_constraint_is_a_directive",
     ),
@@ -4190,7 +4190,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "80 mutants",
+        "a full pass is 4" + "86 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4401,6 +4401,64 @@ MUTANTS = [
         'r"|scratch(?:es|ed|ing)? (?:that|the|this|my|our|its?|all)"',
         "test_the_objects_the_verb_actually_takes_include_the_plural_ones",
     ),
+    # --- E5 root cause 4: the positive standing rule ------------------------ #
+    #
+    # `_PERSIST` is one rule and three guards, and the guards are the whole of
+    # it: the verb it keys on is `keep`, which on a coding transcript is as
+    # often a complaint ("I keep getting build errors") or a header value
+    # (`keep-alive`) as a rule. Each guard gets its own row because each one
+    # answers a different sentence, and a row per guard is how a later widening
+    # that quietly drops one gets noticed.
+    (
+        "the persistence verb accepts a subject in front of it again",
+        "derive.py",
+        '    r"(?<!\\bi )(?<!\\bwe )(?<!\\bit )(?<!\\bthey )(?<!\\bthis )(?<!\\bthat )"\n',
+        "",
+        "test_the_persistence_verb_needs_the_position_the_report_does_not_have",
+    ),
+    (
+        "the persistence verb goes back to matching the hyphenated header value",
+        "derive.py",
+        'r"\\b(?:stays?|remains?|keeps?|keeping)(?![\\w-])"',
+        'r"\\b(?:stays?|remains?|keeps?|keeping)(?!\\w)"',
+        "test_the_persistence_verb_needs_the_position_the_report_does_not_have",
+    ),
+    (
+        "the objectless appraisal is a standing rule again",
+        "derive.py",
+        '    r"(?!\\s+as\\b)",',
+        '    r"",',
+        "test_the_persistence_verb_needs_the_position_the_report_does_not_have",
+    ),
+    # The rule itself, unreferenced. `_PERSIST` can be perfect and buy nothing
+    # if the user branch stops reading it, and that is the shape the whole
+    # class arrived to fix: probes C, D and E missed 24 directives between them
+    # with every guard in this file working correctly.
+    (
+        "the user branch stops reading the persistence rule",
+        "derive.py",
+        " or _PERSIST.search(text)",
+        "",
+        "test_a_rule_can_say_a_thing_stays_the_way_it_is",
+    ),
+    # The two repairs the persistence class exposed. Both were holes before it
+    # landed and neither could be seen, because nothing else in the module read
+    # `keep`: `_BACKREF` listed the un-separated phrasal verb only, and
+    # `_DELIBERATION` had one of the two-cases frames and not the other.
+    (
+        "the separable phrasal verb falls back out of the restatement guard",
+        "derive.py",
+        'r"|(?:please |just )?(?:bear|keep)(?:s|ing)? [\\w ]{1,30}?in mind\\b"',
+        'r"|(?!x)x(?:please |just )?(?:bear|keep)(?:s|ing)? [\\w ]{1,30}?in mind\\b"',
+        "test_keep_this_in_mind_is_the_same_reminder_as_keep_in_mind",
+    ),
+    (
+        "two cases side by side stop being a deliberation",
+        "derive.py",
+        'r"|a case (?:for|against) .{1,60}? (?:and|or) a case (?:for|against)"',
+        'r"|(?!x)xa case (?:for|against) .{1,60}? (?:and|or) a case (?:for|against)"',
+        "test_two_cases_side_by_side_are_a_deliberation",
+    ),
 ]
 
 
@@ -4516,9 +4574,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 480 mutants x two suite runs, which
+    The filter exists because a full pass is 486 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 479 or trusting the new one untested.
+    to mean either waiting for the other 485 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

@@ -2840,3 +2840,106 @@ def test_never_mind_is_a_person_dropping_a_request(home, src):
     """
     assert _user_says(home, src, "Never mind! Add a details element around it.") == []
     assert _user_says(home, src, "Never mind that. Never commit generated files.") == ["directive"]
+
+
+# --- E5 root cause 4: the positive standing rule, in the corner a regex has -- #
+
+
+def test_a_rule_can_say_a_thing_stays_the_way_it_is(home, src):
+    """*"Patch file stays YAML."* is a rule, and nothing claimed it.
+
+    The user branch reads a substitution frame and a prohibition, so every rule
+    it sees is one that names something rejected. A rule stated positively —
+    what a thing *is*, and goes on being — had no home, and probes C, D and E
+    miss 24 user directives between them mostly of that shape.
+
+    The persistence verbs are the corner of the class that carries the meaning
+    in the verb rather than in the syntax: saying a thing stays as it is *is*
+    constraining future work on it. The rest of the hole needs to tell "every
+    task card carries the AMM reference" from "the exported types don't
+    represent the request body", which is a subject and a simple-present verb
+    in both, and that is a parse.
+    """
+    rules = (
+        "Patch file stays YAML.",
+        "Deferral records stay in UTC.",
+        "While you're in the cue loader anyway, index zero stays reserved for blackout.",
+        "Part serial numbers keep their leading zeros.",
+        "Put the region on the JOB card once and keep it off the individual steps.",
+        "The grandmaster remains a console concern.",
+    )
+    for body in rules:
+        assert _user_says(home, src, body) == ["directive"], body
+
+
+def test_the_persistence_verb_needs_the_position_the_report_does_not_have(home, src):
+    """*"I keep getting build errors"* is a complaint about repetition.
+
+    With a subject in front the verb turns aspectual: `keep` plus a participle
+    says a thing happens over and over, which is what you write when something
+    is broken. The rules above have either a noun phrase the rule is *about*
+    ("patch file stays") or no subject at all, because they are imperatives.
+    That is the same discriminator the contracted negation uses two classes up,
+    and for the same reason.
+
+    `keep-alive` is the other one, and it is not subtle: it arrives five to a
+    block inside pasted HAR files. `good to keep as milestone information` is
+    the third — with no object between the verb and `as`, the frame is
+    appraising the thing rather than constraining it.
+    """
+    reports = (
+        "I keep getting mysterious build errors when MDX files have URLs in brackets.",
+        'The HAR shows { "name": "Connection", "value": "keep-alive" } on every request.',
+        'The above "status report" is very interesting and good to keep as milestone information.',
+    )
+    for body in reports:
+        assert _user_says(home, src, body) == [], body
+
+    # The object is what separates the appraisal from the rule, so putting one
+    # back brings the rule back.
+    assert _user_says(home, src, "Keep it as YAML.") == ["directive"]
+
+
+def test_keep_this_in_mind_is_the_same_reminder_as_keep_in_mind(home, src):
+    """`keep X in mind` is separable and the guard only had the joined form.
+
+    `_BACKREF` exists to stop a restated instruction being recorded a second
+    time, and it listed `keep in mind` and `bear in mind` as fixed strings. A
+    reminder that names what it is about — "please keep this instruction in
+    mind" — puts the object between the verb and the particle and walked past
+    it. Invisible until the persistence class arrived, because nothing else
+    read `keep`; found by the held-out gate, where it cost 14 points of
+    precision on the test split.
+
+    No lookahead on the new alternative, unlike its neighbours: bare `remember`
+    and `recall` are ordinary words that need one, and `in mind` is not.
+    """
+    for body in (
+        "Please keep this instruction in mind. Deferral records stay in UTC.",
+        "Bear the deadline in mind — the cache stays warm between runs.",
+    ):
+        assert _user_says(home, src, body) == [], body
+
+    # The particle is doing the work, so a `keep` with no `in mind` after it is
+    # still a rule.
+    assert _user_says(home, src, "Keep the deadline in the ticket.") == ["directive"]
+
+
+def test_two_cases_side_by_side_are_a_deliberation(home, src):
+    """*"There's a case for dropping the cache and a case for keeping it warm."*
+
+    Probe A files this under `guard: deliberation` and the guard did not have
+    it — `on the one hand … on the other` was there, the same frame in other
+    words was not. It cost nothing while no rule read `keeping`, which is how a
+    hole like this stays open.
+
+    The control is the single case, which is an argument for one thing and not
+    a weighing of two.
+    """
+    assert _user_says(
+        home, src,
+        "There's a case for dropping the cache entirely and a case for keeping it warm.",
+    ) == []
+    assert _user_says(
+        home, src, "There's a case for dropping the cache. The index stays in memory.",
+    ) == ["directive"]

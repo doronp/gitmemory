@@ -25,7 +25,7 @@ rows**, `ruff check` clean.
 
 Seven items closed, each by its own commit with a reproduction, a re-measurement
 and — where one can exist — a mutation row. Every new row **CAUGHT by its
-intended test**. One item open, listed at the bottom; three more entries added
+intended test**. One item open, listed at the bottom; four more entries added
 after the round, in their own section; and seven recorded and not fixed.
 
 | # | what it was | closed by | pinned by |
@@ -141,7 +141,8 @@ lives.
   somebody else's fixtures, while its actual directive is a positive standing
   rule — root cause 4, the hole probes C, D and E all report. Closing that
   restores the item to the rule that should always have held it, and the floor
-  goes back to 14 then and not before.
+  goes back to 14 then and not before. **Closed one fix later**, and the
+  item came back exactly as predicted; C is re-pinned at 16.
 - **`_PIVOT`'s cancel marker was dead**, in F5's sense and not F4's: the whole
   of it was `scratch that`, `_REPAIR` claims the demonstratives and runs first,
   so no input could reach it. The form that names its object rather than
@@ -152,6 +153,35 @@ lives.
   change is about: probe E 19 → 20 and probe A's aside 2/5 → 3/5. F7's
   correction is what made it visible — while A's item was believed to fail in
   the guard order, the repair looked like a reordering. `d97ec06`.
+- **A rule can say that a thing stays as it is.** One corner of root cause 4,
+  the largest item on the list and the one probes C, D and E all report: nothing
+  in `derive.py` claimed a *positive* standing rule, because every user-side rule
+  it can see names something rejected. `_PERSIST` claims the subset that carries
+  the meaning in a verb — `stays`, `remains`, `keeps` — with three guards, each
+  answering a sentence from the real corpus: a subject in front makes the verb
+  aspectual (*"I keep getting build errors"*), `keep-alive` is a header value,
+  and an objectless `keep … as` is an appraisal. Position, not vocabulary, the
+  same discriminator fix 6 used. Probe C **13 → 16**, D **14 → 16**, E **20 →
+  21**, and the real-text set produces **its first true positive in seven
+  fixes** (0/6/2 → 1/7/1). Six mutation rows, all CAUGHT.
+
+  Three costs, all written up rather than netted off: the new false positive is a
+  lexical twin of the new true positive and no rule separates them; three
+  user-reversal items (C ×1, D ×2) move from a silent miss to `directive`, which
+  probe C's author called worse than a miss; and one of C's three gains fires on
+  a `keep` inside the **rejected** half of the sentence. `pros or cons` would
+  have taken the board back to 6 false positives and was declined for being the
+  `options` mistake again. Root cause 4 stays open — this is a corner of it.
+  `docs/benchmarks/E5-secondary-set.md`, fix 7.
+
+  **It exposed two defects that are not it.** Both were unreachable until a rule
+  read the word `keep`: `_BACKREF` listed `keep in mind` as a fixed string and
+  the phrasal verb is separable, so *"Please keep this instruction in mind."*
+  walked past the guard that claims exactly it — found by the held-out gate,
+  where the first version of `_PERSIST` read 0.8595 test precision and every loss
+  was one distractor of that shape. And `_DELIBERATION` had `on the one hand …
+  on the other` but not `a case for X and a case for Y`, which is the same frame
+  in other words.
 - **Probe E is scored: 19 of 32**, on 2026-09-22, and 20 after the `_PIVOT`
   fix above. Fix 2's claim holds off the corpus it was tuned on — 12 of 12
   non-decisions, ten of them wearing the substitution frame the fix exists to
