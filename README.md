@@ -71,8 +71,8 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | The same extractor, in a vocabulary its corpus does not contain | two adversarial probes hand-written by a reviewer, both since spent | 26/32 and 27/32 |
 | The same extractor again, on a probe written blind and scored once | 32 items in a domain chosen to share no vocabulary with the corpus | **14/32** |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **812 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **437** negative controls |
+| The suite | on a fresh checkout, no downloads | **813 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **440** negative controls |
 
 The 322 conformance cases replay claude-code-log's MIT fixtures — third-party,
 real-shaped, and not one byte of anybody's own history — through this parser.
@@ -84,7 +84,7 @@ git -C .conformance/claude-code-log checkout 6ad029e   # the pin in docs/DESIGN.
 ```
 
 `.conformance/` is gitignored; `GITMEMORY_CC_FIXTURES` points at the
-`test/test_data` of a clone somewhere else. **The count above says 812 because
+`test/test_data` of a clone somewhere else. **The count above says 813 because
 that is what a fresh checkout collects.** It said 1127 for two epochs, which was
 true only on a machine that had already cloned the corpus — into a scratch
 directory, so the test written to stop this README quoting an unreachable number

@@ -1474,6 +1474,38 @@ def test_a_hedged_opinion_is_still_an_opinion(home, src):
     assert labelled(session) == [("directive", control)]
 
 
+def test_an_attitude_joined_to_a_rule_suppresses_only_itself(home, src):
+    """The reason to give a rule is usually an attitude, and English joins the
+    two with a comma and a coordinator: *"we don't want another dependency, so
+    never add one without asking"*. While `_OPINION` suppressed the whole block
+    the reason cancelled the rule, and the longer the message the more it cost —
+    one "I'm not sure" anywhere in it and nothing in it was read at all.
+
+    The three that must still be declined are the point of the pairing. A
+    boundary is a sentence end, a semicolon, or a comma *followed by a
+    coordinator*; a bare comma is an aside, and an aside inside an attitude
+    ("I don't think, given the deadline, that we should never use pickle") is
+    not a second clause. Nor is a subordinate `that`-clause, which is where the
+    sentence this guard exists for keeps its rule-shaped words.
+    [round 4, Gemini F2]
+    """
+    kept = [
+        "We don't want another dependency, so never add one without asking.",
+        "I'm not sure it matters; never commit generated files anyway.",
+    ]
+    session = parsed(
+        home,
+        src,
+        [
+            user("u1", "I don't think we need a rule that we never commit generated files."),
+            user("u2", "I don't think, given the deadline, that we should never use pickle."),
+            user("u3", "We are not at all sure we should never rewrite this."),
+            *[user(f"k{i}", text) for i, text in enumerate(kept)],
+        ],
+    )
+    assert labelled(session) == [("directive", text) for text in kept]
+
+
 def test_reporting_never_having_seen_it_is_not_forbidding_it(home, src):
     """The sharpest pair in the file: "we have never used pickle" and "we never
     use pickle" differ by an auxiliary, and one is a report of what happened
@@ -1742,6 +1774,15 @@ def test_a_hedge_is_a_hedge_on_either_side_of_the_auxiliary(home, src):
     slots from the perfect frame left the test green. *"We have never run
     migrations by hand"* is the sentence the frame exists for: strip it and the
     directive class sees `never run` and files a report of the past as an order.
+
+    `u4` used to read *"We are not at all sure, so no rewrite this week."* — the
+    hedge and a rule-shaped tail, because a hedge with nothing rule-shaped after
+    it scores `None` whether the frame matches or not and the line would hold
+    nothing. The tail was in a clause of its own, and once `_OPINION` became
+    clause-scoped that clause is a directive and *should* be: the uncertainty is
+    the reason for the instruction, not a cancellation of it. Same job, one
+    clause: strip the adverb slot and `never rewrite` is filed as an order.
+    [round 4, Gemini F2]
     """
     control = "Don't add a cache in the request path."
     session = parsed(
@@ -1751,7 +1792,7 @@ def test_a_hedge_is_a_hedge_on_either_side_of_the_auxiliary(home, src):
             user("u1", "I really don't think that buys us anything."),
             user("u2", "We honestly don't want another moving part."),
             user("u3", "I'm genuinely not convinced we should forbid the cache."),
-            user("u4", "We are not at all sure, so no rewrite this week."),
+            user("u4", "We are not at all sure we should never rewrite this."),
             user("u5", "I honestly have never run migrations by hand."),
             user("u6", "We have honestly never let a secret into the repo."),
             user("u7", control),

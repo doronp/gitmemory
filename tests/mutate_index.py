@@ -1930,6 +1930,38 @@ MUTANTS = [
         "test_reporting_never_having_seen_it_is_not_forbidding_it",
     ),
     (
+        # Three rows for one fix, because clause scoping has three ways to be
+        # wrong and each of them looks fine from the other two: never suppress,
+        # never split, split everywhere. [round 4, Gemini F2]
+        "an attitude clause is kept instead of cut",
+        "derive.py",
+        "if not _OPINION.search(c))",
+        "if c)",
+        "test_an_attitude_joined_to_a_rule_suppresses_only_itself",
+    ),
+    (
+        # The old behaviour: one attitude anywhere in the block suppressed the
+        # whole block, rule and all. A pattern that never matches makes
+        # `re.split` return the block whole, which is exactly that.
+        "the suppressor goes back to scoping the whole block",
+        "derive.py",
+        r'''_CLAUSE = re.compile(r"(?<=[.!?;])\s+|,\s*(?:so|but|and|yet|then)\s+", re.I)''',
+        r'''_CLAUSE = re.compile(r"(?!x)x", re.I)''',
+        "test_an_attitude_joined_to_a_rule_suppresses_only_itself",
+    ),
+    (
+        # And the other direction, which is the one a reader would write first:
+        # a comma is a clause boundary. It is not — "I don't think, given the
+        # deadline, that we should never use pickle" is one clause with an aside
+        # in it, and splitting on the commas leaves the `that`-clause looking
+        # like a prohibition.
+        "every comma is treated as a clause boundary",
+        "derive.py",
+        r'''r"(?<=[.!?;])\s+|,\s*(?:so|but|and|yet|then)\s+"''',
+        r'''r","''',
+        "test_an_attitude_joined_to_a_rule_suppresses_only_itself",
+    ),
+    (
         "an attitude is held, not forbidden",
         "derive.py",
         r"""    rf"|\b(?:i|we)(?: {_ADV})?(?:'?ve| have| had|'?d) no (?:\w+ )?"
@@ -3875,7 +3907,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "37 mutants",
+        "a full pass is 4" + "40 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4149,9 +4181,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 437 mutants x two suite runs, which
+    The filter exists because a full pass is 440 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 436 or trusting the new one untested.
+    to mean either waiting for the other 439 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

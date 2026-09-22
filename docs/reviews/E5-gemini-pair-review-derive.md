@@ -144,6 +144,28 @@ directive, which is the sentence `_OPINION` exists for. Doing it properly means
 scoping the suppressor to its own clause, which is the same clause-boundary work
 F5b started and is the natural next round.
 
+**Taken at the E7 close.** `_OPINION` is cut out of the block by
+`_without_opinion` rather than suppressing it, on boundaries `_CLAUSE` defines:
+a sentence end, a semicolon, or a comma *followed by a coordinator*. Not every
+comma — an aside inside an attitude ("I don't think, given the deadline, that we
+should never use pickle") is one clause, and splitting on its commas leaves the
+`that`-clause looking like a prohibition. The sentence in the finding is a
+directive now and the three that must still be declined still are, held by
+`test_an_attitude_joined_to_a_rule_suppresses_only_itself` and three rows —
+never suppress, never split, split everywhere.
+
+One existing test moved with it, and that is the more interesting half. Its
+hedge line read *"We are not at all sure, so no rewrite this week."*, a hedge
+plus a rule-shaped tail — the tail is there because a hedge with nothing
+rule-shaped after it scores `None` whether the frame fires or not. Under clause
+scoping that tail is a directive, and it *should* be: the uncertainty is the
+reason for the instruction, not a cancellation of it. The line was rewritten to
+put the rule inside the hedge's own clause, and the four rows that mutate the
+adverb slots still catch it.
+
+The gate was re-scored on all three splits afterwards — dev, and both spent
+held-out splits — at 1.0000 / 1.0000 each, unchanged.
+
 ## Rejected, on the reviewer's own diffs
 
 §5 offers five diffs. Not applied, and worth recording why, because a pair review
@@ -168,5 +190,8 @@ The findings behind diffs 1 and 2 were taken anyway; the diffs were not.
 2. **The hand-labelled secondary set** named in `docs/DESIGN.md`. Still the
    binding measurement gap: every number in this epoch is either a synthetic
    fixture or a probe written by a reviewer.
-3. **Clause-scoped suppressors** (F2, above). `_PROTASIS` is the first cut at
-   clause boundaries; the suppressors still scan the whole block.
+3. ~~**Clause-scoped suppressors** (F2, above). `_PROTASIS` is the first cut at
+   clause boundaries; the suppressors still scan the whole block.~~ Done at the
+   E7 close, for `_OPINION` only — see F2 above. The other six guards are still
+   block-scoped, deliberately: a block that is a question, or a report of what
+   was agreed last week, is not partly a decision.

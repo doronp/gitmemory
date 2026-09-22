@@ -712,6 +712,25 @@ _PROTASIS = re.compile(
     re.I,
 )
 
+# Independent-clause boundaries, for the one suppressor that is scoped to a
+# clause rather than to the block.
+#
+# Deliberately not "every comma". A comma is as often an aside as a boundary,
+# and "I don't think, given the deadline, that we should never use pickle" has
+# to stay one clause — split it and the aside turns the sentence into the rule
+# it declines. So a boundary is a sentence end, a semicolon, or a comma that is
+# followed by a coordinator, which is the shape that actually joins two
+# independent clauses in chat.
+#
+# The lookbehind is why the sentence end needs the space after it: `derive.py`
+# and `v1.2` are not two clauses, and `[.!?]\s*` splits both.
+#
+# ponytail: three coordinators and a full stop, not a clause parser. The ceiling
+# is the same one `_PROTASIS` has — an unpunctuated join ("we don't want pickle
+# never import it") stays one clause — and the upgrade is the same parser.
+# [round 4, Gemini F2]
+_CLAUSE = re.compile(r"(?<=[.!?;])\s+|,\s*(?:so|but|and|yet|then)\s+", re.I)
+
 # Negated auxiliaries, as a class rather than as the five that turned up first.
 # Written as auxiliary + slot + negator rather than as whole contracted forms,
 # because that is the third place the modifier goes ("I'm *really* not sure") and
@@ -734,15 +753,15 @@ _MIND = (
 # prohibition's words and imposes nothing. Guarded on the subject, because the
 # same verb with any other subject ("you don't touch that") is deontic.
 #
-# ponytail: block-scoped, like every other guard here, and that is the known
-# cost. "We still don't want to use pickle, so never import it." is a want
-# clause *and* an imperative, and the want clause suppresses both. Narrowing the
-# class is not the repair — it flips "I don't think we need a rule that we never
-# commit generated files" into a directive, which is the sentence this exists
-# for — so the fix is to scope the guard to its own clause. `_PROTASIS` is the
-# first cut at clause boundaries in this module and the natural place to start.
-# [round 4, Gemini F2, deferred — the report blames `still`, which does nothing:
-# the sentence scores the same without it]
+# Clause-scoped, unlike the other guards here: this one is cut out of the block
+# by `_without_opinion` rather than suppressing it. "We still don't want to use
+# pickle, so never import it." is a want clause *and* an imperative, and while
+# this was block-scoped the want clause suppressed both. Narrowing the class was
+# never the repair — it flips "I don't think we need a rule that we never commit
+# generated files" into a directive, which is the sentence this exists for.
+# [round 4, Gemini F2 — the report blames `still`, which does nothing: the
+# sentence scores the same without it. Deferred one round for the clause
+# boundaries, which are `_CLAUSE`]
 _OPINION = re.compile(
     # The negated-attitude frame, with the adverb slot open on both sides of the
     # auxiliary: "I *honestly* don't think", "I do not *really* think".
@@ -976,6 +995,19 @@ class Decision:
     source_ref: str
 
 
+def _without_opinion(text: str) -> str:
+    """`text` with every clause that reports an attitude cut out of it.
+
+    The other six guards suppress the whole block, which is right for them: a
+    block that is a question, or a report of what was agreed last week, is not
+    partly a decision. An attitude is different, because English joins one to a
+    rule with a comma and a coordinator all the time — "we don't want pickle, so
+    never import it" — and suppressing the block loses the imperative that the
+    attitude is the *reason* for. [round 4, Gemini F2]
+    """
+    return " ".join(c for c in _CLAUSE.split(text) if not _OPINION.search(c))
+
+
 def _decision_kind(text: str, role: str) -> str | None:
     """The label for one block's text, or None. At most one per block.
 
@@ -991,8 +1023,10 @@ def _decision_kind(text: str, role: str) -> str | None:
     loosening these two, because loosening them makes every polite suggestion a
     directive.
     """
-    # Seven ways of writing a sentence that is *about* a decision without being
-    # one, all of which borrow the vocabulary of the thing they describe. They
+    # Six ways of writing a sentence that is *about* a decision without being
+    # one, all of which borrow the vocabulary of the thing they describe. The
+    # seventh, the reported attitude, is below: it is the one that comes joined
+    # to a real rule often enough to be cut out instead of obeyed. They
     # are checked for both roles: a user mistypes a flag and corrects it in the
     # substitution frame exactly as the assistant does, and the correction is a
     # repair either way.
@@ -1005,10 +1039,18 @@ def _decision_kind(text: str, role: str) -> str | None:
         or _DELIBERATION.search(text)
         or _RETROSPECTIVE.search(text)
         or (_RETRO_STAGE.search(text) and _PAST_FINITE.search(text))
-        or _OPINION.search(text)
         or _REPAIR.search(text)
         or _QUESTION.search(text)
     ):
+        return None
+
+    # The attitude out, whatever it was joined to left behind. The seventh guard,
+    # and the only one that cuts rather than suppresses — see `_without_opinion`
+    # for why, and `_CLAUSE` for where it cuts. A block that is nothing but
+    # attitude comes back empty and is declined here, which is what the block
+    # scope used to do for every block that contained one. [round 4, Gemini F2]
+    text = _without_opinion(text)
+    if not text.strip():
         return None
 
     # The circumstance out, the rule left behind. After the guards, because a
