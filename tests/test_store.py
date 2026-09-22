@@ -1032,7 +1032,7 @@ def test_a_credential_in_a_gitignored_directory_does_not_block_the_push(tmp_path
     from gitmemory.__main__ import main
 
     home = _pushable(tmp_path)
-    (home / "spool").mkdir()
+    (home / "spool").mkdir(exist_ok=True)  # `gitrepo.init` makes it now [E7 S9]
     (home / "spool" / "0001.json").write_bytes(b'{"t":"' + GHP + b'"}')
     (home / "index").mkdir()
     (home / "index" / "index.db").write_bytes(b"sqlite " + GHP)

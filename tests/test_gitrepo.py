@@ -71,7 +71,9 @@ def test_the_derived_index_and_the_spool_are_never_committed(tmp_path):
     """`index/` is rebuildable and `spool/` is a doorbell. Neither belongs in history."""
     home = gitrepo.init(str(tmp_path / "store"))
     for name in ("index", "spool", ".locks"):
-        os.makedirs(os.path.join(home, name))
+        # `exist_ok`: `init` now makes the spool itself, so that it can fix its
+        # mode on a store where the shim made it first. [E7 S9]
+        os.makedirs(os.path.join(home, name), exist_ok=True)
         with open(os.path.join(home, name, "x"), "w", encoding="utf-8") as fh:
             fh.write("derived")
     os.makedirs(os.path.join(home, "sessions"))
@@ -989,6 +991,39 @@ def test_the_home_mode_is_re_applied_on_every_start_not_just_the_first(tmp_path)
 
     assert os.stat(home).st_mode & 0o077 == 0
     assert os.stat(os.path.join(home, ".git")).st_mode & 0o077 == 0
+
+
+# --- E7 S9: the third directory that holds transcript bytes ------------------
+
+
+@pytest.mark.parametrize("before", [None, 0o777, 0o755, 0o750])
+def test_the_spool_is_owner_only_whatever_it_was(tmp_path, before):
+    """`home` and `.git` were fixed and the spool was not, and it holds the same bytes.
+
+    The hook shim makes it correctly — `umask 077` — but `mkdir -p` sets a mode
+    only when it *creates* the directory, and the shim's `[ -d ]` fast path
+    means an existing spool is never looked at again. Measured before the fix, a
+    spool left at 0777 stayed 0777 across every fire, with whole unredacted
+    payloads sitting in it until the watcher swept. The records inside are 0600,
+    which is not the point: a world-executable directory with a known naming
+    grammar (`<pid>-<event>.json`) is enough to read them. [E7 S9]
+
+    `None` is the case where nothing made it yet, so this also pins that `init`
+    creates it rather than only repairing it.
+    """
+    home = gitrepo.init(str(tmp_path / "store"))
+    spool = os.path.join(home, "spool")
+    if before is None:
+        # `init` made it; prove the parametrisation is not vacuous by checking
+        # the other arms actually start wrong.
+        assert os.path.isdir(spool)
+    else:
+        os.chmod(spool, before)
+        assert os.stat(spool).st_mode & 0o077 == before & 0o077
+
+    gitrepo.init(home)
+
+    assert os.stat(spool).st_mode & 0o077 == 0, oct(os.stat(spool).st_mode)
 
 
 # --- E7 fs-F9: the directories made on the way to the store ------------------

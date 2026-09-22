@@ -406,6 +406,21 @@ def init(home: str | None = None) -> str:
     # Neither chmod is suppressed: a store we cannot make private is one we
     # should refuse to write to. [E7 fs-F2]
     os.chmod(os.path.join(home, ".git"), 0o700)
+    # The third directory under `home` that holds transcript bytes, and the only
+    # one the hook shim creates. It creates it correctly — `umask 077`, so 0700
+    # — but `mkdir -p` sets a mode only when it makes the directory, and the
+    # shim's `[ -d ]` fast path means an existing spool is never looked at
+    # again. Measured, a spool left at 0777 stayed 0777 across every fire.
+    #
+    # Not fixed in the shim: that branch runs on every fire but the first, and a
+    # `chmod` there is a fork on the one path in this system a user waits for.
+    # Here it is free and idempotent, which is the same argument `home` and
+    # `.git` above are already settled by, and unsuppressed for the reason they
+    # are: a directory the watcher will read records out of and cannot make
+    # private is one it should refuse to run against. [E7 S9]
+    spool = os.path.join(home, "spool")
+    _mkdir(spool)
+    os.chmod(spool, 0o700)
     for key, value in _CONFIG.items():
         _git(home, "config", key, value)
     _assert_no_foreign_config(home)

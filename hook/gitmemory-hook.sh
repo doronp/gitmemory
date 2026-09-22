@@ -5,6 +5,14 @@
 # re-derives every fact from the transcript itself, so this file is a doorbell:
 # the worst a broken run can do is cost the session one immediate capture, and
 # the watcher's sweep picks it up anyway.
+#
+# Two refusals are loud and every write failure is silent, and the asymmetry is
+# deliberate. A refusal is a configuration the user can fix and it fires once;
+# a write failure can be a full disk, and a message on that path fires at every
+# compaction for as long as the disk stays full — which is the noise this shim
+# exists not to make. The cost is real and is stated where a user meets it:
+# `hook/README.md` says that an installed hook producing no records should be
+# run by hand, because that is the only place the reason appears. [E7 S10]
 umask 077
 # Every parameter is expanded with a `:-` default, so the shim survives being
 # run under `set -u`. It does not set `-u` itself, but `SHELLOPTS=nounset` is
@@ -47,11 +55,24 @@ case "$H" in
         # environment variable's value into the agent's own transcript, and a
         # value containing ESC or CR does not print, it *edits*: `\033[2K\r`
         # erases the warning line and substitutes whatever follows. The Python
-        # side holds itself to exactly this standard (`__main__._UNSAFE` and the
-        # `print` shadow beside it); the shim is the half that runs inside
-        # somebody else's agent, so it is the half that matters more. One fork,
-        # on a path that is already exiting. [E4, review: CLI 6]
-        echo "gitmemory: GITMEMORY_HOME must be an absolute path, got '$(printf '%s' "$H" | tr -d '\000-\037')'" >&2
+        # side holds itself to exactly this standard (`records.safe_text` and
+        # the `print` shadow in `__main__`); the shim is the half that runs
+        # inside somebody else's agent, so it is the half that matters more.
+        # One fork, on a path that is already exiting. [E4, review: CLI 6]
+        #
+        # An allowlist, `-cd`, not the denylist `-d '\000-\037'` this was. That
+        # range is C0 and only C0, and `safe_text` also spells out DEL, the C1
+        # block, the bidi overrides and U+2028/9 — so the comment above claimed
+        # a parity the code did not have. Measured against the shipped version:
+        # DEL, U+009B (a working CSI on a terminal that decodes C1), U+202E and
+        # U+2028 all reached stderr intact. A denylist cannot be fixed here
+        # anyway: in UTF-8 those are two- and three-byte sequences and `tr`
+        # deletes bytes, so removing the lead byte of U+202E leaves the other
+        # two. Everything outside printable ASCII goes instead, `LC_ALL=C` so
+        # that is a byte range and no multi-byte sequence can half-survive. The
+        # message says so, because a value written in a non-Latin script comes
+        # out empty and an empty value must not read as "unset". [E7 S7]
+        echo "gitmemory: GITMEMORY_HOME must be an absolute path, got (printable ASCII only) '$(printf '%s' "$H" | LC_ALL=C tr -cd '\040-\176')'" >&2
         exit 0
         ;;
 esac
@@ -86,7 +107,17 @@ set -C
 # `cannot overwrite existing file` landed in the agent's output. The branch
 # below then ran and cleaned up correctly, so the only symptom was the noise,
 # which is the whole thing this shim promises not to make. [E4, review]
-if ! cat 2>/dev/null > "$T"; then
+#
+# The brace group takes the stderr the *shell itself* writes after the child is
+# reaped, which the redirections inside the group are too early to cover. With
+# `ulimit -f` set in the environment — some CI images set it — a payload over
+# the limit killed `cat` with SIGXFSZ and the shell announced it: measured,
+# `gitmemory-hook.sh: line 93: 20074 Filesize limit exceeded: 25   cat 2>
+# /dev/null > "$T"` went into the agent's stderr, script path and all. The
+# branch below already handled it correctly; as with the refused open, the only
+# symptom was the noise. A group is not a subshell, so this costs no fork.
+# [E7 S8]
+if ! { cat 2>/dev/null > "$T"; } 2>/dev/null; then
     set +C
     rm -f "$T" 2>/dev/null
     exit 0

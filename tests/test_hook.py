@@ -530,18 +530,37 @@ def test_set_c_alone_stops_the_write_through(clean_env, tmp_path):
     assert [f for f in spool.glob("*.json") if not f.is_symlink()] == []
 
 
-def test_a_refusal_cannot_rewrite_the_agents_terminal(clean_env):
-    """The shim's one message that quotes a value, with ESC and CR in the value.
+# Each of these is a way to edit the agent's terminal from inside the one value
+# the shim quotes back. The first was the only one the original `tr -d
+# '\000-\037'` removed; the other four are what an allowlist is for, and the
+# last three are multi-byte, which is why a `tr` denylist could never have been
+# extended to cover them. [E7 S7]
+TERMINAL_EDITS = {
+    "ESC": "rel\033[2K\rgitmemory: everything is fine",
+    "DEL": "rel\177x",
+    "C1 CSI": "rel2K",
+    "bidi override": "rel‮txt.exe",
+    "line separator": "rel gitmemory: everything is fine",
+}
+
+
+@pytest.mark.parametrize("what", sorted(TERMINAL_EDITS))
+def test_a_refusal_cannot_rewrite_the_agents_terminal(clean_env, what):
+    """The shim's one message that quotes a value, with an edit in the value.
 
     `GITMEMORY_HOME` is the user's own variable, so this is not a privilege
     boundary — but the shim's stderr lands in somebody else's agent transcript,
     and `\\033[2K\\r` there does not print, it erases the warning line and
     substitutes whatever follows it. The Python side holds itself to exactly
-    this standard (`__main__._UNSAFE`); the shim is the half that runs inside
+    this standard (`records.safe_text`); the shim is the half that runs inside
     another program. [E4, review: CLI 6]
+
+    Parametrised because the fix was a denylist of C0 and the standard it
+    claimed parity with is much wider. Measured against the shipped version,
+    DEL, U+009B, U+202E and U+2028 all reached stderr intact. [E7 S7]
     """
     env, _ = clean_env
-    env["GITMEMORY_HOME"] = "rel\033[2K\rgitmemory: everything is fine"
+    env["GITMEMORY_HOME"] = TERMINAL_EDITS[what]
     out = subprocess.run(
         run_shim_cmd() + ["PreCompact"],
         env=env,
@@ -550,8 +569,42 @@ def test_a_refusal_cannot_rewrite_the_agents_terminal(clean_env):
     )
     assert out.returncode == 0
     assert out.stdout == b""
-    assert b"\033" not in out.stderr and b"\r" not in out.stderr, out.stderr
     assert out.stderr.startswith(b"gitmemory: GITMEMORY_HOME must be an absolute path")
+    # Printable ASCII and the trailing newline, and nothing else. Stated as the
+    # allowlist rather than as a list of the five sequences above, so a sixth
+    # way in is a failure here without anyone having thought of it first.
+    body = out.stderr.rstrip(b"\n")
+    assert all(0x20 <= b <= 0x7E for b in body), out.stderr
+    # And it still says what was refused: a message that drops the value is
+    # safe and useless, and this is the one place a user learns what was set.
+    assert b"'rel" in out.stderr, out.stderr
+
+
+def test_a_file_size_limit_does_not_put_the_shells_own_noise_in_the_transcript(clean_env):
+    """`ulimit -f` in the environment, and a payload over the limit. [E7 S8]
+
+    The shim's redirects are around the write, and this message is not: the
+    shell prints it when it reaps the child, after `cat` has died on SIGXFSZ.
+    Measured before the fix, `gitmemory-hook.sh: line 93: 20074 Filesize limit
+    exceeded: 25   cat 2> /dev/null > "$T"` — script path, line number and all
+    — went straight into the agent's stderr.
+
+    Set through `sh -c` rather than `preexec_fn`, because `ulimit` is how a user
+    or a CI image actually sets this and the point is the shell's behaviour.
+    """
+    env, home = clean_env
+    res = subprocess.run(
+        ["/bin/sh", "-c", 'ulimit -f 1; exec "$0" PreCompact', str(SHIM_PATH)],
+        env=env,
+        input=b"x" * 4_000_000,
+        capture_output=True,
+    )
+    assert res.returncode == 0
+    assert res.stderr == b"", res.stderr.decode()
+    assert res.stdout == b""
+    # The doorbell is lost, which is the cost the header owns up to, and the
+    # partial file is not left behind pretending to be one.
+    assert list((home / "spool").iterdir()) == []
 
 
 def test_the_shim_survives_being_run_under_nounset(clean_env):

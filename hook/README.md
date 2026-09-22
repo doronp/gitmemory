@@ -6,9 +6,10 @@ standard input to the spool and exits 0. That is the whole program.
 It is **not** how gitmemory captures your sessions. The watcher is. The hook
 only makes a capture happen *sooner* — right before a compaction, instead of at
 the next sweep. **If you never install this hook, gitmemory is still correct**;
-you lose the guarantee that a segment is cut exactly at the compaction boundary,
-and nothing else. That property is what makes a shell script in your agent's
-critical path an acceptable thing to ship.
+you lose the guarantee that a segment is cut exactly at the compaction boundary.
+That property is what makes a shell script in your agent's critical path an
+acceptable thing to ship. What a broken run costs beyond that one capture is
+[below](#what-a-broken-run-can-cost), and is not nothing.
 
 ## Install
 
@@ -30,6 +31,34 @@ entirely. If you have installed the hook and no records are appearing, run it
 by hand — `echo '{}' | ./gitmemory-hook.sh PreCompact` — where you can see what
 it says. Either way the watcher's sweep still captures the session; a refused
 hook costs latency, not bytes.
+
+**A failed write says nothing at all**, and running it by hand is the only way
+to find out why. An unwritable spool, a full disk and a refused `rename` all
+exit 0 in silence. That is the opposite of the rule the two refusals above
+follow, and it is on purpose: a refusal is a configuration you fix once, while
+a full disk would put a line in your agent's transcript at every compaction
+until you cleared it. The value of the trade is exactly this paragraph — if
+you installed the hook and the spool is empty, the shim will not tell you, so
+ask it directly.
+
+### What a broken run can cost
+
+Not only the one capture. Two things escape that description and both are
+measured rather than argued:
+
+- **A line of the shell's own noise, once.** Not the shim's — the shell's.
+  With `ulimit -f` set in the environment, a payload over the limit killed
+  `cat` with SIGXFSZ and `/bin/sh` announced it with this script's path and a
+  line number. The failure itself was always handled correctly; the noise was
+  the symptom, and it is now inside the redirect that the earlier `set -C`
+  message taught us to want. [E7 S8]
+- **The record is as large as the payload.** There is no size cap, and one is
+  not coming. `head -c` would cost the same single fork, but it closes the pipe
+  early and an agent that does not handle `EPIPE` on its own hook would then
+  die — trading a large file for a broken session, which is the wrong way round
+  for a program whose first rule is never to disturb the caller. Measured, a 20
+  MB payload lands in the spool as a 20 MB record; the watcher reads it, drops
+  it if it will not parse, and the sweep captures the session regardless.
 
 For Claude Code, in `~/.claude/settings.json` — each event key takes an array of
 matcher groups, and the event name is passed in `args`, because Claude Code

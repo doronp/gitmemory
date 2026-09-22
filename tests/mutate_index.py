@@ -876,9 +876,31 @@ MUTANTS = [
     (
         "the shim echoes an environment variable's control characters",
         "hook/gitmemory-hook.sh",
-        "'$(printf '%s' \"$H\" | tr -d '\\000-\\037')'",
+        "'$(printf '%s' \"$H\" | LC_ALL=C tr -cd '\\040-\\176')'",
         "'$H'",
         "test_a_refusal_cannot_rewrite_the_agents_terminal",
+    ),
+    # --- E7 carry-in S7/S8/S9: the shim's stderr, its noise, and its spool ---
+    (
+        "the shim's allowlist goes back to the C0 denylist it was",
+        "hook/gitmemory-hook.sh",
+        "LC_ALL=C tr -cd '\\040-\\176'",
+        "tr -d '\\000-\\037'",
+        "test_a_refusal_cannot_rewrite_the_agents_terminal",
+    ),
+    (
+        "the outer redirect goes, so the shell's own job report reaches the agent",
+        "hook/gitmemory-hook.sh",
+        'if ! { cat 2>/dev/null > "$T"; } 2>/dev/null; then',
+        'if ! cat 2>/dev/null > "$T"; then',
+        "test_a_file_size_limit_does_not_put_the_shells_own_noise_in_the_transcript",
+    ),
+    (
+        "init makes the spool but never repairs one that already exists",
+        "gitrepo.py",
+        "    _mkdir(spool)\n    os.chmod(spool, 0o700)\n",
+        "    _mkdir(spool)\n",
+        "test_the_spool_is_owner_only_whatever_it_was",
     ),
     # --- the vacuity audit ---
     #
