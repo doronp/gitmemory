@@ -177,9 +177,53 @@ about reviewers: a bounded wait looks like a fix and reads like a fix, and six
 agents plus two independent runs all looked at it and none of them said "and
 then it lies". A test running on a loaded machine did.
 
+## The two rows that were not attribution problems
+
+The same full pass produced two `MISSED` verdicts — mutant caught, but not by
+the test named for it. `MISSED` normally means the intended test is decorative
+and some other test is doing the work. Both of these meant something else, and
+finding out which required a third harness fix.
+
+**`SURVIVED` was unreachable.** The suite the harness runs includes
+`test_every_mutation_row_anchors_exactly_once`, which reads the file the harness
+has just mutated and asserts every row's anchor is present. Under a mutant the
+anchor has been replaced, so it is absent, so that test fails — for every
+mutant, on every row, whether or not one line of the product is pinned by
+anything. The harness's first question ("revert one behaviour; does the suite go
+red?") was being answered by the harness's own bookkeeping, and had been for as
+long as that bookkeeping existed. It is deselected in the suite run now, and
+only there: outside a mutation the anchor is supposed to be present, and that
+test has caught a row broken by an ordinary product edit twice.
+
+With that removed, both rows turned out to name **code a later fix had made
+dead**, which is a different and more interesting thing than a weak test.
+
+- `_fill` fed the digest twice for a skipped generation. An E3 loop at the end
+  of the function wrote `{"skipped": "<key>: <repr(exc)>"}`; the E6 generation
+  row writes the same two facts as `session_key` and `skip_reason`. Deleting the
+  loop leaves its named test green and the whole suite green. It was worth one
+  careful look first — `skip_reason` goes through `_encodable`, which replaces
+  what sqlite3 cannot encode, while `canonical_json` escapes it — but `repr`
+  turns a lone surrogate into six ASCII characters before either sees it, so
+  there is nothing for `_encodable` to lose. The loop is gone; the row anchors
+  on the line that does the work.
+- `os.path.abspath` on the index target was what made `--db out.db` work:
+  `dirname("out.db")` is `""` and `makedirs("")` is `ENOENT`. Then index-F9's
+  fix added `realpath` on the caller-supplied parent, and `realpath("")` is the
+  working directory. Dead on the other branch too, since `resolve_home` already
+  returns a realpath. Removed, and the row re-anchored onto the `realpath` line
+  — deliberately sharing an anchor with the row for the symlink behaviour. One
+  line, two behaviours, two rows, two named tests.
+
+Neither line was wrong and neither was a bug. Both were comments claiming to be
+the reason something worked, three fixes after they had stopped being the
+reason, which is the kind of thing that survives every review that reads code
+for defects.
+
 ## What it cost
 
-**1121 → 1126 tests, 423 → 430 negative controls**, for four fixes.
+**1121 → 1127 tests, 423 → 431 negative controls**, for four fixes and the
+harness repair below.
 
 Every one of the four has a row in `tests/mutate_index.py` that reverts it, and
 the named test must go red when it does. Two of the rows are the two ends of one

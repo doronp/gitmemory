@@ -86,8 +86,8 @@ mechanically — `tests/mutate_index.py` holds the mutation, the harness applies
 it, runs the suite and the named test, and scores the row. A fix with no row is
 not finished.
 
-The harness itself was a finding twice, both times from reading its output
-rather than its exit code:
+The harness itself was a finding three times, every one of them from reading its
+output rather than its exit code:
 
 - It **scored a mutant that does not parse as CAUGHT.** The mutant was never a
   program. `verdict` read only the `-x` suite run, whose exit code for a
@@ -97,6 +97,14 @@ rather than its exit code:
 - It **wedged** for 33 minutes on a test that proved "this does not block" by
   blocking. Two repairs: a `setitimer` deadline with its own positive control,
   and a `WEDGED` verdict that names which of the two runs hung.
+- **`SURVIVED` was unreachable.** The suite it runs contains its own bookkeeping
+  test, which reads the mutated file and asserts every anchor is present — so
+  it fails for every mutant by construction, and "did the suite go red" was
+  being answered by the harness. Every unpinned row scored MISSED instead,
+  which reads as *some other test caught it* and sends you to look at the
+  attribution rather than at the hole. Found from the two MISSED rows in the
+  first full pass, [both of which turned out to be
+  real](E7-pair-review.md#the-two-rows-that-were-not-attribution-problems).
 
 It also *found* one, by costing three hours of full CPU: under that load
 `verify` gave up on a session lock and reported 71 live segments as litter,
