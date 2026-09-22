@@ -978,6 +978,32 @@ def test_a_terminal_escape_in_a_transcript_does_not_reach_the_artifacts(home, sr
     assert any("\\u202e" in blob for blob in strings.values()), strings
 
 
+def test_the_two_gates_agree_on_what_invisible_means(home, src):
+    """`derive._INVISIBLE` and `records.UNSAFE` are the same judgement, twice.
+
+    One strips invisible characters so an extraction anchor can see the text;
+    the other spells them out so a renderer cannot be lied to by them. They
+    disagreed on four: soft hyphen, the Mongolian vowel separator, the word
+    joiner and the BOM. `_INVISIBLE` has listed all four since E5 for the
+    reason `UNSAFE`'s own comment gives — invisible in the client, and a
+    difference between two strings a reader cannot see — and `UNSAFE` did not
+    hold them, so they went into the committed artifacts verbatim. [E7b L3-F4]
+    """
+    invisible = "\xad\u180e\u2060\ufeff"
+    assert all(derive._INVISIBLE.match(ch) for ch in invisible), "the premise"
+
+    hostile = f"We decided to drop{invisible} the cache and keep the index."
+    write(src, [user("u1", PROSE[0]), assistant("a1", [text(hostile)]), user("u2", PROSE[2])])
+    store.capture(src, "claude-code", "sess", home=home)
+    assert derive.build(home).skipped == []
+
+    strings = _artifact_strings(home)
+    assert any("drop" in blob for blob in strings.values()), "the block was dropped"
+    for name, blob in strings.items():
+        for ch in invisible:
+            assert ch not in blob, f"{name} carries U+{ord(ch):04X}"
+
+
 # --- finding 8: the temp file, swept and ignored --- #
 
 

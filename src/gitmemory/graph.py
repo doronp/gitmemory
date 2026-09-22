@@ -70,10 +70,23 @@ def _label(text: str) -> str:
     returns. A key that straddles `LABEL_CHARS` survives the cut as a fragment
     no detector matches, so scanning afterwards would pass a truncated key
     through and call it clean.
+
+    It runs on the collapsed text *as well*, because collapsing can manufacture
+    a secret out of text that had none. `-----BEGIN RSA\\nPRIVATE KEY-----`
+    scans clean — `private_key_block` wants one space there, not a newline — and
+    collapses into a header that matches. Measured: that block passed this gate
+    and then `derive._write` refused the file, which costs the generation its
+    ideas and its timeline too, neither of which had anything to do with the
+    key. Both scans, not just the collapsed one: whitespace is never *removed*,
+    only narrowed, so no high-tier shape can be hidden by the collapse today —
+    but that is a fact about the current detector table, and this gate should
+    not go quiet the day somebody adds a pattern that spans a line. [E7b L3-F1]
     """
-    if _leaks(text.encode("utf-8", "surrogatepass")):
-        return REDACTED
     flat = _WS.sub(" ", text).strip()
+    if _leaks(text.encode("utf-8", "surrogatepass")) or _leaks(
+        flat.encode("utf-8", "surrogatepass")
+    ):
+        return REDACTED
     if not flat:
         return NO_TEXT
     if len(flat) <= LABEL_CHARS:

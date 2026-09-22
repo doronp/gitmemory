@@ -43,8 +43,16 @@ _ENC = ("utf-8", "surrogatepass")
 # which is how one recall hit hides the hit above it; U+202E reverses the
 # apparent order of whatever is left; the zero-width characters hide a
 # difference between two labels that look identical.
+#
+# The four singletons on the second line are the ones this class used to miss.
+# `derive._INVISIBLE` has enumerated them since E5 — soft hyphen, the Mongolian
+# vowel separator, the word joiner, the byte-order mark — for exactly the
+# reason written above: invisible in the client, and a difference between two
+# strings a reader cannot see. Two gates disagreeing about what "invisible"
+# means is how one of them ends up wrong; they agree now. [E7b L3-F4]
 UNSAFE = re.compile(
     "[\u0000-\u0008\u000b-\u001f\u007f-\u009f"  # C0 except tab and newline, DEL, C1
+    "\u00ad\u180e\u2060\ufeff"  # soft hyphen, MVS, word joiner, BOM
     "\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069"  # zero-width, bidi marks, overrides
     "\u2028\u2029]"  # line and paragraph separators
 )

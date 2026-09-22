@@ -641,6 +641,15 @@ MUTANTS = [
         "test_a_non_utf8_byte_in_a_transcript_does_not_reach_the_artifacts",
     ),
     (
+        # `_INVISIBLE` has held these four since E5 and `UNSAFE` did not, so a
+        # renderer got them verbatim while an extraction anchor never saw them.
+        "the render gate goes back to a narrower idea of invisible than the extractor's",
+        "records.py",
+        '    "\\u00ad\\u180e\\u2060\\ufeff"  # soft hyphen, MVS, word joiner, BOM',
+        '    ""',
+        "test_the_two_gates_agree_on_what_invisible_means",
+    ),
+    (
         "the zero-width characters are not in the unsafe class",
         "records.py",
         '    "\\u061c\\u200b-\\u200f\\u202a-\\u202e\\u2066-\\u2069"',
@@ -2488,11 +2497,10 @@ MUTANTS = [
         # cut lands mid-key, a fragment of the key with it.
         "the secret scan runs on the label rather than on the block",
         "graph.py",
-        '    if _leaks(text.encode("utf-8", "surrogatepass")):\n        return REDACTED\n'
-        '    flat = _WS.sub(" ", text).strip()',
-        '    flat = _WS.sub(" ", text).strip()\n'
-        '    if _leaks(flat[:LABEL_CHARS].encode("utf-8", "surrogatepass")):\n'
-        "        return REDACTED",
+        '    if _leaks(text.encode("utf-8", "surrogatepass")) or _leaks(\n'
+        '        flat.encode("utf-8", "surrogatepass")\n'
+        "    ):",
+        '    if _leaks(flat[:LABEL_CHARS].encode("utf-8", "surrogatepass")):',
         "test_a_key_past_the_cut_still_redacts_the_whole_label",
     ),
     (
@@ -4342,7 +4350,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "09 mutants",
+        "a full pass is 5" + "11 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4565,6 +4573,19 @@ MUTANTS = [
         '    FORBIDDEN["this machine\'s account name"] = re.compile(re.escape(ACCOUNT), re.I)',
         "    pass",
         "test_the_account_name_scan_is_on_or_says_why_it_is_not",
+    ),
+    (
+        # A label scans what came in and publishes what it collapsed. Drop the
+        # second scan and collapsing manufactures a PEM header the first one
+        # never saw, which `derive._write` then refuses — taking the
+        # generation's ideas and timeline down with it. [E7b L3-F1]
+        "the label scans what it was given and not what it hands on",
+        "graph.py",
+        """    if _leaks(text.encode("utf-8", "surrogatepass")) or _leaks(
+        flat.encode("utf-8", "surrogatepass")
+    ):""",
+        """    if _leaks(text.encode("utf-8", "surrogatepass")):""",
+        "test_a_key_the_label_itself_assembles_is_redacted_before_it_is_published",
     ),
     # --- E5 fix 2 reviewed: the conjunction was scoped to the block --------- #
     (
@@ -4791,7 +4812,7 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 509 mutants x two suite runs, which
+    The filter exists because a full pass is 511 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
     to mean either waiting for the other 501 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in

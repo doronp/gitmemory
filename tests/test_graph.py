@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 from graphify.validate import validate_extraction
 
-from gitmemory import graph
+from gitmemory import derive, graph
 from gitmemory.derive import Decision
 from gitmemory.records import Block, Session, Turn
 
@@ -191,6 +191,36 @@ def test_a_key_past_the_cut_still_redacts_the_whole_label():
     assert out["nodes"][0]["label"] == graph.REDACTED
     assert validate_extraction(out) == []
     assert "AKIA" not in str(out), "a fragment of the key is still the key's shape"
+
+
+def test_a_key_the_label_itself_assembles_is_redacted_before_it_is_published(tmp_path):
+    """Scan what is returned as well as what came in.
+
+    The block below carries no secret any detector matches: `private_key_block`
+    wants a single space between `RSA` and `PRIVATE`, and there is a newline
+    there. Collapsing the whitespace — which is the first thing a label does —
+    puts the space in and makes the header real.
+
+    The old gate scanned only the incoming block, so it published the assembled
+    header, and `derive._write` then refused the whole file. Measured before the
+    fix: `refusing to write a secret into derived/: graph.json:193: high
+    private_key_block`, which costs the generation its ideas and its timeline
+    too. Neither of those quoted anything. [E7b L3-F1]
+    """
+    split = "-----BEGIN RSA\nPRIVATE KEY-----"  # synthetic, right shape
+    scan = derive._leaks
+    assert scan(split.encode()) == [], "the premise: this block scans clean as it stands"
+    assert scan(" ".join(split.split()).encode()), "and dirty once a label flattens it"
+
+    s = _session("s1", [("user", f"we will use {split} for this")])
+    out = graph.extraction([s], extract=_decide(_ids(s)[0]))
+    assert out["nodes"][0]["label"] == graph.REDACTED
+    assert out["labels_redacted"] == 1
+    assert "PRIVATE KEY" not in str(out)
+    assert validate_extraction(out) == []
+
+    # The door the label was walking into. Without the fix this raises.
+    derive._write(str(tmp_path / "graph.json"), out)
 
 
 def test_the_extraction_says_how_many_labels_it_redacted():
