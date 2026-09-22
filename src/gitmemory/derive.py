@@ -1155,6 +1155,12 @@ _PIVOT = re.compile(
 # retrospective summaries back into the output for one extra true reversal.
 # Ownership is not withdrawal.
 # [E5 fix 2 — see docs/benchmarks/E5-secondary-set.md]
+# A blank line, which is what separates one assertion from the next in a chat
+# message. Used by the assistant's substitution branch to scope its conjunction;
+# see the comment there for why the block is the wrong unit and the sentence is
+# too small a one.
+_PARAGRAPH = re.compile(r"\n[ \t]*\n")
+
 _RECANT = re.compile(
     r"\b(?:you(?:'re| are| were) (?:absolutely |completely |totally |quite )?right"
     r"|(?:good|great|nice|excellent) catch"
@@ -1194,8 +1200,19 @@ def _without_opinion(text: str) -> str:
     rule with a comma and a coordinator all the time — "we don't want pickle, so
     never import it" — and suppressing the block loses the imperative that the
     attitude is the *reason* for. [round 4, Gemini F2]
+
+    Paragraph by paragraph, and rejoined as paragraphs. `_CLAUSE` splits on the
+    whitespace after a sentence end, which swallows the blank line between two
+    paragraphs, and a single `" ".join` then handed the caller one long line —
+    so the assistant's substitution branch, which scopes its conjunction to the
+    paragraph, saw one paragraph where the message had three and kept a
+    concession that licensed nothing. Cutting an attitude out of a message is
+    not licence to reflow it. [E5 fix 2 review, F3]
     """
-    return " ".join(c for c in _CLAUSE.split(text) if not _OPINION.search(c))
+    return "\n\n".join(
+        " ".join(c for c in _CLAUSE.split(part) if not _OPINION.search(c))
+        for part in _PARAGRAPH.split(text)
+    )
 
 
 def _decision_kind(text: str, role: str) -> str | None:
@@ -1287,7 +1304,29 @@ def _decision_kind(text: str, role: str) -> str | None:
         # — six probe items phrased as course changes with nothing in the
         # sentence to say so — and that trade is priced in
         # `docs/benchmarks/E5-secondary-set.md`. [E5 fix 2]
-        if (_SWITCH.search(text) or _CONTRAST.search(text)) and _RECANT.search(text):
+        #
+        # **Scoped to the paragraph**, because a conjunction over a whole block
+        # is not a conjunction over an assertion. Both survivors of fix 2 are
+        # the same shape: a concession opening the message — "You're absolutely
+        # right." — and then, three paragraphs of narration later, an `instead`
+        # or a `, not` that belongs to a description of the *bug*, or to a
+        # bullet in a summary of what was fixed. Nothing joins the two but the
+        # message boundary. A concession licenses the substitution it is
+        # *offered with*; at four hundred characters' distance it is licensing
+        # somebody else's sentence.
+        #
+        # Measured on the nine that survived fix 2: the paragraph keeps 7 of 7
+        # true and drops 2 of 2 false. The sentence would keep 1 of 7 — a
+        # concession is its own sentence far more often than not, which is why
+        # this is not scoped there. Splitting on every newline instead scores
+        # identically on this evidence, so the choice between them is not
+        # measured; the paragraph is the looser of the two and a hard-wrapped
+        # line is a formatting artifact rather than a boundary.
+        # [E5 fix 2 review, F3]
+        if any(
+            _RECANT.search(part) and (_SWITCH.search(part) or _CONTRAST.search(part))
+            for part in _PARAGRAPH.split(text)
+        ):
             return "reversal"
     return None
 

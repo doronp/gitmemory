@@ -2470,3 +2470,50 @@ def test_a_deeply_nested_block_does_not_cost_the_generation_its_artifacts(home, 
     assert stats.skipped == [], stats.skipped
     written = sorted(p.name for p in Path(home, "derived").rglob("*") if p.is_file())
     assert written == ["graph.json", "ideas.json", "timeline.json"], written
+
+
+# --- E5 fix 2, reviewed: the conjunction was scoped to the block --- #
+
+
+def test_a_concession_three_paragraphs_from_a_substitution_licenses_nothing(home, src):
+    """Both nodes that survived fix 2 on real sessions were this shape.
+
+    "You're absolutely right." opens the message; four hundred characters later
+    an `instead` turns up inside a description of the *bug* — the template "is
+    now only showing the combined transcript link instead of the session
+    navigation". Nothing joins the two but the message boundary. A conjunction
+    over a whole block will pair any concession with any substitution the same
+    message happens to contain, and on a chat transcript that is most of them.
+    """
+    body = (
+        "Oh no! You're absolutely right.\n\n"
+        "The issue is likely that the template is now only showing the combined "
+        "transcript link instead of the session navigation."
+    )
+    assert _assistant_says(home, src, body) == []
+
+
+def test_a_concession_offered_with_the_substitution_is_still_a_reversal(home, src):
+    """The control, and it is load-bearing: a guard that suppressed every
+    concession would pass the test above and take all seven true reversals with
+    it. Same two cues, one paragraph.
+    """
+    body = "You're absolutely right — I'll use a bounded queue instead of the lock."
+    assert [d.kind for d in _assistant_says(home, src, body)] == ["reversal"]
+
+
+def test_cutting_an_attitude_out_does_not_reflow_the_message(home, src):
+    """`_without_opinion` splits on the whitespace after a sentence end, which
+    swallows a blank line, and rejoining with a space handed the branch above
+    one paragraph where the message had two — so the scope fix did nothing for
+    any message whose first paragraph ends in an opinion, which is the shape of
+    the concession it was written for.
+
+    The opinion here is in the first paragraph and the substitution is in the
+    second; the paragraph break has to survive the cut.
+    """
+    body = (
+        "Oh no! You're absolutely right. I don't like how that turned out.\n\n"
+        "The template is now only showing the combined link instead of the nav."
+    )
+    assert _assistant_says(home, src, body) == []

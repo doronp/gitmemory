@@ -1655,8 +1655,8 @@ MUTANTS = [
     (
         "the assistant's substitution frame goes back to firing on its own",
         "derive.py",
-        """        if (_SWITCH.search(text) or _CONTRAST.search(text)) and _RECANT.search(text):""",
-        """        if _SWITCH.search(text) or _CONTRAST.search(text):""",
+        """            _RECANT.search(part) and (_SWITCH.search(part) or _CONTRAST.search(part))""",
+        """            _SWITCH.search(part) or _CONTRAST.search(part)""",
         "test_a_bare_substitution_from_the_assistant_is_not_a_reversal",
     ),
     (
@@ -4072,7 +4072,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "62 mutants",
+        "a full pass is 4" + "64 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4231,6 +4231,28 @@ MUTANTS = [
         "    print(line)",
         "test_a_verdict_reaches_the_log_before_the_next_row_runs",
     ),
+    # --- E5 fix 2 reviewed: the conjunction was scoped to the block --------- #
+    (
+        "the concession and the substitution go back to sharing a whole block",
+        "derive.py",
+        """            for part in _PARAGRAPH.split(text)
+        ):
+            return "reversal\"""",
+        """            for part in [text]
+        ):
+            return "reversal\"""",
+        "test_a_concession_three_paragraphs_from_a_substitution_licenses_nothing",
+    ),
+    (
+        "cutting an attitude out reflows the message onto one line again",
+        "derive.py",
+        '''    return "\\n\\n".join(
+        " ".join(c for c in _CLAUSE.split(part) if not _OPINION.search(c))
+        for part in _PARAGRAPH.split(text)
+    )''',
+        '''    return " ".join(c for c in _CLAUSE.split(text) if not _OPINION.search(c))''',
+        "test_cutting_an_attitude_out_does_not_reflow_the_message",
+    ),
     # --- E5 fix 2 reviewed: the gate itself was unwatched ------------------- #
     #
     # The only row whose subject is a *number in a document*. Fix 2 took
@@ -4361,9 +4383,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 462 mutants x two suite runs, which
+    The filter exists because a full pass is 464 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 461 or trusting the new one untested.
+    to mean either waiting for the other 463 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

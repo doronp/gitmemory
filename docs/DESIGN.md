@@ -448,6 +448,22 @@ which is the same shrinking-denominator shape the secondary set's scorer had
 already been bitten by. The test split stays out of the suite; a split scored on
 every commit is not held out.]**
 
+**[E5, fix 3 — a conjunction over a block is not a conjunction over an
+assertion.** Fix 2's frame-plus-trigger held *somewhere in the same block*, and
+a block is a whole chat message. Both of its survivors were the same thing: a
+concession in the first line, three paragraphs of narration, then an `instead`
+belonging to a description of the bug. **Scoped to the paragraph** it keeps 7 of
+7 true and drops 2 of 2 false; the sentence would keep 1 of 7, because a
+concession is usually its own sentence. Splitting on every newline scores
+identically, so that choice is not measured and the looser unit is taken.
+`_without_opinion` had to stop reflowing the block for the scope to exist —
+`_CLAUSE` splits on the whitespace after a sentence end, which eats the blank
+line, so a `" ".join` handed the branch one paragraph where the message had
+three. **Free:** both gate splits, all four probes and the whole user side are
+unmoved; the only movement is the two wrong nodes leaving. Seven emitted, seven
+right, and that is not a precision claim — the denominator is the extractor's
+own output.]**
+
 Every node carries a `source_ref` to a committed block hash. **No node may exist without one.**
 That rule is what stops a decision diagram from becoming fiction.
 

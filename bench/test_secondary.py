@@ -103,16 +103,26 @@ def test_the_injected_block_filter_took_out_eighteen_of_the_nineteen():
     assert s["machine_fp"] == 1
 
 
-def test_seven_of_the_nine_assistant_reversals_left_are_reversals():
+def test_the_seven_assistant_reversals_left_are_all_reversals():
     """The largest thing the extractor emitted on real sessions was also the
     least right: 61 distinct assistant blocks called `reversal`, of which three
     adjudicators kept 9. Precision 0.1475.
 
-    **Fix 2 withdrew 52 of the 61.** Nine are still emitted and seven of those
-    are reversals — precision 0.7778 against the same denominator, which is why
-    `n` stays 61. A withdrawal and a correction can only be told apart if the
+    **Fix 2 withdrew 52 of the 61**, leaving nine emitted of which seven were
+    reversals — 0.7778. **Scoping fix 2's conjunction to the paragraph withdrew
+    the other two**, and both were wrong, so seven are emitted and all seven are
+    reversals. Precision 1.0000 against the same denominator, which is why `n`
+    stays 61: a withdrawal and a correction can only be told apart if the
     population is held at what the extractor emitted when the labels were
     written; see `assistant_score`.
+
+    **1.0000 on seven items is not a precision claim and must not be quoted as
+    one.** The denominator here is the extractor's own output, so it shrinks
+    every time the extractor gets shyer, and a predicate that emitted nothing
+    would read 1.0000 on an empty set. That is exactly why the assertion below
+    is on the three counts and not on the ratio. What the number says is narrow
+    and worth having: of what it still writes into the graph on real sessions,
+    nothing is known to be wrong.
 
     Two true positives went with the 52, and they are the price: `d439a8fe`, a
     2-1 split with no marker in the block at all, and `e926d873`, which only the
@@ -125,8 +135,8 @@ def test_seven_of_the_nine_assistant_reversals_left_are_reversals():
     extractor never flagged is invisible here by construction.
     """
     a = secondary.assistant_score(secondary.assistant_items())
-    assert (a["still_emitted"], a["right"], a["n"]) == (9, 7, 61)
-    assert round(a["precision"], 4) == 0.7778
+    assert (a["still_emitted"], a["right"], a["n"]) == (7, 7, 61)
+    assert round(a["precision"], 4) == 1.0000
     assert a["unanimous"] == 58
     manifest = json.loads(secondary.MANIFEST.read_text())
     assert manifest["unanimous_assistant"] == 58

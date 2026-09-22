@@ -12,6 +12,8 @@ After fix 2 it reads **1.0000 / 0.7428** there, and the loss is priced below.
 
 Its larger output on these sessions is the assistant-side `reversal` — 61
 distinct blocks — and **9 of those 61** survived adjudication. Precision 0.15.
+Three fixes later it emits **7 of the 61 and all seven are reversals**, which is
+a smaller claim than it sounds and is qualified where it is measured.
 
 | Measurement | Text | Score |
 |---|---|---|
@@ -218,7 +220,7 @@ recognise.
 | true positives | 0 | 0 |
 | misses | 2 | 2 |
 | precision / recall | 0.0000 / 0.0000 | **0.0000 / 0.0000** |
-| assistant `reversal` | 9 of 61 | 9 of 61 |
+| assistant `reversal` | 9 of 61 | 9 of 61 |  <!-- fix 3 takes this to 7 of 7 -->
 
 **Precision did not move**, because it was 0/30 and is now 0/12: there is still
 no true positive to divide by. That is the honest reading. What moved is that
@@ -306,6 +308,7 @@ object, so it needs one now.
 | assistant nodes still emitted | 61 | **9** |
 | …adjudicated `reversal` | 9 | **7** |
 | precision | 0.1475 | **0.7778** |
+| *after fix 3 below* | | *7 emitted, 7 right* |
 | user-side tp / fp / fn | 0 / 12 / 2 | 0 / 12 / 2 (unchanged) |
 | probe A, class items | 26/32 | 23/32 |
 | probe B, class items | 27/32 | 25/32 |
@@ -320,6 +323,9 @@ cannot move, and pinning the other two means a withdrawal shows up as a
 withdrawal rather than as an improvement.
 
 ### What it still gets wrong, and what it lost
+
+*(Both false positives below are gone as of fix 3, which is the section after
+this one. They are left here because fix 3 is what they caused.)*
 
 Two false positives survive, and they are the same shape: a concession opens a
 block that then *investigates* or *reports* rather than reverses.
@@ -377,6 +383,63 @@ ceiling item *"Scratch the cron approach; a systemd timer is the right tool
 here"*. Found while writing the negative test for the `scratch` branch, pinned
 there as the behaviour it actually has, and left alone: this is a guard-ordering
 question rather than a wording one, and it predates fix 2.
+
+## Fix 3 — a conjunction over a block is not a conjunction over an assertion
+
+Found by a standalone review of fix 2, reproduced through `derive.decisions()`
+before it was believed, and it is the only free correction in the round.
+
+Fix 2 requires a substitution frame **and** a withdrawal marker. It required
+them *somewhere in the same block*, and a block is a whole chat message. Both
+survivors above are what that buys: a concession in the first line, then three
+paragraphs of narration, then an `instead` that belongs to a description of the
+bug or to a bullet in a changelog. Measured on the nine, the distance between
+the two cues separates the classes cleanly — every true one is within 191
+characters and the two false ones are 332 and 395 apart — but a threshold fitted
+to nine points is not a finding. The unit is.
+
+**The paragraph is the unit.** A concession licenses the substitution it is
+*offered with*; at four hundred characters' distance it is licensing somebody
+else's sentence. Scored on the nine that survived fix 2:
+
+| scope | true kept | false kept |
+|---|---|---|
+| the block (fix 2) | 7 of 7 | 2 of 2 |
+| **the paragraph** | **7 of 7** | **0 of 2** |
+| the sentence | 1 of 7 | 0 of 2 |
+
+The sentence is too small because a concession is its own sentence far more
+often than not. Splitting on every newline instead of on a blank line scores
+identically here, so the choice between those two is **not measured**; the
+paragraph is the looser of them and a hard-wrapped line is a formatting artifact
+rather than a boundary.
+
+One thing had to be repaired for the scope to exist at all. `_without_opinion`
+cuts attitude-bearing clauses out of a block and rejoins the rest with a space —
+and `_CLAUSE` splits on the whitespace *after* a sentence end, which swallows
+the blank line between two paragraphs. So the first version of this fix removed
+one of the two false positives and not the other: the message it missed ends its
+first paragraph in an opinion, and the cut reflowed three paragraphs into one
+before the scope was applied. Cutting an attitude out of a message is not
+licence to reflow it. It now cuts paragraph by paragraph and rejoins as
+paragraphs.
+
+| | before fix 3 | after |
+|---|---|---|
+| assistant nodes still emitted | 9 | **7** |
+| …adjudicated `reversal` | 7 | **7** |
+| user-side tp / fp / fn | 0 / 12 / 2 | 0 / 12 / 2 (unchanged) |
+| gate, dev split | 1.0000 / 0.9319 | 1.0000 / 0.9319 (unchanged) |
+| gate, held-out split | 1.0000 / 0.7428 | 1.0000 / 0.7428 (unchanged) |
+| probes A / B / C / D | 23, 25, 14, 14 | 23, 25, 14, 14 (unchanged) |
+
+**Seven of seven is not precision 1.0000 and must not be quoted as one.** The
+denominator is the extractor's own output: it shrinks whenever the extractor
+gets shyer, and a predicate that emitted nothing would read the same. That is
+why `bench/test_secondary.py` pins `(still_emitted, right, n) == (7, 7, 61)` and
+not the ratio. The claim that survives is narrow — of the seven assistant nodes
+it still writes into the graph on these sessions, none is known to be wrong —
+and it rests on seven items in four projects by one developer.
 
 ## What it does not measure
 
