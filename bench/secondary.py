@@ -67,7 +67,16 @@ def corpus_root() -> Path | None:
 
 
 def _blocks(root: Path) -> list[tuple[str, str, str, str]]:
-    """`(sha256, file, block_id, text)` for the prose a human wrote, deduped.
+    """`(sha256, file, block_id, text)` for every text block in a user turn.
+
+    **Deliberately not `derive._prose`.** The population is a property of the
+    corpus, not of the code under test: the first fix this set produced was one
+    that makes `_prose` decline 55 of these blocks, and routing the harness
+    through it would have shrunk the denominator from 140 to 85 and reported
+    the improvement as a smaller world. A benchmark whose population moves with
+    the fix is how a regression gets laundered. Blocks the extractor no longer
+    reads score `None` here, which is a result and, for the 135 negatives, the
+    right one.
 
     Subagent transcripts are excluded: an `agent-*.jsonl` opens with a dispatch
     prompt in the user role that an orchestrator wrote, not a person, and a
@@ -84,15 +93,18 @@ def _blocks(root: Path) -> list[tuple[str, str, str, str]]:
         if path.name.startswith("agent-") or path.parent.name == "subagents":
             continue
         session = claude_code.parse(str(path))
-        for turn, block in derive._prose(session):
+        for turn in session.turns:
             if turn.role != "user":
                 continue
-            text = block.text.strip()
-            digest = hashlib.sha256(text.encode()).hexdigest()
-            if not text or digest in seen:
-                continue
-            seen.add(digest)
-            out.append((digest, str(path.relative_to(root)), block.block_id, text))
+            for block in turn.blocks:
+                if block.kind != "text":
+                    continue
+                text = block.text.strip()
+                digest = hashlib.sha256(text.encode()).hexdigest()
+                if not text or digest in seen:
+                    continue
+                seen.add(digest)
+                out.append((digest, str(path.relative_to(root)), block.block_id, text))
     return out
 
 
@@ -120,7 +132,36 @@ def _emitted_assistant(root: Path) -> list[tuple[str, str, str, str]]:
     return out
 
 
-def _join(rows: list[dict], found: list[tuple[str, str, str, str]], pin: str) -> list[dict]:
+def _nodes(root: Path) -> dict[str, str]:
+    """`{sha256 of the block's text: node kind}` for the whole corpus.
+
+    The production path and nothing beside it. `derive.decisions()` is what a
+    real session actually writes into the graph, so the score is of the product
+    rather than of a rule called in isolation — which matters the moment a fix
+    lands anywhere other than in the rule, as the first one did: it changed
+    which blocks are *read*, and a harness calling `_decision_kind` directly
+    would have scored every one of them exactly as before.
+    """
+    out: dict[str, str] = {}
+    for path in sorted(root.rglob("*.jsonl")):
+        if path.name.startswith("agent-") or path.parent.name == "subagents":
+            continue
+        session = claude_code.parse(str(path))
+        prose = {b.block_id: b.text.strip() for _t, b in derive._prose(session)}
+        for node in derive.decisions(session):
+            text = prose.get(node.source_ref, "")
+            if text:
+                out.setdefault(hashlib.sha256(text.encode()).hexdigest(), node.kind)
+    return out
+
+
+def _join(
+    rows: list[dict],
+    found: list[tuple[str, str, str, str]],
+    pin: str,
+    *,
+    may_shrink: bool = False,
+) -> list[dict]:
     """Manifest rows with their text, or a hard error if the corpus has moved.
 
     Three ways this raises rather than scoring something else: an item in the
@@ -129,13 +170,20 @@ def _join(rows: list[dict], found: list[tuple[str, str, str, str]], pin: str) ->
     block. Each of them means the pin moved, and a benchmark that quietly
     rescores itself against a changed corpus is worse than one that does not
     run.
+
+    `may_shrink` is for the assistant side alone, whose population *is* the
+    extractor's output: a fix that stops emitting an adjudicated block is the
+    point, and the row survives with no text so precision keeps its original
+    denominator. An *extra* block is still fatal in both directions — it is
+    output nobody adjudicated, and scoring it against nothing would count an
+    unlabelled guess as a win.
     """
     by_digest = {row["sha256"]: row for row in rows}
     have = {digest: (file, block_id, text) for digest, file, block_id, text in found}
 
     missing = sorted(set(by_digest) - set(have))
     extra = sorted(set(have) - set(by_digest))
-    if missing or extra:
+    if extra or (missing and not may_shrink):
         raise RuntimeError(
             f"the corpus has moved off pin {pin}: "
             f"{len(missing)} labelled items are gone, {len(extra)} unlabelled blocks appeared"
@@ -143,6 +191,9 @@ def _join(rows: list[dict], found: list[tuple[str, str, str, str]], pin: str) ->
 
     out = []
     for digest, row in by_digest.items():
+        if digest not in have:
+            out.append({**row, "text": None})
+            continue
         file, block_id, text = have[digest]
         if (file, block_id) != (row["file"], row["block_id"]):
             raise RuntimeError(f"{digest[:12]} moved: {row['file']} -> {file}")
@@ -161,11 +212,15 @@ def _manifest() -> dict:
 
 
 def items() -> list[dict]:
-    """The labelled user-side census, text joined back on from the clone."""
+    """The labelled user-side census, with text and the node the product emits."""
     manifest = _manifest()
     root = corpus_root()
     assert root is not None  # _manifest() raised otherwise
-    return _join(manifest["items"], _blocks(root), manifest["pin"])
+    nodes = _nodes(root)
+    return [
+        {**row, "emits": nodes.get(row["sha256"])}
+        for row in _join(manifest["items"], _blocks(root), manifest["pin"])
+    ]
 
 
 def assistant_items() -> list[dict]:
@@ -173,7 +228,12 @@ def assistant_items() -> list[dict]:
     manifest = _manifest()
     root = corpus_root()
     assert root is not None
-    return _join(manifest["emitted_assistant"], _emitted_assistant(root), manifest["pin"])
+    return _join(
+        manifest["emitted_assistant"],
+        _emitted_assistant(root),
+        manifest["pin"],
+        may_shrink=True,
+    )
 
 
 def score(labelled: list[dict]) -> dict:
@@ -182,13 +242,18 @@ def score(labelled: list[dict]) -> dict:
     `machine` counts false positives raised on blocks no human typed — slash
     command wrappers, IDE notices, command stdout. The user *role* is not the
     user, and this is the only corpus here where that distinction exists at all.
+
+    `emits` is what `derive.decisions()` actually wrote for the block, not what
+    `_decision_kind` says about its text in isolation. The difference is a block
+    the product never reads, which scores as no node — the whole of the first
+    fix this set produced lives in that gap.
     """
     tp = fp = fn = 0
     aside_n = aside_seen = 0
     machine_fp = 0
     misses = []
     for item in labelled:
-        got = derive._decision_kind(item["text"], "user")
+        got = item["emits"]
         gold = item["gold"]
         if gold in ASIDE:
             aside_n += 1
@@ -228,14 +293,23 @@ def assistant_score(adjudicated: list[dict]) -> dict:
     Every item here is something the extractor emitted, so there is no negative
     class and no recall to compute. `right` over `n` is the share of the
     assistant-side output that survived three adjudicators.
+
+    `n` is the adjudicated population, held fixed at whatever the extractor
+    emitted when the labels were written. A fix that stops emitting a block
+    leaves the row with `text: None`, so it drops out of `still` and out of
+    `right` — precision rises against the same denominator, which is the only
+    way a withdrawal and a correction can be told apart.
     """
-    right = sum(row["gold"] == "reversal" for row in adjudicated)
+    still = [row for row in adjudicated if row["text"] is not None]
+    right = sum(row["gold"] == "reversal" for row in still)
     return {
         "n": len(adjudicated),
+        "still_emitted": len(still),
         "right": right,
-        "precision": right / len(adjudicated) if adjudicated else 1.0,
+        "precision": right / len(still) if still else 1.0,
         "unanimous": sum(row["votes"] == 3 for row in adjudicated),
-        "wrong": [row for row in adjudicated if row["gold"] != "reversal"],
+        "wrong": [row for row in still if row["gold"] != "reversal"],
+        "withdrawn": [row for row in adjudicated if row["text"] is None],
     }
 
 
@@ -253,8 +327,10 @@ def main() -> int:
         f"of which the extractor labelled something {s['aside_labelled_something']}"
     )
     print(
-        f"  assistant `reversal`: {a['right']}/{a['n']} adjudicated real, "
-        f"precision {a['precision']:.4f} ({a['unanimous']}/{a['n']} unanimous)"
+        f"  assistant `reversal`: {a['right']}/{a['still_emitted']} adjudicated real, "
+        f"precision {a['precision']:.4f}  "
+        f"({a['n']} adjudicated, {len(a['withdrawn'])} no longer emitted, "
+        f"{a['unanimous']}/{a['n']} unanimous)"
     )
     for gold, got, item in s["misses"]:
         head = item["text"].replace("\n", " ⏎ ")[:140]

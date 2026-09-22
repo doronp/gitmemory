@@ -73,8 +73,8 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | The same extractor on text nobody wrote for a benchmark | a census of every distinct human turn in a third-party MIT corpus of real sessions — 140 items, labelled blind by three annotators at 139/140 agreement | **precision 0.0000, recall 0.0000** |
 | …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | **9 of 61** — precision 0.15 |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **821 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **440** negative controls |
+| The suite | on a fresh checkout, no downloads | **829 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **445** negative controls |
 
 The 322 conformance cases replay claude-code-log's MIT fixtures — third-party,
 real-shaped, and not one byte of anybody's own history — through this parser.
@@ -86,7 +86,7 @@ git -C .conformance/claude-code-log checkout 6ad029e   # the pin in docs/DESIGN.
 ```
 
 `.conformance/` is gitignored; `GITMEMORY_CC_FIXTURES` points at the
-`test/test_data` of a clone somewhere else. **The count above says 821 because
+`test/test_data` of a clone somewhere else. **The count above says 829 because
 that is what a fresh checkout collects.** It said 1127 for two epochs, which was
 true only on a machine that had already cloned the corpus — into a scratch
 directory, so the test written to stop this README quoting an unreachable number
@@ -154,12 +154,16 @@ which three adjudicators kept **9**. The substitution frame does most of the
 damage — *"pass a Path instead of a string"* is two-sided and is not a change of
 course.
 
-Nothing was changed in this commit either. The measurement is recorded against
-the code exactly as it stood when the labels were written, because a number
-produced after the fix is a number about the fix. And unlike a probe this set
-cannot be replaced by writing another one — there is one corpus of real
-third-party sessions here, so after the first fix its score is a regression
-floor and nothing more. Full record:
+It was recorded first with nothing changed, against the code exactly as it stood
+when the labels were written, because a number produced after the fix is a
+number about the fix. **Then the first fix landed**: a block in a human's turn
+that a program put there is not prose. False positives 30 → 12, machine-authored
+ones 19 → 1. Precision did not move — it was 0/30 and is now 0/12, with still no
+true positive — and saying it improved would be the dishonest version.
+
+Unlike a probe this set cannot be replaced by writing another one: there is one
+corpus of real third-party sessions here, so from that fix onward its score is a
+regression floor and nothing more. Full record:
 [the secondary set](docs/benchmarks/E5-secondary-set.md).
 
 ## What is *not* measured, said on the dashboard itself

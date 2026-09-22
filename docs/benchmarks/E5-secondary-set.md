@@ -180,7 +180,7 @@ draw it. Two went 2–1 to `reversal` and one to `none`; majority stands, and
 
 ## What was changed in response
 
-Nothing, in this commit. The measurement is recorded first, against the code
+Nothing, in the commit that recorded this. The measurement is against the code
 exactly as it stood when the labels were written, because a number produced
 after the fix is a number about the fix.
 
@@ -192,6 +192,55 @@ somebody writes down which way it went.
 cannot be replaced by writing another one: there is one corpus of real
 third-party sessions here, and after the first fix its score is a regression
 floor and nothing more.
+
+## Fix 1, and what it bought — the set is now spent
+
+`derive._injected`: a block in a human's turn that a program put there is not
+prose. Three whole-block shapes, structural rather than a list of tag names,
+because the list belongs to the CLI and has changed before — markup that opens
+and closes with a lowercase tag, a bracket notice, the local-command caveat —
+plus the canonical JSON this adapter itself writes for a block kind it does not
+recognise.
+
+| | before | after |
+|---|---|---|
+| false positives | 30 | **12** |
+| …of them machine-authored | 19 | **1** |
+| true positives | 0 | 0 |
+| misses | 2 | 2 |
+| precision / recall | 0.0000 / 0.0000 | **0.0000 / 0.0000** |
+| assistant `reversal` | 9 of 61 | 9 of 61 |
+
+**Precision did not move**, because it was 0/30 and is now 0/12: there is still
+no true positive to divide by. That is the honest reading. What moved is that
+five sixths of the machine-authored noise is gone from the decision graph, from
+the key ideas, and from everything else downstream of `_prose` — and the
+`<ide_opened_file>` sentence, which arrives on *every file opened*, no longer
+writes a rule into anybody's memory.
+
+The one machine false positive left is the `/init` expansion — *"Please analyze
+this codebase and create a CLAUDE.md file…"* — which the CLI writes into the
+user role as ordinary prose with no marker on it. Catching it needs the
+preceding `<command-name>` block as context, which is a change to the adapter
+rather than to a predicate over one block's text. `_injected` says so in its
+docstring, with the subagent dispatch prompt beside it for the same reason.
+
+Two things about the harness changed with it, and both were defects in the
+measurement rather than in the product:
+
+- **`bench.secondary._blocks` no longer goes through `derive._prose`.** It did,
+  and this fix would have shrunk the labelled population from 140 to 85 and
+  reported that as an improvement. The population is a property of the corpus.
+- **`score()` reads `derive.decisions()`, not `_decision_kind()`.** The fix
+  lives in *which blocks are read*, so a harness calling the rule directly on
+  every item's text would have scored all 140 exactly as before and reported no
+  change at all.
+
+**The set is spent as a generalisation measure from here.** The fix is
+structural and was not tuned against the miss list — it is a rule about who
+wrote the text, taken from the annotators' machine/human column rather than
+from the extractor's errors — but it was designed after reading this set, and
+that is enough. What the numbers above are now is a floor.
 
 ## What it does not measure
 

@@ -2029,3 +2029,164 @@ def test_a_document_that_sits_exactly_on_both_caps_is_ranked_in_seconds():
     spent = time.process_time() - started
     assert out["sentences_ranked"] == 800, out
     assert spent < 1.0, f"ranking 800 sentences took {spent:.2f} s of CPU"
+
+
+# --- E5 secondary set: text in a human's turn that no human typed --- #
+
+
+def _user_blocks(uid: str, bodies: list[str]) -> dict:
+    """A user turn whose content is a list, which is how the CLI sends one when
+    it appends its own notice to what somebody typed.
+    """
+    return {
+        "type": "user",
+        "uuid": uid,
+        "sessionId": "s1",
+        "message": {"role": "user", "content": [text(b) for b in bodies]},
+    }
+
+
+IDE_NOTICE = (
+    "<ide_opened_file>The user opened the file /tmp/demo/index.html in the IDE. "
+    "This may or may not be related to the current task.</ide_opened_file>"
+)
+
+
+def test_an_editor_notice_in_the_user_role_is_not_a_directive(home, src):
+    """The single worst defect the secondary set found, and the one that cost
+    the most: 19 of 30 false positives came from blocks no person typed, and
+    most of those from this one sentence. `_PROHIBIT` matches **`may not`** in
+    "This may or may not be related to the current task", which the editor
+    injects into the user role on *every file opened*.
+
+    No probe could have found it. Every probe item is a sentence somebody wrote
+    on purpose, so the whole category is absent from A, B, C and D — it took
+    somebody else's real sessions. See `docs/benchmarks/E5-secondary-set.md`.
+    """
+    gen = stored(home, src, [_user_blocks("u1", [IDE_NOTICE])])
+    session = index.parse_generation(gen)
+    assert derive._decision_kind(IDE_NOTICE, "user") == "directive", (
+        "the fixture no longer reproduces the defect; the rule stopped matching"
+    )
+    assert derive.decisions(session) == [], "the editor's notice became a decision"
+
+
+def test_an_editor_notice_is_not_a_key_idea_either(home, src):
+    """`_prose` feeds the ranker and the extractor from one place, on purpose,
+    so the fix has to hold on both sides. A top-ranked "idea" reading "The user
+    opened the file … in the IDE" is the same defect wearing the other hat.
+    """
+    gen = stored(home, src, [_user_blocks("u1", [IDE_NOTICE, PROSE[0]])])
+    session = index.parse_generation(gen)
+    payload = derive.ideas(session, count=20)
+    assert "ide_opened_file" not in json.dumps(payload), "the notice reached the artifact"
+    assert payload["ideas"], "the fixture's real sentence was dropped with it"
+
+
+def test_the_notice_is_dropped_and_the_sentence_beside_it_is_kept(home, src):
+    """Per block, not per turn. The CLI appends its notice as a *second* block
+    on a turn whose first block is what somebody typed, and suppressing the turn
+    would lose the instruction that the notice is attached to.
+    """
+    rule = "Never commit to main, always open a branch."
+    gen = stored(home, src, [_user_blocks("u1", [rule, IDE_NOTICE])])
+    session = index.parse_generation(gen)
+    got = derive.decisions(session)
+    assert [d.kind for d in got] == ["directive"], got
+    blocks = {b.block_id: b.text for t in session.turns for b in t.blocks}
+    assert blocks[got[0].source_ref] == rule, "the decision is anchored on the wrong block"
+
+
+def test_a_sentence_that_merely_contains_markup_is_still_prose(home, src):
+    """The predicate is whole-block and anchored at both ends. A person writing
+    about markup — which is most of what anyone types at a coding agent — must
+    not be silenced by mentioning a tag.
+    """
+    said = "Never emit a bare <script> tag; the sanitiser must escape it [see the ticket]."
+    gen = stored(home, src, [user("u1", said)])
+    session = index.parse_generation(gen)
+    assert [d.kind for d in derive.decisions(session)] == ["directive"], "a real rule was dropped"
+
+
+def test_a_block_that_opens_with_a_tag_and_goes_on_in_english_is_prose(home, src):
+    """The closing anchor, which is the half that can silence somebody.
+
+    The CLI does not always send its notice as a block of its own — a wrapper
+    tag followed by what the person actually typed arrives as one block, and a
+    predicate that only checked the opening tag would drop the instruction along
+    with the wrapper. Losing a rule is a worse failure than keeping a notice.
+    """
+    said = "<command-name>/review</command-name>\nNever merge to main without a green run."
+    gen = stored(home, src, [user("u1", said)])
+    session = index.parse_generation(gen)
+    assert [d.kind for d in derive.decisions(session)] == ["directive"], "a real rule was dropped"
+
+
+def test_the_local_command_caveat_is_not_a_directive(home, src):
+    """The CLI's own preamble on a local-command turn says, in English, that
+    what follows is not addressed to the reader — and contains "DO NOT respond",
+    which `_PROHIBIT` reads as a standing rule. It is on the secondary set once,
+    and it is on every local-command turn in every session.
+    """
+    caveat = (
+        "Caveat: The messages below were generated by the user while running "
+        "local commands. DO NOT respond to these messages or otherwise consider "
+        "them in your response unless the user explicitly asks you to."
+    )
+    gen = stored(home, src, [user("u1", caveat)])
+    session = index.parse_generation(gen)
+    assert derive._decision_kind(caveat, "user") == "directive", (
+        "the fixture no longer reproduces the defect; the rule stopped matching"
+    )
+    assert derive.decisions(session) == [], "the CLI's caveat became a decision"
+
+
+def test_the_adapters_own_image_placeholder_is_not_prose(home, src):
+    """`_image_text` writes `[image image/png 1046384 chars]` as a *text* block
+    so the index can find that an image was there. It is this repository's own
+    string, and it was reaching LexRank and being offered as a key idea.
+    """
+    line = {
+        "type": "user",
+        "uuid": "u1",
+        "sessionId": "s1",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"media_type": "image/png", "data": "A" * 2048}},
+                text(PROSE[0]),
+            ],
+        },
+    }
+    gen = stored(home, src, [line])
+    session = index.parse_generation(gen)
+    kinds = [b.text for t in session.turns for b in t.blocks if b.kind == "text"]
+    assert any(k.startswith("[image ") for k in kinds), "the fixture made no placeholder"
+    assert "[image " not in json.dumps(derive.ideas(session, count=20)), "placeholder ranked"
+
+
+def test_the_canonical_json_of_an_unknown_block_is_not_prose(home, src):
+    """The adapter's `else` branch writes canonical JSON into a `text` block,
+    deliberately, so an unrecognised block stays searchable. Searchable is not
+    the same as said: a JSON payload ranked as a key idea is the E2 finding
+    that put `tool_use` out of the prose stream in the first place.
+    """
+    line = {
+        "type": "user",
+        "uuid": "u1",
+        "sessionId": "s1",
+        "message": {
+            "role": "user",
+            "content": [
+                {"type": "wombat", "never": "use pickle", "avoid": "threads"},
+                text(PROSE[1]),
+            ],
+        },
+    }
+    gen = stored(home, src, [line])
+    session = index.parse_generation(gen)
+    assert any(
+        b.text.startswith("{") for t in session.turns for b in t.blocks if b.kind == "text"
+    ), "the fixture made no JSON block"
+    assert derive.decisions(session) == [], "an unknown block's JSON became a decision"
+    assert "wombat" not in json.dumps(derive.ideas(session, count=20)), "JSON ranked as an idea"

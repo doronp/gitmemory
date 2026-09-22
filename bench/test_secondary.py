@@ -58,7 +58,8 @@ def test_three_annotators_agreed_on_all_but_one_item():
 
 
 def test_the_extractor_scores_zero_on_real_text():
-    """**Precision 0.0000, recall 0.0000 on 140 real human turns.**
+    """**Precision 0.0000, recall 0.0000 on 140 real human turns**, and it read
+    0.0000/0.0000 before the first fix too.
 
     The same extractor reads 1.0000/1.0000 on the held-out synthetic split and
     26/32 and 27/32 on the two spent probes. This is the number that says what
@@ -66,25 +67,40 @@ def test_the_extractor_scores_zero_on_real_text():
     because "it got better" and "it got worse" are both things a reader of this
     file needs to be told rather than allowed to assume.
 
+    **30 -> 12 false positives** is the injected-block filter, the one fix this
+    set has produced so far. Precision did not move, because it is 0/12 rather
+    than 0/30 — there is still no true positive, and both gold directives are
+    plain positive standing rules of the shape probes C and D each missed seven
+    times. The set is spent as a generalisation measure from the moment of that
+    fix; it is a regression floor now.
+
     See `docs/benchmarks/E5-secondary-set.md`.
     """
     s = secondary.score(secondary.items())
-    assert (s["tp"], s["fp"], s["fn"]) == (0, 30, 2)
+    assert (s["tp"], s["fp"], s["fn"]) == (0, 12, 2)
     assert s["precision"] == 0.0
     assert s["recall"] == 0.0
 
 
-def test_two_thirds_of_the_false_positives_are_not_human_text():
-    """19 of the 30 come from blocks no person typed — IDE notifications,
-    slash-command wrappers, command stdout. `_PROHIBIT` matches `may not` in
-    "This may or may not be related to the current task", and that one sentence
-    is injected into the user role on every file the editor opens.
+def test_the_injected_block_filter_took_out_eighteen_of_the_nineteen():
+    """19 of the original 30 false positives came from blocks no person typed —
+    IDE notifications, slash-command wrappers, command stdout. `_PROHIBIT`
+    matches `may not` in "This may or may not be related to the current task",
+    and that one sentence is injected into the user role on every file the
+    editor opens. `derive._injected` now keeps those out of the prose stream and
+    **one** is left.
 
-    A probe cannot find this. Every probe item is a sentence somebody wrote on
-    purpose, so the entire category is absent from A, B, C and D.
+    The survivor is the `/init` expansion — "Please analyze this codebase and
+    create a CLAUDE.md file…" — which the CLI writes into the user role as
+    ordinary prose with no marker on it. Catching it needs the preceding
+    `<command-name>` block as context, which is an adapter change and not this
+    one; `derive._injected` says so in its docstring.
+
+    A probe cannot find any of this. Every probe item is a sentence somebody
+    wrote on purpose, so the entire category is absent from A, B, C and D.
     """
     s = secondary.score(secondary.items())
-    assert s["machine_fp"] == 19
+    assert s["machine_fp"] == 1
 
 
 def test_nine_of_the_sixty_one_assistant_reversals_are_reversals():
