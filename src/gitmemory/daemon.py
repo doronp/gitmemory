@@ -698,12 +698,28 @@ def tick(
     interval: float = INTERVAL,
     now: float | None = None,
     parse: bool = True,
+    commit: bool = True,
 ) -> Tick:
     """One pass: drain the spool, capture what is due, commit once.
 
     One commit for the whole pass rather than one per session. A pass is the
     unit of work the watcher actually did, and a hundred single-session commits
     for one wake-up is a history nobody can read.
+
+    `commit=False` captures without committing, and `run` passes it whenever
+    `gitrepo.init` has not succeeded. Two comments used to cancel each other
+    out: `init` refuses a repository whose config is not isolated — *"refusing
+    beats warning"* — and `run` logged that refusal and ran the pass anyway,
+    because *a git failure must not cost the bytes*. Both are right. Together
+    they committed into a repository whose isolation was known to be broken.
+    Measured: a `core.excludesFile` matching `*.jsonl`, reaching the repository
+    through an `include.path`, left the manifest tracked and the segment it
+    names untracked, with `verify` returning clean — verbatim the scenario
+    `_assert_no_foreign_config`'s own docstring describes.
+
+    The bytes still land, which is the rule this function keeps. Only the
+    commit waits, and it is not lost: git commits whatever is in the tree, so
+    the first pass after `init` succeeds carries the whole backlog. [E7 fs-F1]
     """
     now = time.time() if now is None else now
     forced, result = drain_spool(home, watches, now=now)
@@ -817,7 +833,15 @@ def tick(
         # has something to commit. [E4, review: store-contract 4, concurrency 4]
         committable = committable or bool(cap.appended or cap.diverged or cap.adopted)
 
-    if committable:
+    if committable and not commit:
+        # Said through `result.errors` rather than logged here, so it reaches
+        # the operator at `ERROR_REPEAT` and not once per poll, and so that a
+        # store which is capturing but not versioning cannot look idle. [E7 fs-F1]
+        result.errors.append(
+            "captured, not committed: the repository is not initialised; "
+            "the next pass after it is will commit the backlog"
+        )
+    if committable and commit:
         # "recovered" when the only work was adoption: the pass wrote a manifest
         # for a killed capture's orphaned segment and copied nothing out.
         head = ", ".join(result.captured[:3]) or "recovered an interrupted capture"
@@ -828,8 +852,8 @@ def tick(
         # abort the pass here would turn a recoverable problem — the next pass
         # commits everything at once — into a watcher that stops capturing. [E4]
         try:
-            commit = gitrepo.commit(home, f"capture: {head}{more}  +{result.appended}B")
-            result.commit = commit.sha if commit else None
+            made = gitrepo.commit(home, f"capture: {head}{more}  +{result.appended}B")
+            result.commit = made.sha if made else None
             gitrepo.gc(home)
         except (gitrepo.GitError, OSError, subprocess.SubprocessError) as exc:
             result.errors.append(f"commit: {exc}")
@@ -891,6 +915,7 @@ def run(
         # at risk and `verify` stayed clean; what stopped for ever was the
         # versioning, which is half the product. One `stat` per pass buys it
         # back. Tested against the failure rather than the flag. [E4, review: CLI 9]
+        init_error: str | None = None
         if not started or not os.path.exists(os.path.join(home, ".git")):
             try:
                 gitrepo.init(home)
@@ -905,10 +930,18 @@ def run(
                 # four `git config` calls is the ordinary way to reach this, and
                 # the loser was skipping transcripts over it.
                 #
-                # `started` stays False, so the next pass tries again; if the
-                # repository really is unusable, `tick`'s own commit fails and
-                # says so, once, through the rate limit below. [E4, review: daemon 7]
-                log(f"error: git init: {exc}")
+                # `started` stays False, so the next pass tries again — and now
+                # also suppresses the commit, because the earlier claim on this
+                # line ("`tick`'s own commit fails and says so") was not true:
+                # the commit succeeded, into a repository `init` had just
+                # refused. See `tick`'s `commit=`. [E4, review: daemon 7; E7 fs-F1]
+                #
+                # Carried into `result.errors` instead of logged here, for the
+                # rate limit. Logged directly it was one line per poll for as
+                # long as the fault lasted — ~17k lines a day at the default
+                # interval — while the loop below goes to considerable trouble
+                # to throttle every other repeating error. [E7 fs-F1]
+                init_error = f"git init: {exc}"
         try:
             # Collected rather than logged directly, because `run` re-reads the
             # config every pass and a config fault that is still there is not
@@ -927,11 +960,14 @@ def run(
                 for note in notes:
                     log(f"config: {note}")
                 last_notes = notes
-            result = tick(home, watches, interval=interval, parse=parse)
+            result = tick(home, watches, interval=interval, parse=parse, commit=started)
         except KeyboardInterrupt:
             raise
         except Exception as exc:  # noqa: BLE001 - the watcher is the guarantee; it does not die
             result = Tick(errors=[f"pass failed: {exc!r}"])
+        if init_error:
+            # First, because it is the cause of anything else this pass says.
+            result.errors.insert(0, init_error)
         # Errors repeat for as long as their cause does, and there is one per
         # stuck session per pass. Measured at 100 unwritable sessions and the
         # default five-second poll: 2.06 M lines and 239 MB of stderr a day, all

@@ -3640,6 +3640,37 @@ MUTANTS = [
         '                f"{os.path.realpath(source_path)} instead"',
         "test_the_refusal_does_not_print_the_path_the_link_points_at",
     ),
+    # --- E7 fs-F1 ---
+    (
+        "a refused init logs, and the pass commits anyway",
+        "daemon.py",
+        "            result = tick(home, watches, interval=interval, parse=parse, commit=started)",
+        "            result = tick(home, watches, interval=interval, parse=parse)",
+        "test_a_watcher_whose_init_is_refused_captures_and_does_not_commit",
+    ),
+    (
+        # The over-reaching direction: withholding the commit is only acceptable
+        # because nothing is lost by withholding it.
+        "the backlog is skipped rather than deferred",
+        "daemon.py",
+        "    if committable and commit:",
+        "    if committable and commit and not result.captured:",
+        "test_the_backlog_is_committed_whole_once_init_succeeds",
+    ),
+    (
+        "a store that is capturing but not versioning says nothing about it",
+        "daemon.py",
+        "    if committable and not commit:",
+        "    if False:",
+        "test_a_watcher_whose_init_is_refused_captures_and_does_not_commit",
+    ),
+    (
+        "the init failure goes to the log instead of through the rate limit",
+        "daemon.py",
+        "                init_error = f\"git init: {exc}\"",
+        "                log(f\"error: git init: {exc}\")",
+        "test_a_standing_init_failure_is_not_logged_once_per_poll",
+    ),
 ]
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -1870,3 +1871,117 @@ def test_the_session_recovers_once_the_real_transcript_is_back(tmp_path):
     assert daemon.tick(home, watches, interval=0).captured
     assert store.verify(home) == []
     assert not list(tmp_path.glob("h/raw/**/.incoming*"))
+
+
+# --- E7 fs-F1: a refused init must stop the commit, not just log ------------
+
+
+def _foreign_config(home: str, tmp_path) -> None:
+    """Make `_assert_no_foreign_config` fire: a setting arriving from outside.
+
+    `core.excludesFile` matching `*.jsonl` is the reviewer's own demonstration,
+    and it is the worst case rather than an arbitrary one — it excludes exactly
+    the segments, so the manifest gets committed and the bytes it vouches for
+    do not.
+    """
+    excludes = tmp_path / "excludes"
+    excludes.write_text("*.jsonl\n")
+    include = tmp_path / "inc"
+    include.write_text(f"[core]\n\texcludesFile = {excludes}\n")
+    with open(os.path.join(home, ".git", "config"), "a", encoding="utf-8") as fh:
+        fh.write(f"[include]\n\tpath = {include}\n")
+
+
+def _in_history(home: str) -> list[str]:
+    """What git would actually send. `gitrepo.tracked` is a different question —
+    it includes unignored files that have never been committed."""
+    got = subprocess.run(
+        ["git", "-C", home, "ls-tree", "-r", "--name-only", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    return got.stdout.split() if got.returncode == 0 else []
+
+
+def test_a_watcher_whose_init_is_refused_captures_and_does_not_commit(tmp_path):
+    """`init` refusing and `run` committing anyway cancelled each other out.
+
+    Measured before fixing, through `run` and not through the parameter: the
+    watcher logged `error: git init: … is not isolated` and on the next line
+    `captured 1 … commit=81f6cf53`, leaving the manifest tracked and the
+    segment it names untracked, with `verify` returning clean — the scenario
+    `_assert_no_foreign_config`'s docstring describes, reached with the
+    assertion firing correctly and being ignored. [E7 fs-F1]
+    """
+    home, root = str(tmp_path / "h"), tmp_path / "proj"
+    _write(root / "a.jsonl", TURN)
+    _config(home, [str(root)])
+    _foreign_config(home, tmp_path)
+
+    lines: list[str] = []
+    daemon.run(home, once=True, poll=0, interval=0, log=lines.append)
+
+    said = "\n".join(lines)
+    assert "git init:" in said and "not isolated" in said
+    assert "captured, not committed" in said
+    assert "commit=None" in said
+    assert _in_history(home) == []
+    assert store.verify(home) == []  # the bytes are in the store regardless
+
+
+def test_the_backlog_is_committed_whole_once_init_succeeds(tmp_path):
+    """Waiting is only acceptable because nothing is lost by waiting.
+
+    git commits the tree, not the pass, so the first successful `init` picks up
+    every segment the refused passes captured. Without this the fix would be a
+    worse bug than the one it closes. [E7 fs-F1]
+    """
+    home, root = str(tmp_path / "h"), tmp_path / "proj"
+    _write(root / "a.jsonl", TURN)
+    _config(home, [str(root)])
+    _foreign_config(home, tmp_path)
+    for _ in range(3):
+        _write(root / "a.jsonl", TURN, append=True)
+        daemon.run(home, once=True, poll=0, interval=0, log=lambda _m: None)
+    assert _in_history(home) == []
+
+    cfg = os.path.join(home, ".git", "config")
+    Path(cfg).write_text(Path(cfg).read_text().split("[include]")[0])
+    _write(root / "a.jsonl", TURN, append=True)
+    daemon.run(home, once=True, poll=0, interval=0, log=lambda _m: None)
+
+    shipped = _in_history(home)
+    assert [p for p in shipped if p.startswith("raw/")], shipped
+    # Part (b) of the finding, closed by construction rather than by a second
+    # guard: `init` writes `.gitignore`, so a store whose `init` never succeeded
+    # had none, and three refused passes put a half-written `.incoming` segment
+    # and a `.tmp` manifest into history for ever. Nothing commits now until
+    # `init` has run, and `init` writes the file before it returns.
+    assert not [p for p in shipped if ".incoming" in p or ".tmp" in p], shipped
+    assert store.verify(home) == []
+
+
+def test_a_standing_init_failure_is_not_logged_once_per_poll(tmp_path, monkeypatch):
+    """~17k lines a day, at the default interval, from the one error not throttled.
+
+    Every other repeating error in this loop goes through `ERROR_REPEAT`; this
+    one was logged directly, which is also how the same loop measured 2.06 M
+    lines a day before that limit existed. [E7 fs-F1]
+    """
+    home, root = str(tmp_path / "h"), tmp_path / "proj"
+    _write(root / "a.jsonl", TURN)
+    _config(home, [str(root)])
+    _foreign_config(home, tmp_path)
+
+    lines: list[str] = []
+    # Stopped from the poll sleep, not from `log`: the whole point is that the
+    # later passes say nothing, so a counter on the log would never fire.
+    passes = iter(range(10))
+    monkeypatch.setattr(daemon.time, "sleep", lambda _s: next(passes))
+    with pytest.raises(StopIteration):
+        daemon.run(home, poll=0, interval=0, log=lines.append)
+
+    # Two, not one: the pass that captures reports two errors and the quiet
+    # passes after it report one, and a *changed* error list is said
+    # immediately by design. Ten passes, two lines — before the fix it was ten.
+    assert sum("git init:" in m for m in lines) == 2, lines
