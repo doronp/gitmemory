@@ -2386,6 +2386,51 @@ def test_scratching_the_surface_is_not_abandoning_it(home, src):
     assert _assistant_says(home, src, "Scratch the surface probes; I'll use the "
                                       "full scan.") == []
 
+    # The ceiling stops at the space. `\b` is a boundary before a hyphen too, so
+    # the exclusion used to reach the hyphenated compound — where `surface` is
+    # unambiguously a modifier and the idiom is impossible. `(?![\w-])` is the
+    # trailing-context test `_PERSIST` already uses. [E5 fix7 review]
+    assert [
+        d.kind
+        for d in _assistant_says(home, src, "Scratch the surface-level check and do "
+                                            "the deep one.")
+    ] == ["reversal"]
+    assert [
+        d.kind
+        for d in _assistant_says(home, src, "Scratch the surface_area helper; I'll "
+                                            "inline it.")
+    ] == ["reversal"]
+
+    # The exclusion is written twice, in `_ABANDON` and in `_PIVOT`, and on
+    # "Scratch the …" both fire — so either one alone still answers and neither
+    # copy is held by the cases above. One input each that only one rule can
+    # reach: `strike` is not in `_ABANDON`'s verb list, and the inflected
+    # `scratches` is not in `_PIVOT`'s.
+    assert [
+        d.kind
+        for d in _assistant_says(home, src, "Strike the surface-level check and do "
+                                            "the deep one.")
+    ] == ["reversal"]
+    assert [
+        d.kind
+        for d in _assistant_says(home, src, "This scratches the surface-level metrics, "
+                                            "so I'll use the deep scan instead.")
+    ] == ["reversal"]
+    # Their controls, the idiom proper, one per rule.
+    assert _assistant_says(home, src, "Strike the surface probes; I'll use the "
+                                      "full scan.") == []
+    assert _assistant_says(home, src, "This only scratches the surface, so I'll use "
+                                      "the deep scan instead.") == []
+
+    # Declined, and the review that proposed it is the reason this line exists:
+    # excluding `surfaces` as well would have cost this reversal and bought
+    # nothing, because "only scratches the surfaces" is not the idiom.
+    assert [
+        d.kind
+        for d in _assistant_says(home, src, "Scratch the surfaces; I'll mask them "
+                                            "instead.")
+    ] == ["reversal"]
+
     # The rest of the object list is untouched, which is what makes the
     # exclusion narrow rather than a retreat from the whole branch.
     assert [
@@ -2807,6 +2852,22 @@ def test_a_contracted_dont_needs_the_imperative_and_doesnt_has_no_such_position(
     The uncontracted forms are untouched and the first two bodies say why: a
     written rule reaches for them, and both a synthetic gate template and a
     probe E directive are phrased that way.
+
+    **The clause head is `_OPENS_A_UNIT`'s punctuation, or as near as a class
+    gets.** The first version of this list was written from the sentences in
+    front of it: it had the paren and the em dash and not the comma or the en
+    dash, so a rule with brackets round it counted and the same rule after a
+    comma did not. The module had already answered this eight hundred lines up
+    and the list did not use the answer. `\\s-\\s` is still missing, because it
+    is an alternative and not a member of a class.
+
+    The comma is live everywhere *except* in front of a coordinator, which is
+    the one shape the review that found this used as its example: `_CLAUSE`
+    splits on `,\\s*(?:so|but|and|yet|then)\\s+` and `_without_opinion` rejoins
+    with a space, so by the time `_PROHIBIT` reads "…the commits, but don't
+    push" the comma is gone and the contraction has an ordinary noun in front
+    of it. The asyndetic comma below is the reachable half, and it is the one
+    that was silently losing directives. [E5 fix7 review]
     """
     rules = (
         "Make sure we do not use pickle for the cache. Rely on the standard json module.",
@@ -2814,6 +2875,10 @@ def test_a_contracted_dont_needs_the_imperative_and_doesnt_has_no_such_position(
         "Don't merge without a green build.",
         "Run the tests first. Then don't push until CI is green.",
         "Go ahead with the branch and the commits (but don't push).",
+        "Go ahead with the commits, don't push.",
+        "Ship the branch, don't tag it.",
+        "Go ahead with the branch and the commits – but don't push.",
+        "Go ahead with the branch and the commits — but don't push.",
     )
     for body in rules:
         assert _user_says(home, src, body) == ["directive"], body
@@ -2821,7 +2886,12 @@ def test_a_contracted_dont_needs_the_imperative_and_doesnt_has_no_such_position(
     reports = (
         "Still doesn't work, maybe there's a step needed to have the submodule checked out?",
         "The exported types don't accurately represent the request body structure.",
-        "Would I be able to redirect so the old URL doesn't break?",
+        # Not a question mark on its own: `_QUESTION` anchors `\A…\?\s*\Z`, so a
+        # one-sentence query is suppressed whatever `_PROHIBIT` thinks and the
+        # case would pass with the narrowing reverted. The real corpus block
+        # this paraphrases has a second sentence, which is what makes it depend
+        # on the rule it is filed under. [E5 fix7 review]
+        "Would I be able to redirect so the old URL doesn't break? Either way is fine.",
         "The fixtures don't even agree on what a timeout means.",
     )
     for body in reports:

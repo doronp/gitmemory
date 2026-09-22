@@ -482,6 +482,38 @@ MUTANTS = [
         "|(?!x)x|",
         "test_the_verdict_does_not_depend_on_the_formatting_layer",
     ),
+    # Two latent repairs out of the fix-7 standalone review, each free on every
+    # board and each recovering a real verdict nobody had typed yet. The rows
+    # matter more than usual for exactly that reason: no board would notice a
+    # regression. [E5 fix7 review]
+    (
+        # `\b` is a boundary before a hyphen, so the idiom exclusion reached the
+        # hyphenated compound where `surface` is unambiguously a modifier.
+        # Twice: `_ABANDON` and `_PIVOT` both carry the exclusion and on
+        # "Scratch the …" both fire, so one row each on an input only that rule
+        # can reach.
+        "the idiom exclusion swallows a hyphenated compound (_ABANDON)",
+        "derive.py",
+        '|all)"\n    r"(?! surface(?![\\w-]))',
+        '|all)"\n    r"(?! surface\\b)',
+        "test_scratching_the_surface_is_not_abandoning_it",
+    ),
+    (
+        "the idiom exclusion swallows a hyphenated compound (_PIVOT)",
+        "derive.py",
+        "(?:scratch|strike) (?:the|my|our)(?! surface(?![\\w-]))",
+        "(?:scratch|strike) (?:the|my|our)(?! surface\\b)",
+        "test_scratching_the_surface_is_not_abandoning_it",
+    ),
+    (
+        # The clause-head class is `_OPENS_A_UNIT`'s; it used to be a shorter
+        # list written from the sentences in front of it.
+        "a rule after a comma stops opening a clause",
+        "derive.py",
+        'r"|(?:^|[.,;:!?\\n(\\[—–])\\W{0,4}',
+        'r"|(?:^|[.;:!?\\n(\\[—])\\W{0,4}',
+        "test_a_contracted_dont_needs_the_imperative_and_doesnt_has_no_such_position",
+    ),
     # `_safe` is the only thing between a hook payload and a directory name,
     # and it had no row until a bench caller passed a whole dataclass where a
     # session id belongs and the *type* half caught it. Both halves, separately:
@@ -1867,14 +1899,14 @@ MUTANTS = [
     (
         "cancelling a thing by name stops being a change of course",
         "derive.py",
-        "|(?:scratch|strike) (?:the|my|our)(?! surface\\b)",
+        "|(?:scratch|strike) (?:the|my|our)(?! surface(?![\\w-]))",
         "|(?!x)x",
         "test_cancelling_a_named_thing_is_a_pivot_and_not_only_cancelling_a_pronoun",
     ),
     (
         "the cancel marker readmits the idiom it was given an exclusion for",
         "derive.py",
-        "(?:scratch|strike) (?:the|my|our)(?! surface\\b)",
+        "(?:scratch|strike) (?:the|my|our)(?! surface(?![\\w-]))",
         "(?:scratch|strike) (?:the|my|our)",
         "test_cancelling_a_named_thing_is_a_pivot_and_not_only_cancelling_a_pronoun",
     ),
@@ -4292,7 +4324,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "97 mutants",
+        "a full pass is 5" + "00 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4492,7 +4524,7 @@ MUTANTS = [
     (
         "the abandonment verb goes back to accepting the surface idiom",
         "derive.py",
-        '    r"(?! surface\\b)"\n',
+        '    r"(?! surface(?![\\w-]))"\n',
         "",
         "test_scratching_the_surface_is_not_abandoning_it",
     ),
@@ -4676,9 +4708,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 497 mutants x two suite runs, which
+    The filter exists because a full pass is 500 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 496 or trusting the new one untested.
+    to mean either waiting for the other 499 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

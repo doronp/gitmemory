@@ -74,7 +74,7 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | 9 of 61 — precision 0.15. After the two fixes: **54 withdrawn, all 7 left are reversals** — and read the caveat below before quoting that |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
 | The suite | on a fresh checkout, no downloads | **887 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **497** negative controls |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **500** negative controls |
 
 The 322 conformance cases replay claude-code-log's MIT fixtures — third-party,
 real-shaped, and not one byte of anybody's own history — through this parser.

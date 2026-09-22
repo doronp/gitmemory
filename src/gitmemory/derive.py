@@ -1038,7 +1038,16 @@ _PROHIBIT = re.compile(
     # and the upgrade is `_CLAUSE`, which splits on sentence ends and so cannot
     # see the boundary either. Adding a coordinator is the intended repair.
     # [E5 probe E follow-up; docs/benchmarks/E5-secondary-set.md]
-    r"|(?:^|[.;:!?\n(\[—])\W{0,4}(?:(?:but|and|so|also|please|now|then)\W{1,3})?"
+    #
+    # The class is `_OPENS_A_UNIT`'s, less `\s-\s` and `)` — this one was
+    # written from the sentences in front of it and had the paren and the em
+    # dash but neither the comma nor the en dash, so "ship the branch, don't tag
+    # it" was a report. Free on every board and it recovers three shapes.
+    # `\s-\s` is an alternative rather than a class member and is still out.
+    # `, but` is unreachable here whatever this class says: `_CLAUSE` splits on
+    # a comma before a coordinator and `_without_opinion` rejoins without it,
+    # two guards earlier. [E5 fix7 review]
+    r"|(?:^|[.,;:!?\n(\[—–])\W{0,4}(?:(?:but|and|so|also|please|now|then)\W{1,3})?"
     r"don'?t\b",
     re.I,
 )
@@ -1173,8 +1182,15 @@ _ABANDON = re.compile(
     # rather than a decision to stop. The idiom is excluded by its object, not by
     # dropping the inflections — "he scratched the plan" is a real abandonment in
     # the same tense. [E5 fix 2 review, F6]
+    #
+    # `(?![\w-])` and not `\b`, because `\b` is a boundary before a hyphen and
+    # the exclusion therefore reached "scratch the surface-level check", which
+    # is a real abandonment of a real thing. Same trailing-context test
+    # `_PERSIST` uses, and the second half of the review's proposal — excluding
+    # the plural as well — is declined: "scratches the surfaces" is not the
+    # idiom, so blocking it costs a reversal and buys nothing. [E5 fix7 review]
     r"|scratch(?:es|ed|ing)? (?:that|these|those|them|the|this|my|our|its?|all)"
-    r"(?! surface\b)"
+    r"(?! surface(?![\w-]))"
     r"|(?:has|have|had|needs?) to go|must go"
     r"|retir(?:e|es|ed|ing)|shelv(?:e|es|ed|ing)|forget(?:s|ting)? (?:about )?the"
     r"|mov(?:e|es|ed|ing) (?:away from|off|on from)|back(?:s|ed|ing)? out of"
@@ -1233,7 +1249,7 @@ _COMMIT = re.compile(
 # [E5 probe E, and F6 for the exclusion]
 _PIVOT = re.compile(
     r"\b(?:on second thought|second thoughts|change of plan|new plan"
-    r"|(?:scratch|strike) (?:the|my|our)(?! surface\b)"
+    r"|(?:scratch|strike) (?:the|my|our)(?! surface(?![\w-]))"
     r"|chang(?:e|ed|ing) (?:my|our) mind|pivot(?:s|ed|ing)?"
     r"|(?:chang|alter|revers|shift)(?:e|es|ed|ing)? (?:our |the )?"
     r"(?:course|direction|approach|tack|plan)"
