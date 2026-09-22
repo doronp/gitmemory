@@ -2625,3 +2625,111 @@ def test_owning_a_slip_is_a_repair_whichever_predicate_gets_there_first(home, sr
         "My error — switching to a deque instead.",
     ):
         assert _assistant_says(home, src, body) == [], body
+
+
+# --- E5 fix 2, reviewed: eight alternatives no test was holding --- #
+#
+# A mutation sweep over `_RECANT`, one mutant per alternative, replacing each
+# with a token that cannot match — not deleting it, because a deleted
+# alternative leaves an empty branch, which matches everywhere and measures
+# nothing. Nine of twelve survived the whole suite. Only `you're right`, `a
+# different approach` and `that's not going to work` were held by anything, and
+# one of those nine was `my (mistake|bad|error)`, which survived because it was
+# dead; it is gone, and the test above says why. That leaves the eight below.
+#
+# The obvious reading — "eight branches are untested, write eight tests" — is
+# worth one more question first: are they untested, or unused? Counted, over
+# every population this repository has:
+#
+#   alternative              real  dev42  test31337  probes
+#   you're right               14      0          0       0   pinned
+#   good catch                  2      0          0       0
+#   good point                  2      0          0       0
+#   good observation            3      0          0       0
+#   i was wrong                 0      0          0       0*
+#   i apologi[sz]e              0      0          0       0
+#   i'?m sorry                  0      0          0       0
+#   a different approach        4      0          0       0   pinned
+#   that's not going to work    0      0          0       1   pinned
+#   that won't work             0      0          0       0
+#   that approach fails         0      0          0       0
+#
+# "real" is 559 distinct assistant text blocks, sha256-deduped, `agent-*.jsonl`
+# and `subagents/` excluded. (*) `i was wrong` does occur in probe D, but on a
+# *user* turn, and `_RECANT` is read only in the assistant branch, so nothing
+# reaches it.
+#
+# Two things fall out of that table, and the second is the larger one.
+#
+# **The synthetic corpus contains none of this vocabulary at all.** Not one
+# alternative fires on either split, including the three that tests hold. So
+# every "no change on the gate" measurement recorded for fix 2 and fix 3 is
+# true but vacuous for this branch: the gate cannot see it. What has ever
+# measured the assistant substitution branch is the real-corpus adjudication
+# (61 emitted, 7 kept) and probe B's single case — and that is the whole of it.
+#
+# **Six alternatives fire nowhere.** The tempting move is to delete the five of
+# those that no test holds, the way `my (mistake|bad|error)` was deleted. It is
+# the wrong move, and the reason is the distinction that deletion was built on:
+# that one was *dead* — no input could reach it, because a guard returned first
+# — and these are merely *unobserved*. A mutant of dead code survives because
+# the code cannot run; a mutant of unobserved code survives because nobody
+# wrote the input. Only the first is a fact about the program.
+#
+# I did look for a cost to keeping them, and did not find one that is theirs.
+# The apology frames are the weakest members — you can apologise for a delay
+# without leaving any position, so they fail the class's own stated criterion —
+# and they do turn "I'm sorry, the build is slow because of the cold cache
+# rather than the linker" into a reversal. But so does "You're right, …", and
+# so does "Good catch, …", on the same sentence: a contrast between two *facts*
+# read as a contrast between two plans is a `_CONTRAST` limitation shared by
+# every member of the class, including the ones that fire fourteen times. It is
+# recorded in the secondary set, not fixed here, and it is not evidence against
+# these five. Deleting them on the strength of an argument I could not measure
+# is the mistake the `oldscratch` correction was about.
+#
+# So: pin all eight. A test per alternative would be memorisation if the
+# sentences came from the corpus that tuned the predicate; these come from the
+# class's stated criterion instead, one sentence each, which is what a
+# specification looks like. Eight mutation rows point here.
+
+
+def test_every_recant_alternative_is_held_by_something(home, src):
+    """One sentence per `_RECANT` alternative that no other test was holding.
+
+    Each pairs the frame with a substitution, because the frame alone is not
+    sufficient and never was — this class only ever qualifies a substitution
+    that is already there. So each body below is the minimum input that
+    distinguishes "this alternative exists" from "this alternative does not",
+    and a mutant of any one of them fails exactly one assertion here.
+
+    *Minimum* is the load-bearing word, and the first draft got it wrong. The
+    `good catch` body was "Good catch. Dropping the retry wrapper and using the
+    built-in backoff instead", which reads like a clean example and is not one:
+    `Dropping` is `_ABANDON` and `using` is `_ADOPT`, so the stop/start pair
+    reaches `reversal` on its own and the verdict is the same with the
+    alternative deleted. The mutation row came back MISSED and said so. A body
+    that exercises a branch and a body that *depends* on it are different
+    things, and only the second pins anything — every body below was checked by
+    deleting its own alternative and confirming the block goes to nothing.
+
+    Grouped by what the counts above say about them, because the two groups
+    carry different weight: the first three were observed on real transcripts
+    and their absence would be a measured recall loss, the last five have never
+    been observed anywhere and their absence would be a loss nobody has yet
+    seen. Both are pinned; only the first three are evidenced.
+    """
+    observed = (
+        "Good catch — using the built-in backoff instead.",
+        "Good point — I'll key on the check package ID rather than the tail number.",
+        "Good observation; using a deque instead of the list.",
+    )
+    declared = (
+        "I was wrong about the lock; using a bounded queue instead.",
+        "I apologise — writing to the staging bucket instead of prod.",
+        "I'm sorry, I'll run the full scan instead of the sample.",
+        "That won't work — switching to a systemd timer instead of cron.",
+        "That approach fails on empty input; I'll use a sentinel instead.",
+    )
+    for body in observed + declared:
+        assert [d.kind for d in _assistant_says(home, src, body)] == ["reversal"], body

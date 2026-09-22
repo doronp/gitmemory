@@ -1694,6 +1694,70 @@ MUTANTS = [
         r"scratch(?:es|ed|ing)?",
         "test_a_directory_called_scratch_is_not_an_abandonment",
     ),
+    # --- E5 fix 2 reviewed: the eight alternatives nothing was holding ------ #
+    #
+    # The sweep that found them replaced each alternative with a token that
+    # cannot match rather than deleting it, and these rows do the same: a
+    # deleted alternative leaves an empty branch, which matches everywhere and
+    # measures nothing. Three of the eight fire on real transcripts and five
+    # have never been observed anywhere; all eight are held by one test, which
+    # carries the counts and the argument for keeping the five.
+    (
+        "the concession `good catch` stops being evidence of a prior position",
+        "derive.py",
+        "(?:good|great|nice|excellent) catch",
+        "(?!x)x",
+        "test_every_recant_alternative_is_held_by_something",
+    ),
+    (
+        "the concession `good point` stops being evidence of a prior position",
+        "derive.py",
+        "(?:good|great|fair|excellent) point",
+        "(?!x)x",
+        "test_every_recant_alternative_is_held_by_something",
+    ),
+    (
+        "the concession `good observation` stops being evidence of a prior position",
+        "derive.py",
+        "(?:good|great|excellent|sharp) observation",
+        "(?!x)x",
+        "test_every_recant_alternative_is_held_by_something",
+    ),
+    (
+        "admitting the position was wrong stops counting as leaving it",
+        "derive.py",
+        "|i was wrong|",
+        "|(?!x)x|",
+        "test_every_recant_alternative_is_held_by_something",
+    ),
+    (
+        "`i apologise` stops counting as leaving a position",
+        "derive.py",
+        "i apologi[sz]e",
+        "(?!x)x",
+        "test_every_recant_alternative_is_held_by_something",
+    ),
+    (
+        "`i'm sorry` stops counting as leaving a position",
+        "derive.py",
+        "i'?m sorry",
+        "(?!x)x",
+        "test_every_recant_alternative_is_held_by_something",
+    ),
+    (
+        "the contracted verdict that it will not work carries no weight",
+        "derive.py",
+        "(?:that|this|it) (?:won'?t|doesn'?t|didn'?t|isn'?t going to|wasn'?t going to) work",
+        "(?!x)x",
+        "test_every_recant_alternative_is_held_by_something",
+    ),
+    (
+        "the verdict that the approach fails carries no weight",
+        "derive.py",
+        r'''    r" (?:fail\w*|doesn'?t work|isn'?t work\w*))\b",''',
+        r'''    r" (?!x)x)\b",''',
+        "test_every_recant_alternative_is_held_by_something",
+    ),
     (
         "an artifact is published by rename, never written in place",
         "derive.py",
@@ -4072,7 +4136,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "66 mutants",
+        "a full pass is 4" + "74 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4398,9 +4462,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 466 mutants x two suite runs, which
+    The filter exists because a full pass is 474 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 465 or trusting the new one untested.
+    to mean either waiting for the other 473 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

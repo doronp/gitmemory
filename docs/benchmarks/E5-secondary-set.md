@@ -483,6 +483,72 @@ Free on every board that exists: dev 1.0000/0.9319, held-out 1.0000/0.7428,
 probes 23/25/14/14, user side 0/12/2, assistant side 7 of 7 — all unchanged.
 Two mutation rows, both CAUGHT. [E5 fix 2 review, F6]
 
+## Fix 5 — eight alternatives nothing was holding, and a hole in the board
+
+Also not from this set. Fix 2's review asked how much of `_RECANT` any test
+actually holds, so the predicate was swept one alternative at a time — each
+replaced by a token that cannot match, never deleted, because a deleted
+alternative leaves an empty branch that matches everywhere and measures nothing.
+**Nine of twelve survived the whole suite.** One of the nine was
+`my (mistake|bad|error)`, which survived because it was dead; fix 3's companion
+deleted it. That leaves eight.
+
+The obvious response is eight tests. Worth one question first — are they
+untested, or unused? Counted over every population this repository has:
+
+| alternative | real | dev 42 | held-out 31337 | probes | held by a test |
+|---|---|---|---|---|---|
+| `you're right` | 14 | 0 | 0 | 0 | yes |
+| `good catch` | 2 | 0 | 0 | 0 | — |
+| `good point` | 2 | 0 | 0 | 0 | — |
+| `good observation` | 3 | 0 | 0 | 0 | — |
+| `i was wrong` | 0 | 0 | 0 | 0 († ) | — |
+| `i apologi[sz]e` | 0 | 0 | 0 | 0 | — |
+| `i'?m sorry` | 0 | 0 | 0 | 0 | — |
+| `a different approach` | 4 | 0 | 0 | 0 | yes |
+| `that's not going to work` | 0 | 0 | 0 | 1 | yes |
+| `that won't work` | 0 | 0 | 0 | 0 | — |
+| `that approach fails` | 0 | 0 | 0 | 0 | — |
+
+"real" is 559 distinct assistant text blocks, sha256-deduped, `agent-*.jsonl`
+and `subagents/` excluded. († ) `i was wrong` does occur in probe D, on a *user*
+turn; `_RECANT` is read only in the assistant branch, so nothing reaches it.
+
+**The synthetic corpus contains none of this vocabulary at all.** Not one
+alternative fires on either split, including the three that tests hold. So every
+"no change on the gate" line recorded for fix 2, fix 3 and fix 4 is true and
+vacuous *for this branch* — the gate cannot see it. What has ever measured the
+assistant substitution branch is the real-corpus adjudication (61 emitted, 7
+kept) and probe B's single case. That is the whole of it, and it is the larger
+of the two findings here.
+
+Six alternatives fire nowhere. The tempting move is to delete the five of those
+no test holds, the way `my (mistake|bad|error)` was deleted, and it is the wrong
+move: that one was **dead** — a guard returned before it could be read — and
+these are merely **unobserved**. A mutant of dead code survives because the code
+cannot run; a mutant of unobserved code survives because nobody wrote the input.
+Only the first is a fact about the program.
+
+A cost was looked for and not found. The apology frames are the weakest members
+— one can apologise for a delay without leaving any position, which fails the
+class's own stated criterion — and they do turn *"I'm sorry, the build is slow
+because of the cold cache rather than the linker"* into a reversal. But so does
+*"You're right, …"* and so does *"Good catch, …"* on the same sentence: a
+contrast between two **facts** read as a contrast between two **plans** is a
+`_CONTRAST` limitation shared by every member of the class, including the one
+that fires fourteen times. Recorded below, not fixed, and not evidence against
+these five.
+
+So all eight are pinned instead, one sentence each, taken from the class's
+stated criterion rather than from the corpus that tuned the predicate. Eight
+mutation rows; seven CAUGHT first time and one MISSED, which was the useful one:
+the `good catch` body was *"Good catch. Dropping the retry wrapper and using the
+built-in backoff instead"*, where `Dropping`/`using` is the stop/start pair and
+reaches `reversal` without the alternative at all. A body that exercises a
+branch and a body that depends on it are different things. Corrected, re-run,
+CAUGHT. No behaviour changed, so every board is unchanged by construction.
+[E5 fix 2 review, F4]
+
 ## What it does not measure
 
 - **Recall rests on two items.** With two gold directives, recall is 0, 0.5 or
@@ -490,6 +556,16 @@ Two mutation rows, both CAUGHT. [E5 fix 2 review, F6]
   positives when this was written — 12 after the fixes below, on 14 emitted.
 - **The assistant side has no recall number.** Only what the extractor emitted
   was adjudicated, so a reversal it never flagged is invisible here.
+- **The gate is blind to the recant class.** Neither synthetic split contains a
+  single one of `_RECANT`'s eleven alternatives, so a gate score is not evidence
+  about fixes 2 to 5 in either direction. See fix 5 for the count.
+- **A contrast between two facts reads as a contrast between two plans.** *"You're
+  right, the build is slow because of the cold cache rather than the linker"* is
+  a corrected claim with no decision in it, and it is emitted as a reversal. The
+  frame is doing its job — the speaker really is withdrawing something — and
+  `_CONTRAST` cannot tell a `rather than` between two causes from one between two
+  courses of action. Affects every member of the class, including the ones with
+  the most evidence behind them. Recorded, not fixed.
 - **Four projects, one developer, one working style.** Real, but not a sample of
   the population.
 - **Labels are agent-applied.** Three independent annotators at 139/140
