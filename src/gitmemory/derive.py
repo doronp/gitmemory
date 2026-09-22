@@ -1029,7 +1029,24 @@ _PROHIBIT = re.compile(
     # On the 89 real user prose blocks the contracted form occurs 21 times, and
     # 18 of them are reports: "still doesn't work", "they don't look that bad",
     # "the exported types don't accurately represent the request body". The
-    # other three are imperatives and all three are real prohibitions.
+    # other three are imperatives — nothing in front of the verb — which is the
+    # position this branch admits and the eighteen do not have.
+    #
+    # It does not follow that the three are standing rules, and this comment
+    # said for a while that they were. All three annotators read all three as
+    # scoped to the task in hand and gold-labelled every one of them `none`,
+    # unanimously: "(but don't push)" is an instruction about this branch, not a
+    # policy about pushing. The set document lists the same turn among the false
+    # positives on one page and among the real prohibitions on another; the
+    # annotators are right, and imperative position is a weaker signal than the
+    # first version of this claim assumed. What the branch separates is a
+    # command from a report, which is worth having, and not a standing rule from
+    # a one-off, which it cannot see.
+    #
+    # Its measured contribution on this corpus is zero in both directions: the
+    # three blocks it fires in emit `directive` for other reasons anyway, so
+    # deleting the branch moves no verdict here. It earns its place on the gate
+    # and the probes, where a directive is written as one. [E5 fix7 review]
     #
     # So the contracted form counts only where it cannot be a report, which is
     # the imperative: nothing in front of it, at the head of a clause, allowing

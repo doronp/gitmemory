@@ -570,7 +570,18 @@ negated `do` occurs **21 times in 19 blocks**:
 | a report — *"still doesn't work"*, *"they don't look that bad"*, *"the exported types don't accurately represent the request body"* | **18** |
 | an imperative — *"Don't include generic development practices"*, *"(but don't push)"*, *"To be clear: don't use ClMail"* | **3** |
 
-Not one of the eighteen forbids anything, and all three of the imperatives do.
+Not one of the eighteen forbids anything, and all three of the imperatives are
+written as commands.
+
+**They are still not standing rules, and this section said they were.** The
+false-positive list near the top of this document has *"(but don't push)"* in
+it, and all three annotators read all three of these as task-scoped and gold-
+labelled the blocks `none`, unanimously. Both statements cannot hold; the
+annotators are right, and the one this fix is entitled to is the weaker one —
+the imperative separates a command from a report, not a policy from a one-off.
+The three blocks emit `directive` for other reasons regardless, so the branch
+costs nothing here and gains nothing here; it pays on the gate and the probes,
+where a directive is written as one. [E5 fix7 review]
 The uncontracted forms split the other way and stay untouched: `do not` and
 `does not` are the register a rule gets written in, which is why three of the
 four synthetic gate directive templates and probe E's plain directive

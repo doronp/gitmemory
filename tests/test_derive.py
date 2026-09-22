@@ -2839,9 +2839,20 @@ def test_a_contracted_dont_needs_the_imperative_and_doesnt_has_no_such_position(
 
     `_PROHIBIT` listed `don't` and `doesn't` beside `do not` and `does not`, and
     on the 89 real user prose blocks in `bench/secondary.py` the contracted form
-    occurs 21 times: 18 of them report that something is broken and 3 forbid
-    something. The three are all imperatives — nothing in front of the verb —
-    and the eighteen all have a subject, which is what makes them reports.
+    occurs 21 times: 18 of them report that something is broken and 3 are
+    written as commands. The three are all imperatives — nothing in front of the
+    verb — and the eighteen all have a subject, which is what makes them
+    reports.
+
+    **A command is not the same thing as a standing rule, and the bodies below
+    pin the first.** All three annotators read all three of those real
+    imperatives as scoped to the task in hand and gold-labelled the blocks
+    `none`; the `(but don't push)` body here is one of them, paraphrased, and it
+    is counted among this module's false positives in
+    `docs/benchmarks/E5-secondary-set.md`. It stays in the tuple because what
+    the tuple tests is the clause-head class, and it is marked below so nobody
+    reads the assertion as the corpus agreeing. Separating a one-off from a
+    policy is not something position can do. [E5 fix7 review]
 
     So the contracted form is admitted in imperative position only. `doesn't`
     gets no position at all: it is third-person singular present, English has no
@@ -2874,6 +2885,10 @@ def test_a_contracted_dont_needs_the_imperative_and_doesnt_has_no_such_position(
         "The grandmaster belongs to the console — our code reads it and does not set it.",
         "Don't merge without a green build.",
         "Run the tests first. Then don't push until CI is green.",
+        # The four `go ahead` shapes are the clause-head class — paren, comma,
+        # en dash, em dash — and the real block behind them is gold `none`, 3
+        # votes, filed as a false positive. `directive` is what this module
+        # does with them, not what the corpus says they are.
         "Go ahead with the branch and the commits (but don't push).",
         "Go ahead with the commits, don't push.",
         "Ship the branch, don't tag it.",

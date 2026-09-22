@@ -128,9 +128,12 @@ lives.
 
 - **The contracted negation is no longer a prohibition on its own**, which is
   the larger half of the `_PROHIBIT` item still listed above. On the 89 real
-  user prose blocks `don't`/`doesn't` occurs 21 times: 18 report that something
-  is broken, 3 forbid something, and all 3 are imperatives. So `don't` counts in
-  imperative position only and `doesn't` counts nowhere — English has no
+  user prose blocks `don't`/`doesn't` occurs 21 times in 19 blocks: 18 report
+  that something is broken and 3 are written as imperatives. (Written as one is
+  not the same as being a standing rule, which this entry originally claimed:
+  the annotators read all 3 as task-scoped and gold-labelled the blocks `none`.
+  Corrected in the fix-7 review round.) So `don't` counts in imperative position
+  only and `doesn't` counts nowhere — English has no
   third-person imperative, so no position rescues it, which is the call
   `cannot` already got. `never mind` is excluded by name as a formula for
   dropping a request. User-side false positives **12 → 6**, the declared
