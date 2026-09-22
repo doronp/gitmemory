@@ -2,7 +2,9 @@
 
 Two questions, because the first one alone is not enough:
 
-1. **Mutation.** Revert one behaviour; does the suite go red?
+1. **Mutation.** Revert one behaviour; does the suite go red? Minus this
+   harness's own bookkeeping test, which goes red for every mutant by
+   construction and made this question unanswerable until `ANCHOR_TEST`.
 2. **Attribution.** Does the *test written for that behaviour* go red? A mutant
    caught by some unrelated test means the intended test is decorative, which
    is how a suite passes 451 tests while five `verify` checks are deletable.
@@ -22,6 +24,21 @@ SRC = ROOT / "src" / "gitmemory"
 # Generous against the ~1 minute the offline suite takes, and short against the
 # thirty-three minutes a wedged mutant cost before there was a bound at all.
 SUITE_TIMEOUT = 600
+
+# The harness's own bookkeeping test reads the *mutated* file and asserts every
+# row's anchor appears exactly once. Under a mutant the anchor has been replaced,
+# so it appears zero times, so this test fails — for every mutant, on every row,
+# regardless of whether anything in the product is pinned. That made `suite`
+# non-zero unconditionally and **`SURVIVED` unreachable**, for as long as the
+# bookkeeping test has existed: the harness's first question ("revert one
+# behaviour; does the suite go red?") was being answered by the harness. Every
+# genuinely unpinned row scored MISSED, which reads as "some other test caught
+# it" and sends you to look at the attribution instead of at the hole.
+#
+# Deselected only here. Outside a mutation the anchor is supposed to be there,
+# and that test has caught a row broken by an ordinary product edit twice.
+# [E7 pair review]
+ANCHOR_TEST = "tests/test_mutate_harness.py::test_every_mutation_row_anchors_exactly_once"
 
 # (name, file, find, replace, test that must catch it)
 MUTANTS = [
@@ -190,10 +207,15 @@ MUTANTS = [
         "test_a_separator_free_megabyte_does_not_hang_the_build",
     ),
     (
+        # Re-anchored. This used to revert a second loop at the end of `_fill`
+        # that fed `{"skipped": line}` to the digest, and scored MISSED because
+        # the loop had been redundant with this line since E6. The loop is gone;
+        # the behaviour it was supposed to hold is here. [E7 pair review]
         "skipped generations leave no trace in the digest",
         "index.py",
-        "    for line in skipped:",
-        "    for line in ():",
+        "            digest.update(_generation_row(db, stored, turns=0, blocks=0, "
+        "reason=repr(exc)))",
+        "            _generation_row(db, stored, turns=0, blocks=0, reason=repr(exc))",
         "test_a_generation_that_could_not_be_parsed_changes_the_digest",
     ),
     (
@@ -334,10 +356,17 @@ MUTANTS = [
         "test_an_index_from_another_schema_is_refused_not_answered",
     ),
     (
+        # Re-anchored onto the same line as "a --db path is resolved before the
+        # symlink refusal sees it", deliberately: one `realpath` now holds two
+        # behaviours and each gets its own row and its own named test. It used
+        # to revert an `os.path.abspath` on `target`, which had been dead since
+        # this `realpath` landed — `dirname("out.db")` is `""` and
+        # `realpath("")` is the working directory — and scored MISSED for that
+        # reason. [E7 pair review]
         "a bare --db filename has no directory to create",
         "index.py",
-        "    target = os.path.abspath(path or db_path(home))",
-        "    target = path or db_path(home)",
+        "        parent = os.path.realpath(parent)",
+        "        parent = parent",
         "test_a_bare_filename_is_a_usable_db_path",
     ),
     (
@@ -3835,9 +3864,18 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "30 mutants",
+        "a full pass is 4" + "31 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
+    ),
+    (
+        # Split across a `+` for the reason the row above is: a row that writes
+        # the literal it searches for makes its own anchor appear twice.
+        "the harness scores its own bookkeeping test as the suite going red",
+        "tests/mutate_index.py",
+        '+ ["--dese' + 'lect", ANCHOR_TEST, *args],',
+        "+ [*args],",
+        "test_the_suite_run_deselects_the_one_test_a_mutant_is_meant_to_break",
     ),
     # --- E7 pair review (Gemini), findings 1 and 2 ---
     (
@@ -3904,6 +3942,10 @@ def run(args: list[str]) -> int:
     under it. The corpus test is deselected by `addopts`, so this is the offline
     suite and it takes about a second. [E3]
 
+    `ANCHOR_TEST` as well, for the reason written where it is defined: it is the
+    one test in the suite that is *supposed* to fail while a mutant is applied,
+    and leaving it in meant every mutant looked caught. [E7 pair review]
+
     The exit code, not a green/red boolean, because the difference between 1 and
     2 is the difference between a mutant that was caught and one that was never
     run. See `BROKEN` in `main`. [E5]
@@ -3920,7 +3962,8 @@ def run(args: list[str]) -> int:
     """
     try:
         return subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "tests", "bench", *args],
+            [sys.executable, "-m", "pytest", "-q", "tests", "bench"]
+            + ["--deselect", ANCHOR_TEST, *args],
             cwd=ROOT,
             timeout=SUITE_TIMEOUT,
         ).returncode
@@ -3980,12 +4023,14 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 430 mutants x two suite runs, which
-    is about three hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 429 or trusting the new one untested.
-    (Measured at 28 s a row against the 1,120-test offline suite; the number in
-    this sentence has been wrong before, so it is `len(MUTANTS)` and a timing,
-    not a memory.)
+    The filter exists because a full pass is 431 mutants x two suite runs, which
+    is about five hours — long enough that adding one row and checking it used
+    to mean either waiting for the other 430 or trusting the new one untested.
+    (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
+    49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
+    measured against a smaller suite and read as a constant. The count in this
+    sentence has been wrong twice, so it is `len(MUTANTS)` and a timing, not a
+    memory.)
     """
     wanted = sys.argv[1:]
     selected = [m for m in MUTANTS if not wanted or any(w.lower() in m[0].lower() for w in wanted)]

@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 
+import mutate_index as mutate
 import pytest
 from mutate_index import MUTANTS, ROOT, SRC, verdict
 
@@ -188,6 +189,40 @@ def test_the_only_verdict_that_counts_as_success_is_caught():
 def _path(filename: str):
     """A bare name is a file in the package; a path is relative to the repo."""
     return ROOT / filename if "/" in filename else SRC / filename
+
+
+def test_the_suite_run_deselects_the_one_test_a_mutant_is_meant_to_break(monkeypatch):
+    """`SURVIVED` was unreachable, and this is the test that keeps it reachable.
+
+    `test_every_mutation_row_anchors_exactly_once` reads the file the harness has
+    just mutated and asserts every anchor is present. Under a mutant the anchor
+    has been replaced, so it is not — for every mutant, on every row, whether or
+    not the product behaviour is pinned by anything. The harness read that as
+    "the suite went red", so `suite` was never 0, so a row nothing holds scored
+    MISSED ("caught, but not by ...") instead of SURVIVED ("caught by nothing").
+    Two rows in the last full pass were exactly that, and both turned out to name
+    code a later fix had made dead.
+
+    Asserted on the argv rather than by running the suite twice, which is 160
+    seconds. The name is checked against the real test too: it is a string, and
+    a rename would put the deselect back to deselecting nothing. [E7 pair review]
+    """
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"] = argv
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(mutate.subprocess, "run", fake_run)
+    with pytest.raises(AssertionError):
+        mutate.run(["-x"])
+
+    argv = seen["argv"]
+    assert "--deselect" in argv, argv
+    assert argv[argv.index("--deselect") + 1] == mutate.ANCHOR_TEST, argv
+
+    path, _, name = mutate.ANCHOR_TEST.partition("::")
+    assert f"def {name}(" in (ROOT / path).read_text(), f"{mutate.ANCHOR_TEST} names no test"
 
 
 def test_every_mutation_row_anchors_exactly_once():

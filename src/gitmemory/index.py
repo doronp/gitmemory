@@ -550,9 +550,7 @@ def build(home: str | None = None, *, path: str | None = None) -> Stats:
     homes writing into one directory. [E7]
     """
     home = store.resolve_home(home)
-    # abspath, because `--db out.db` has no dirname and `makedirs("")` raises
-    # ENOENT on the most obvious value for a flag documented as "database path".
-    target = os.path.abspath(path or db_path(home))
+    target = path or db_path(home)
     parent = os.path.dirname(target)
     # `_mkdir`, not `os.makedirs`: the index is a second full copy of the
     # transcript text, and `makedirs` left it in a 0755 directory while `raw/`
@@ -562,8 +560,17 @@ def build(home: str | None = None, *, path: str | None = None) -> Stats:
     # so what leaked was the directory listing: that a store exists here, how
     # big its index is, when it last built. [E7 index-F9]
     #
-    # `realpath` on a caller-supplied parent, because `_mkdir` refuses symlinks
-    # and the caller's are theirs to follow: `/tmp` is a symlink on macOS, so
+    # `realpath` on a caller-supplied parent, and it is what makes `--db out.db`
+    # work as well: `dirname("out.db")` is `""`, `makedirs("")` raises ENOENT,
+    # and `realpath("")` is the working directory. An `os.path.abspath` on
+    # `target` above used to be the reason that flag worked, and stopped being
+    # the reason when this line landed — dead on both branches, since
+    # `resolve_home` already returns a realpath. The mutation harness found it
+    # the same way it found the digest loop: the row reverting the `abspath`
+    # left its named test green. [E7 pair review]
+    #
+    # `_mkdir` refuses symlinks and the caller's are theirs to follow: `/tmp` is
+    # a symlink on macOS, so
     # `--db /tmp/x.db` — the most ordinary scratch invocation there is — was
     # being refused, by `_lockfile`'s own `_mkdir` one line below, ever since
     # index-F1 landed. The leaf name is kept as given, so the rename at the end
@@ -667,6 +674,19 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
             # A generation the index could not take is still a generation the
             # store holds, and a dashboard that silently omits it reports a
             # whole store. It goes in with `parsed = 0` and the reason. [E6]
+            #
+            # This is also what puts the skip in the digest, which is the one
+            # question the digest exists to answer: a whole store and a store
+            # missing a generation must not compare equal. There was a second
+            # loop at the end of this function feeding `{"skipped": line}` for
+            # the same purpose, written in E3 when this line did not exist. It
+            # carried `stored.key` and `repr(exc)` — the `session_key` and
+            # `skip_reason` of this row, in a different wrapper — and the
+            # mutation harness is what found it: deleting the loop left its
+            # named test green, because this line had been doing the work since
+            # E6. `_encodable` is not a loss here either; `repr` escapes a lone
+            # surrogate into six ASCII characters before it ever arrives.
+            # [E7 pair review]
             digest.update(_generation_row(db, stored, turns=0, blocks=0, reason=repr(exc)))
             continue
         db.execute("RELEASE generation")
@@ -675,11 +695,6 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
         blocks += len(rows)
         for part in chunk:
             digest.update(part)
-    # The skips are part of what this index *is*. Left out, two builds over
-    # different stores — one whole, one with a generation that would not parse —
-    # compared equal, which is the one question this digest exists to answer.
-    for line in skipped:
-        digest.update(canonical_json({"skipped": line}))
     return Stats(generations, turns, blocks, tuple(skipped), digest.hexdigest())
 
 
