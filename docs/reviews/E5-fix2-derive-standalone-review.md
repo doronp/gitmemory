@@ -25,8 +25,8 @@ rows**, `ruff check` clean.
 
 Seven items closed, each by its own commit with a reproduction, a re-measurement
 and — where one can exist — a mutation row. Every new row **CAUGHT by its
-intended test**. Two items open, listed at the bottom, and five recorded and not
-fixed.
+intended test**. One item open, listed at the bottom; three more entries added
+after the round, in their own section; and seven recorded and not fixed.
 
 | # | what it was | closed by | pinned by |
 |---|---|---|---|
@@ -108,20 +108,56 @@ lives.
 
 ## Still open
 
-- **`_PROHIBIT` reads pasted machine output as a rule.** *"blocked because of a
-  disallowed MIME type"* and a `gh pr view` man page's *"no arguments"* both
-  score `directive` from a user turn, and both are currently invisible because
-  `_DELIBERATION` happens to catch the same blocks on the word `options`. This
-  is the already-known bare-negation item with real instances attached, and it
-  blocks the `options` narrowing below.
+- **`_PROHIBIT` reads pasted machine output as a rule — three blocks left.**
+  The contracted-negation half of this is closed below; what survives is
+  *"blocked because of a disallowed MIME type"* twice, in a browser console
+  error, and a `gh pr view` man page's *"no arguments"*. All three are invisible
+  only because `_DELIBERATION` catches the same blocks on the bare noun
+  `options`, and they are exactly what the `options` narrowing costs: measured
+  on top of fix 6, dropping the bare set-nouns takes the board from 6 false
+  positives to 9 and these are the three. Two alternatives, two lookbehinds,
+  each fitted to one block — the shape this class is built against, which is why
+  they are written down rather than guessed at. Three further blocks carry a
+  `_PROHIBIT` hit under the same guard and would stay masked because each has a
+  second `_DELIBERATION` hit; that is luck, and it is tabulated with the rest in
+  `docs/benchmarks/E5-secondary-set.md`, fix 6.
 
 ## Closed after this file was written
 
-- **Probe E is scored: 19 of 32**, on 2026-09-22. Fix 2's claim holds off the
-  corpus it was tuned on — 12 of 12 non-decisions, ten of them wearing the
-  substitution frame the fix exists to ignore. The price is 2 of 12 reversals,
-  because nine were written with no self-correction marker and the assistant
-  branch is a marker detector. `docs/benchmarks/E5-probe-E.md`.
+- **The contracted negation is no longer a prohibition on its own**, which is
+  the larger half of the `_PROHIBIT` item still listed above. On the 89 real
+  user prose blocks `don't`/`doesn't` occurs 21 times: 18 report that something
+  is broken, 3 forbid something, and all 3 are imperatives. So `don't` counts in
+  imperative position only and `doesn't` counts nowhere — English has no
+  third-person imperative, so no position rescues it, which is the call
+  `cannot` already got. `never mind` is excluded by name as a formula for
+  dropping a request. User-side false positives **12 → 6**, the declared
+  `reversal-by-user` aside **2 of 3 labelled → 0 of 3**, everything else on
+  every board unchanged except probe C, **14 → 13**. Four mutation rows, all
+  CAUGHT. `docs/benchmarks/E5-secondary-set.md`, fix 6.
+
+  Probe C's lost item was right for the wrong reason and the floor is re-pinned
+  *down* on purpose: what scored it was a `don't` inside a parenthetical about
+  somebody else's fixtures, while its actual directive is a positive standing
+  rule — root cause 4, the hole probes C, D and E all report. Closing that
+  restores the item to the rule that should always have held it, and the floor
+  goes back to 14 then and not before.
+- **`_PIVOT`'s cancel marker was dead**, in F5's sense and not F4's: the whole
+  of it was `scratch that`, `_REPAIR` claims the demonstratives and runs first,
+  so no input could reach it. The form that names its object rather than
+  pointing at it — what you write when the thing is two turns back — was claimed
+  by nobody. Replaced with the complement of `_REPAIR`'s deictics, carrying
+  `_ABANDON`'s `surface` exclusion so one rule governs the idiom. Nothing moves
+  on 726 real blocks in both roles or either gate split except the two items the
+  change is about: probe E 19 → 20 and probe A's aside 2/5 → 3/5. F7's
+  correction is what made it visible — while A's item was believed to fail in
+  the guard order, the repair looked like a reordering. `d97ec06`.
+- **Probe E is scored: 19 of 32**, on 2026-09-22, and 20 after the `_PIVOT`
+  fix above. Fix 2's claim holds off the corpus it was tuned on — 12 of 12
+  non-decisions, ten of them wearing the substitution frame the fix exists to
+  ignore. The price is 2 of 12 reversals, because nine were written with no
+  self-correction marker and the assistant branch is a marker detector.
+  `docs/benchmarks/E5-probe-E.md`.
 
 ## Recorded, not fixed
 
@@ -152,10 +188,13 @@ lives.
   `_REPAIR`'s and the ordering question is still open.
 - **`_DELIBERATION` fires on the bare noun `options`**, and narrowing it is
   blocked rather than declined. Zero verdict changes on 559 real assistant
-  blocks, three new false positives on the 89 user blocks — and those three are
-  `_PROHIBIT` matching `disallowed` and `no arguments` inside pasted machine
-  output, which this guard is masking on an unrelated word. The `_PROHIBIT`
-  repair comes first. See `docs/benchmarks/E5-probe-E.md`.
+  blocks, three new false positives on the user side — re-measured on top of
+  fix 6 and still three, `_PROHIBIT` matching `disallowed` twice and
+  `no arguments` once inside pasted machine output, which this guard is masking
+  on an unrelated word. The rest of the `_PROHIBIT` repair comes first; the
+  causal breakdown, including the three blocks a second `_DELIBERATION` hit
+  would keep masked either way, is in
+  `docs/benchmarks/E5-secondary-set.md`, *What is left of root cause 2*.
 - The `over`-complement hole in `_CONTRAST`, declined twice; see
   `docs/reviews/E5-gemini-pair-review-derive.md`.
 - A contrast between two **facts** reads as a contrast between two **plans**:

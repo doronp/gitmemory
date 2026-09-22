@@ -965,7 +965,12 @@ _PROHIBIT = re.compile(
     # of what did not happen wears the same word as a rule about what may not:
     # "we never had that problem" is four words and was read as a standing
     # prohibition. [round 4]
-    rf"\b(?:never(?!\s+{_PAST}\b)"
+    #
+    # `never mind` is excluded by name and not by tense, because it has none:
+    # it is a conversational formula for withdrawing a request, the same class
+    # as the "no rush"/"no worries" list two blocks down, and it scored a
+    # directive on somebody dropping the subject. [E5 probe E follow-up]
+    rf"\b(?:never(?! mind\b)(?!\s+{_PAST}\b)"
     # The exception, and the reason the cue is the *clause's* tense rather than
     # the next word's: a present-tense copula in front makes what follows a
     # passive rule, not a report — "raw SQL is never allowed here". `was`/`were`
@@ -977,7 +982,9 @@ _PROHIBIT = re.compile(
     # `avoided` is gone with it: "we avoided threads" is the same report in a
     # different verb. The cost is the passive "raw SQL is avoided here", which
     # is a weak rule and rare beside the report. [round 4]
-    r"|not to|do(?:es)? not|don'?t|doesn'?t|must ?n[o']t|may not"
+    # The contracted forms are gone from here and `don'?t` comes back at the
+    # bottom with a position attached; see the comment there.
+    r"|not to|do(?:es)? not|must ?n[o']t|may not"
     r"|shall not|should ?n[o']t|no longer|avoid(?:s|ing)?"
     r"|refrain(?:s|ing)? from|steer clear of|stay away from|keep out of"
     r"|ban(?:s|ned|ning)?|forbid(?:s|den|ding)?|prohibit(?:s|ed|ing)?"
@@ -998,7 +1005,31 @@ _PROHIBIT = re.compile(
     r"|further|such|question|choice|time|issue|view|opinion|preference)"
     r"(?![\w-]))[\w-]+\b"
     # Exclusive permission, which is a prohibition on everyone else.
-    r"|\bonly [\w ]{1,30}?(?:may|can|should|is allowed|are allowed)\b",
+    r"|\bonly [\w ]{1,30}?(?:may|can|should|is allowed|are allowed)\b"
+    # The contracted negated `do`, which needs a position the uncontracted form
+    # does not. `do not` and `does not` are the register a rule is written in —
+    # "we do not abend on bad input data", "our code reads it and does not set
+    # it" — but `don't` and `doesn't` are how a person says something is broken.
+    # On the 89 real user prose blocks the contracted form occurs 21 times, and
+    # 18 of them are reports: "still doesn't work", "they don't look that bad",
+    # "the exported types don't accurately represent the request body". The
+    # other three are imperatives and all three are real prohibitions.
+    #
+    # So the contracted form counts only where it cannot be a report, which is
+    # the imperative: nothing in front of it, at the head of a clause, allowing
+    # the one coordinator that joins it to the last one. `doesn't` gets no such
+    # alternative, because English has no third-person imperative — there is no
+    # position that rescues it, which is the same call `cannot` got at the top
+    # of this comment and for the same reason.
+    #
+    # ponytail: clause-initial is approximated by punctuation and a short
+    # coordinator, not parsed. The ceiling is an imperative opening a clause
+    # this list does not punctuate — "check the lockfile then don't touch it" —
+    # and the upgrade is `_CLAUSE`, which splits on sentence ends and so cannot
+    # see the boundary either. Adding a coordinator is the intended repair.
+    # [E5 probe E follow-up; docs/benchmarks/E5-secondary-set.md]
+    r"|(?:^|[.;:!?\n(\[—])\W{0,4}(?:(?:but|and|so|also|please|now|then)\W{1,3})?"
+    r"don'?t\b",
     re.I,
 )
 

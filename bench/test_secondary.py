@@ -67,17 +67,20 @@ def test_the_extractor_scores_zero_on_real_text():
     because "it got better" and "it got worse" are both things a reader of this
     file needs to be told rather than allowed to assume.
 
-    **30 -> 12 false positives** is the injected-block filter, the one fix this
-    set has produced so far. Precision did not move, because it is 0/12 rather
-    than 0/30 — there is still no true positive, and both gold directives are
-    plain positive standing rules of the shape probes C and D each missed seven
-    times. The set is spent as a generalisation measure from the moment of that
-    fix; it is a regression floor now.
+    **30 -> 12 false positives** was the injected-block filter, the first fix
+    this set produced, and **12 -> 6** is the second: the contracted negation
+    stopped being a prohibition outside imperative position, because on these
+    89 user prose blocks `don't`/`doesn't` occurs 21 times and 18 of them report
+    that something is broken. Precision did not move for either, because it is
+    0/6 as it was 0/30 — there is still no true positive, and both gold
+    directives are plain positive standing rules of the shape probes C and D
+    each missed seven times. The set is spent as a generalisation measure from
+    the moment of the first fix; it is a regression floor now.
 
-    See `docs/benchmarks/E5-secondary-set.md`.
+    See `docs/benchmarks/E5-secondary-set.md`, fixes 1 and 6.
     """
     s = secondary.score(secondary.items())
-    assert (s["tp"], s["fp"], s["fn"]) == (0, 12, 2)
+    assert (s["tp"], s["fp"], s["fn"]) == (0, 6, 2)
     assert s["precision"] == 0.0
     assert s["recall"] == 0.0
 
@@ -144,10 +147,23 @@ def test_the_seven_assistant_reversals_left_are_all_reversals():
 
 def test_the_declared_reversal_ceiling_costs_more_than_a_miss():
     """Three of the 140 turns are the user revoking their own instruction — the
-    shape `docs/DESIGN.md` declares out of scope. Two of the three do not come
-    back as nothing: they come back as `directive`, so the revocation is
-    recorded as a rule. Probe C predicted exactly this and probe D measured it
-    twice; here it is on real text, at a base rate of 2 in 140.
+    shape `docs/DESIGN.md` declares out of scope. All three now come back as
+    nothing, which is the *declared* behaviour: the ceiling is a miss, and a
+    miss is what it should cost.
+
+    It read 2 of 3 until fix 6, and neither of the two was labelled for a reason
+    that had anything to do with revocation. One was scored by a `doesn't`
+    inside a line of a pasted diff — a code comment, on a deleted line, in
+    somebody else's file. The other was *"Never mind!"*, scored by `never`, the
+    formula for dropping a request read as a standing prohibition. Both are now
+    excluded, so the base rate of a revocation being recorded as a rule is 0 in
+    140 rather than 2, and what remains is the declared miss.
+
+    Probe C predicted the mislabelling and probe D measured it twice. Neither
+    predicted *this*: that the cause would be pasted machine text rather than
+    the revocation frame. Pinned at 0 so a regression is visible; if the
+    positive-standing-rule hole is ever closed, check this again, because both
+    of these blocks do contain real instructions beside the revocation.
     """
     s = secondary.score(secondary.items())
-    assert (s["aside_n"], s["aside_labelled_something"]) == (3, 2)
+    assert (s["aside_n"], s["aside_labelled_something"]) == (3, 0)

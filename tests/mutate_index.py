@@ -1776,6 +1776,42 @@ MUTANTS = [
         "(?:scratch|strike) (?:the|my|our)",
         "test_cancelling_a_named_thing_is_a_pivot_and_not_only_cancelling_a_pronoun",
     ),
+    # --- E5 probe E follow-up: the contracted negation, and `never mind` ---- #
+    #
+    # Four rows for four decisions: that the contracted form left the
+    # unrestricted list, that it came back with a position, that the position
+    # allows one coordinator, and that `never mind` is excluded. Folded into
+    # fewer rows, any one of them could pass on another's behalf — the first two
+    # in particular are each other's inverse, and a single row would be green
+    # with the narrowing entirely undone.
+    (
+        "the contracted negation is a prohibition wherever it appears",
+        "derive.py",
+        r'''    r"|not to|do(?:es)? not|must ?n[o']t|may not"''',
+        r'''    r"|not to|do(?:es)? not|don'?t|doesn'?t|must ?n[o']t|may not"''',
+        "test_a_contracted_dont_needs_the_imperative_and_doesnt_has_no_such_position",
+    ),
+    (
+        "the contracted negation is not a prohibition anywhere",
+        "derive.py",
+        r'''    r"don'?t\b",''',
+        r'''    r"(?!x)x",''',
+        "test_a_contracted_dont_needs_the_imperative_and_doesnt_has_no_such_position",
+    ),
+    (
+        "an imperative behind a coordinator stops counting",
+        "derive.py",
+        r"(?:(?:but|and|so|also|please|now|then)\W{1,3})?",
+        r"(?:(?!x)x)?",
+        "test_a_contracted_dont_needs_the_imperative_and_doesnt_has_no_such_position",
+    ),
+    (
+        "dropping a request reads as a standing prohibition",
+        "derive.py",
+        r'''    rf"\b(?:never(?! mind\b)(?!\s+{_PAST}\b)"''',
+        r'''    rf"\b(?:never(?!\s+{_PAST}\b)"''',
+        "test_never_mind_is_a_person_dropping_a_request",
+    ),
     (
         "an artifact is published by rename, never written in place",
         "derive.py",
@@ -2860,8 +2896,8 @@ MUTANTS = [
         # either way.
         "past-tense `never` is read as a prohibition",
         "derive.py",
-        r'''    rf"\b(?:never(?!\s+{_PAST}\b)"''',
-        r'''    r"\b(?:never"''',
+        r'''    rf"\b(?:never(?! mind\b)(?!\s+{_PAST}\b)"''',
+        r'''    r"\b(?:never(?! mind\b)"''',
         "test_a_report_of_what_never_happened_is_not_a_rule",
     ),
     (
@@ -4154,7 +4190,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "76 mutants",
+        "a full pass is 4" + "80 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4480,9 +4516,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 476 mutants x two suite runs, which
+    The filter exists because a full pass is 480 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 475 or trusting the new one untested.
+    to mean either waiting for the other 479 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

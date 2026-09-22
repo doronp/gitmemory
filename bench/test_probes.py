@@ -92,7 +92,24 @@ from bench.probes import PROBES, score
 # ceiling item (aside 2/5 -> 3/5) and moves nothing else on any board. So 19 is
 # what E measured blind and 20 is what it scores having been read. Pinning 20
 # keeps the floor honest; quoting 20 as a generalisation number would not be.
-FLOOR = {"A": 23, "B": 25, "C": 14, "D": 14, "E": 20}
+#
+# **C is 13, lowered deliberately, and the item it lost was right by accident.**
+# `_PROHIBIT` stopped reading the contracted `don't`/`doesn't` as a prohibition
+# unless it is an imperative, which halves the false positives on the only real
+# user text here (12 to 6) and costs exactly one probe item:
+#
+#   "Whatever you end up doing about the moving-head timeout — and I know it's
+#   messy, the fixtures don't even agree on what a timeout means — the house
+#   lights still have to be up within two seconds of the panic button."
+#
+# The directive in that sentence is *the house lights have to be up*, a positive
+# standing rule, which is the hole probes C, D and E all independently report
+# and which nothing in `derive.py` claims. What was scoring it was `don't` inside
+# a parenthetical about fixtures disagreeing — a report, in an aside, about
+# somebody else's software. So 14 was 13 plus a coincidence, and when the
+# positive-rule hole is closed this comes back to 14 on the rule that should
+# always have held it. Re-pin it up then, and not before.
+FLOOR = {"A": 23, "B": 25, "C": 13, "D": 14, "E": 20}
 
 
 def test_probe_e_is_the_authors_file_and_not_a_copy_of_it():

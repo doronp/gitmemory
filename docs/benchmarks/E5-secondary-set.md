@@ -549,11 +549,109 @@ branch and a body that depends on it are different things. Corrected, re-run,
 CAUGHT. No behaviour changed, so every board is unchanged by construction.
 [E5 fix 2 review, F4]
 
+## Fix 6 — `don't` is how a person says something is broken
+
+Root cause 2, which had sat open through five fixes: `_PROHIBIT` reads a bare
+negation as a prohibition. Probe E put real instances on it, and the count is
+what settles it. Of the 89 distinct user prose blocks here, the contracted
+negated `do` occurs **21 times in 20 blocks**:
+
+| | occurrences |
+|---|---|
+| a report — *"still doesn't work"*, *"they don't look that bad"*, *"the exported types don't accurately represent the request body"* | **18** |
+| an imperative — *"Don't include generic development practices"*, *"(but don't push)"*, *"To be clear: don't use ClMail"* | **3** |
+
+Not one of the eighteen forbids anything, and all three of the imperatives do.
+The uncontracted forms split the other way and stay untouched: `do not` and
+`does not` are the register a rule gets written in, which is why three of the
+four synthetic gate directive templates and probe E's plain directive
+(*"we do not abend on bad input data"*) are all phrased that way.
+
+So the contracted form is admitted in imperative position only — nothing in
+front of the verb, at the head of a clause, allowing the one coordinator that
+joins it to the last one. **`doesn't` gets no position at all.** It is
+third-person singular present and English has no third-person imperative, so
+there is no sentence in which it is a command; that is the call `_PROHIBIT`
+already makes about bare `cannot`, where inability and prohibition share a word
+and inability is the commoner one.
+
+`never mind` went with it, one lookahead, for the same reason the determiner
+`no` already excludes *"no rush"* and *"no worries"*: it is a conversational
+formula for dropping a request, and it was scoring a standing rule on somebody
+doing exactly that. The exclusion is the two-word formula, so a `never`
+elsewhere in the same block is still a prohibition — suppressing the block
+would be the `options` mistake, where a guard swallows a real rule beside it.
+
+| | before | after |
+|---|---|---|
+| user-side false positives | 12 | **6** |
+| …of them machine-authored | 1 | 1 |
+| user-side tp / fn | 0 / 2 | 0 / 2 (unchanged) |
+| `reversal-by-user` blocks labelled something | 2 of 3 | **0 of 3** |
+| assistant `reversal` | 7 of 7 | 7 of 7 (unchanged) |
+| gate, dev / held-out | 1.0000 / 0.9319, 1.0000 / 0.7428 | unchanged |
+| probes A / B / D / E | 23, 25, 14, 20 | unchanged |
+| **probe C** | 14 | **13** |
+
+Precision still reads 0.0000 either way — there is no true positive to divide by
+— so the honest statement is the count: half the false positives on the only
+real user text in this repository, and the declared ceiling priced above at
+*"two of the three come back as `directive`"* is now none of the three.
+
+**And neither of those two was labelled for a reason to do with revocation.**
+Worth writing down, because the ceiling was read as evidence about the
+revocation frame and it was not. One is *"Never mind!"*, scored by `never`. The
+other is *"I changed my mind a bit about it and would like to combine the
+logic"*, followed by a pasted diff — and what scored it was on a **deleted line
+inside that diff**, a code comment reading `# (shortest path that doesn't have
+another working directory as its parent)`. A predicate about English commands
+fired on a parenthetical in a Python comment in somebody else's file, three
+screens below the sentence anybody read. That is the class root cause 2 names,
+in its purest form, and no probe contains anything like it.
+
+**Probe C lost an item, and it was right by accident.** *"Whatever you end up
+doing about the moving-head timeout — and I know it's messy, the fixtures don't
+even agree on what a timeout means — the house lights still have to be up within
+two seconds of the panic button."* The directive there is *the house lights have
+to be up*: a positive standing rule, which is root cause 4 and which nothing in
+`derive.py` claims. What was scoring it was `don't` inside a parenthetical, in an
+aside, about somebody else's software. Close root cause 4 and it comes back to 14
+on the rule that should always have held it; the floor in `bench/test_probes.py`
+is re-pinned at 13 with that written beside it, and re-pinning it up is for then.
+
+Four mutation rows, all CAUGHT by their intended test.
+
+### What is left of root cause 2
+
+Six user blocks still carry a `_PROHIBIT` hit that `_DELIBERATION` is masking,
+and it matters *which* alternative of the guard is doing the masking, because
+only one of them is the one under discussion:
+
+| alternative | masked by | the text |
+|---|---|---|
+| `disallowed` ×2 | `Options` | *"was blocked because of a **disallowed** MIME type"* — a browser console error, the participle attributive inside a noun phrase |
+| `no arguments` | `Options` | *"With **no arguments** / We will display the pull request of the branch you're currently on"* — a pasted `gh pr view` man page |
+| `DO NOT` | `options`, `we could`, `we might` | the caveat banner, quoted inside a user turn that is itself deliberating |
+| `avoid` | `options`, `vs` | *"the `--isolated` flag, which will **avoid** refreshing the cache"* — a report about what a flag does |
+| `may not` | `which of` | *"This may or **may not** be related to the current task"* — the IDE notice, in the idiom that means uncertainty |
+
+The first three rows — two alternatives, three blocks — are what blocks the
+`options` narrowing, and measured on top of this fix that is exactly the
+narrowing's cost: the board goes from 6 false positives to 9, and the three are
+these. The bottom three keep a second `_DELIBERATION` hit each and would stay
+masked, which is luck rather than design: `which of` and `vs` are no better a
+reason to suppress a block than `options` was.
+
+Each needs its own lookbehind, each fitted to one block, which is the shape this
+class is built against — so they are recorded here rather than guessed at, and
+the order of work is unchanged.
+
 ## What it does not measure
 
 - **Recall rests on two items.** With two gold directives, recall is 0, 0.5 or
   1. The precision figure is the solid one: 138 negatives, and 32 false
-  positives when this was written — 12 after the fixes below, on 14 emitted.
+  positives when this was written — 6 after the fixes below, and all 6 of the
+  nodes the extractor still emits here.
 - **The assistant side has no recall number.** Only what the extractor emitted
   was adjudicated, so a reversal it never flagged is invisible here.
 - **The gate is blind to the recant class.** Neither synthetic split contains a

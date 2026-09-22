@@ -133,6 +133,12 @@ by the measurement: `_PROHIBIT`'s descriptive matches first — they are the
 already-open *bare negation* item, now with real-corpus instances — and the
 `options` narrowing after, or the board goes from 12 false positives to 15.
 
+The larger half of that bare-negation item is since closed — the contracted
+`don't`/`doesn't`, which took the user side from 12 false positives to 6 — and
+the narrowing was re-measured on top of it: still 3, still the same three
+blocks, so the board would now go 6 to 9 and the order of work is unchanged.
+`docs/benchmarks/E5-secondary-set.md`, fix 6.
+
 **2. `_PIVOT`'s cancel marker was pinned to a pronoun — fixed.** It listed
 `scratch that` and nothing else, so *"Scratch the SEARCH ALL."* fell through, as
 would *scratch the plan* or *scratch the two-pass design*. The deictic is the one

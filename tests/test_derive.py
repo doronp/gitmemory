@@ -2782,3 +2782,61 @@ def test_cancelling_a_named_thing_is_a_pivot_and_not_only_cancelling_a_pronoun(h
 
     assert _assistant_says(home, src, "Scratch that, I'll use the cache.") == [], "_REPAIR's"
     assert _assistant_says(home, src, "Let me scratch the surface here first.") == [], "the idiom"
+
+
+# --- E5 probe E follow-up: the contracted negation, and `never mind` --- #
+
+
+def test_a_contracted_dont_needs_the_imperative_and_doesnt_has_no_such_position(home, src):
+    """*"Still doesn't work"* is not a rule about working.
+
+    `_PROHIBIT` listed `don't` and `doesn't` beside `do not` and `does not`, and
+    on the 89 real user prose blocks in `bench/secondary.py` the contracted form
+    occurs 21 times: 18 of them report that something is broken and 3 forbid
+    something. The three are all imperatives — nothing in front of the verb —
+    and the eighteen all have a subject, which is what makes them reports.
+
+    So the contracted form is admitted in imperative position only. `doesn't`
+    gets no position at all: it is third-person singular present, English has no
+    third-person imperative, and there is therefore no sentence in which it is a
+    command. That is the same call the module makes about `cannot` — inability
+    and prohibition share the word, and inability is the commoner one.
+
+    The uncontracted forms are untouched and the first two bodies say why: a
+    written rule reaches for them, and both a synthetic gate template and a
+    probe E directive are phrased that way.
+    """
+    rules = (
+        "Make sure we do not use pickle for the cache. Rely on the standard json module.",
+        "The grandmaster belongs to the console — our code reads it and does not set it.",
+        "Don't merge without a green build.",
+        "Run the tests first. Then don't push until CI is green.",
+        "Go ahead with the branch and the commits (but don't push).",
+    )
+    for body in rules:
+        assert _user_says(home, src, body) == ["directive"], body
+
+    reports = (
+        "Still doesn't work, maybe there's a step needed to have the submodule checked out?",
+        "The exported types don't accurately represent the request body structure.",
+        "Would I be able to redirect so the old URL doesn't break?",
+        "The fixtures don't even agree on what a timeout means.",
+    )
+    for body in reports:
+        assert _user_says(home, src, body) == [], body
+
+
+def test_never_mind_is_a_person_dropping_a_request(home, src):
+    """*"Never mind!"* is a withdrawal, and it was scoring a standing rule.
+
+    The tense cue cannot reach it — `mind` is a bare infinitive, not a past —
+    so the exclusion is by name, which is how the determiner `no` already
+    handles "no rush" and "no worries" one block below.
+
+    The control is the whole reason it is two words rather than one: the
+    exclusion is the formula, so a `never` anywhere else in the same block is
+    still a prohibition. Suppressing the block on the formula would be the
+    `options` mistake, where a guard swallows a real rule sitting beside it.
+    """
+    assert _user_says(home, src, "Never mind! Add a details element around it.") == []
+    assert _user_says(home, src, "Never mind that. Never commit generated files.") == ["directive"]
