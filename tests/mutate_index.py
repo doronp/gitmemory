@@ -1166,8 +1166,10 @@ MUTANTS = [
     (
         "the owner-data scan actually matches",
         "tests/test_no_owner_data.py",
-        """            if pattern.search(line):""",
-        """            if False:""",
+        """            if _hits(pattern, line):
+                hits.append(f"{rel}:{n}")""",
+        """            if False:
+                hits.append(f"{rel}:{n}")""",
         "test_the_scanner_finds_leaks_that_are_really_there",
     ),
     (
@@ -1184,9 +1186,95 @@ MUTANTS = [
     (
         "each owner-data pattern catches its own sample",
         "tests/test_no_owner_data.py",
-        """    "a macOS home directory": re.compile(r"/Users/[a-z][a-z0-9._-]*/", re.I),""",
-        """    "a macOS home directory": re.compile(r"/Users/x[a-z0-9._-]*/", re.I),""",
+        # The mutant narrows the pattern without writing a literal that the
+        # pattern itself then matches: after dropping the trailing `/` in
+        # E7 S13, `/Users/x…` was a hit in this file and in every historical
+        # blob of it. `[` is not `[a-z]`, so the quantifier form is inert.
+        """    "a macOS home directory": re.compile(r"/Users/[a-z][a-z0-9._-]*", re.I),""",
+        """    "a macOS home directory": re.compile(r"/Users/[a-z]{40}", re.I),""",
         "test_no_tracked_file_contains_owner_data",
+    ),
+    # --- E7 carry-ins S2 / S12 / S13: what the owner-data scanner could not see ---
+    #
+    # Every row here mutates the *enforcement test*, which is the only place the
+    # behaviour lives. The scanner reads `mutate_index.py` too, so no mutant may
+    # write a string the patterns match — see the note above the S13 row.
+    (
+        "the owner-data scan follows a link out of the repository",
+        "tests/test_no_owner_data.py",
+        """        if path.is_symlink():
+            if _hits(pattern, os.readlink(path)):
+                hits.append(f"{rel}:link")
+            continue""",
+        """        if False:
+            pass""",
+        "test_the_scanner_finds_leaks_that_are_really_there",
+    ),
+    (
+        "the owner-data scan ignores the file name",
+        "tests/test_no_owner_data.py",
+        """        if _hits(pattern, rel):
+            hits.append(f"{rel}:name")""",
+        """        if False:
+            hits.append(f"{rel}:name")""",
+        "test_the_scanner_finds_leaks_that_are_really_there",
+    ),
+    (
+        "a placeholder span excuses more than the one it names",
+        "tests/test_no_owner_data.py",
+        """PLACEHOLDERS = {"/Users/x"}""",
+        # Split across a `+` so this row does not itself write a span the
+        # scanner matches. The mutant text evaluates to the sample's own span,
+        # which is the point: it would excuse the positive control's plant.
+        """PLACEHOLDERS = {"/Users/x", "/Users/" + "someone"}""",
+        "test_the_scanner_finds_leaks_that_are_really_there",
+    ),
+    (
+        "the home patterns need a trailing separator again",
+        "tests/test_no_owner_data.py",
+        """    "a macOS home directory": re.compile(r"/Users/[a-z][a-z0-9._-]*", re.I),
+    "a Linux home directory": re.compile(r"/home/[a-z][a-z0-9._-]*", re.I),""",
+        """    "a macOS home directory": re.compile(r"/Users/[a-z][a-z0-9._-]*" + "/", re.I),
+    "a Linux home directory": re.compile(r"/home/[a-z][a-z0-9._-]*" + "/", re.I),""",
+        "test_the_patterns_would_actually_catch_something",
+    ),
+    (
+        "the private-tree pattern is case-sensitive again",
+        "tests/test_no_owner_data.py",
+        # Same reason as the row above: broken at the hyphen so the private-tree
+        # pattern does not match this file. Both halves rejoin before use.
+        're.compile(r"\\.claude-auto-' + 'memory\\b", re.I)',
+        're.compile(r"\\.claude-auto-' + 'memory\\b")',
+        "test_the_patterns_would_actually_catch_something",
+    ),
+    (
+        "the scan sees the checkout and not the object graph",
+        "tests/test_no_owner_data.py",
+        """    for label, data in gitrepo.pushable_objects(str(root)):""",
+        """    for label, data in []:""",
+        "test_the_history_scan_finds_leaks_the_checkout_no_longer_has",
+    ),
+    (
+        "the history scan skips the blobs it cannot decode",
+        "tests/test_no_owner_data.py",
+        """        for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):""",
+        """        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        for n, line in enumerate(text.splitlines(), 1):""",
+        "test_the_history_scan_finds_leaks_the_checkout_no_longer_has",
+    ),
+    (
+        "a tracked file the scan cannot read is not reported",
+        "tests/test_no_owner_data.py",
+        """    return [
+        rel
+        for rel in files
+        if not (root / rel).is_symlink() and not _is_text(root / rel)
+    ]""",
+        """    return []""",
+        "test_nothing_tracked_is_a_file_the_scanner_cannot_read",
     ),
     # --- E4 vacuity pass 2: canonical JSON ---
     #
