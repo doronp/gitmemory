@@ -740,6 +740,27 @@ def test_an_arm_whose_dependency_is_absent_is_skipped_with_a_reason():
     the arm and the sweep died on the first instance with
     `ImportError: Dense arm dependencies not installed`. Found by running the
     real corpus, which is the only place it could show up. [E3]
+
+    The build below passes `inst.question_id` and not `inst`, and it used to
+    pass `inst`. E5 narrowed the factory contract to take a session id rather
+    than the whole `Instance` — the record carries `answer` and
+    `answer_session_ids`, so handing it over is a channel through which an arm
+    could rank the evidence without retrieving anything — and every caller was
+    updated except this one, because this branch only executes where the
+    `hybrid` extras are installed. On `rerank` it failed with `ValueError:
+    unsafe session_id for a path component`, which is `store.capture` refusing
+    to make a directory named after a dataclass: the right refusal, three layers
+    from the mistake, and the sibling below pins that mechanism where no extras
+    are needed to see it.
+
+    **On `dense` it did not fail at all.** `dense_factory` never reads its first
+    argument — it embeds the transcript and nothing else — so it accepted the
+    whole `Instance`, including the answer, and returned a working retriever.
+    Nothing read the answer and nothing was wrong with the result; the contract
+    the narrowing exists to enforce was simply not enforced there, which is the
+    worse half of this finding and is why the arm is not the place that checks
+    it. A branch that runs in one environment is a branch that is tested in one
+    environment. [E5 review round]
     """
     from bench.__main__ import _optional_arms
 
@@ -753,10 +774,38 @@ def test_an_arm_whose_dependency_is_absent_is_skipped_with_a_reason():
             # must not raise the "not installed" error the old probe missed.
             inst = make_instance(0)
             raw = synth.to_transcript(inst, seed=1, compaction=None).bytes_data
-            built = arms[name](inst, raw)
+            built = arms[name](inst.question_id, raw)
             close = getattr(built, "close", None)
             if close:
                 close()
+
+
+def test_a_factory_takes_a_session_id_and_not_the_instance_it_came_from():
+    """The narrowing the test above got wrong, pinned where it can be seen.
+
+    `gitmemory_factory` needs no optional dependency, so this branch runs
+    everywhere, and it is the same `store.capture` call `rerank_factory` reaches
+    through its first stage. Passing the whole record is refused — and refused
+    by the store rather than by the arm, which is the layer that can actually
+    tell a session id from a dataclass.
+
+    The refusal is a side effect of `capture` making a directory per session, so
+    it is narrower than the rule it happens to enforce: `dense_factory` ignores
+    the argument entirely and would take anything. Widening this into a real
+    contract check on all three factories is a change to `bench/arms.py` and is
+    not made here. [E5 review round]
+    """
+    inst = make_instance(0)
+    raw = synth.to_transcript(inst, seed=1, compaction=None).bytes_data
+
+    with pytest.raises(ValueError, match="unsafe session_id"):
+        gitmemory_factory(inst, raw)
+
+    built = gitmemory_factory(inst.question_id, raw)
+    try:
+        assert built("anything", 1) is not None
+    finally:
+        built.close()
 
 
 def test_an_arm_whose_dependency_is_absent_names_the_module_it_is_missing(monkeypatch):

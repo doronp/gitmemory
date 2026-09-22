@@ -400,6 +400,26 @@ MUTANTS = [
         '                agent=_safe(man["agent"], "agent"),',
         "test_a_hostile_manifest_field_cannot_opt_a_segment_run_out_of_the_seam_scan",
     ),
+    # `_safe` is the only thing between a hook payload and a directory name,
+    # and it had no row until a bench caller passed a whole dataclass where a
+    # session id belongs and the *type* half caught it. Both halves, separately:
+    # the charset half is the traversal guard, the type half is the one that
+    # turns a wrong-argument bug into a refusal instead of a `TypeError` three
+    # frames down. [E5 review round]
+    (
+        "the path-component guard stops checking the charset",
+        "store.py",
+        "    if not isinstance(name, str) or not _SAFE_RE.match(name):",
+        "    if not isinstance(name, str):",
+        "test_path_components_are_validated",
+    ),
+    (
+        "the path-component guard stops checking the type",
+        "store.py",
+        "    if not isinstance(name, str) or not _SAFE_RE.match(name):\n",
+        "    if not _SAFE_RE.match(name):\n",
+        "test_a_factory_takes_a_session_id_and_not_the_instance_it_came_from",
+    ),
     # --- E3: the trust root -------------------------------------------------- #
     (
         "a truncated manifest is raised on, not skipped",
@@ -4190,7 +4210,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "86 mutants",
+        "a full pass is 4" + "88 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4574,9 +4594,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 486 mutants x two suite runs, which
+    The filter exists because a full pass is 488 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 485 or trusting the new one untested.
+    to mean either waiting for the other 487 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this
