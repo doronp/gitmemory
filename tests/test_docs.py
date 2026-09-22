@@ -333,3 +333,37 @@ def test_the_unbuilt_retrieval_arms_are_not_described_as_built():
         named = [n for n in names if n in para.lower()]
         if named and not any(h in para.lower() for h in hedges):
             raise AssertionError(f"{named} described as built:\n{para}")
+
+
+def test_the_secondary_write_up_quotes_what_it_says_it_quotes():
+    """The one document that reproduces a stranger's sentences says how many.
+
+    It used to say "no transcript text is committed", in the file doing the
+    committing — the manifest carries no text, and the paragraph had quietly
+    inherited the manifest's promise. Eight verbatim runs is a citation; the
+    point of pinning the count is that nobody adds the ninth in silence.
+
+    Matched against the real clone with whitespace normalised, so the number is
+    of text that is actually in somebody else's session and not of every pair
+    of quotation marks in the prose. [E7b L4-F3]
+    """
+    sys.path.insert(0, os.path.join(ROOT, "bench"))
+    from secondary import corpus_root, transcripts
+
+    root = corpus_root()
+    if root is None:
+        pytest.skip("third-party corpus missing; run tests/fetch_fixtures.sh")
+
+    def flat(text: str) -> str:
+        return re.sub(r"\s+", " ", text).strip()
+
+    corpus = flat("\n".join(p.read_text(errors="replace") for p in transcripts(root)))
+    doc = _read("docs/benchmarks/E5-secondary-set.md")
+    quoted = {
+        run
+        for m in re.finditer(r'[“"]([^”"]{20,})[”"]', doc)
+        if len(run := flat(m.group(1)).strip("*… ").replace("`", "")) >= 40
+    }
+    verbatim = sorted(q for q in quoted if q in corpus)
+    claimed = int(re.search(r"quotes \*\*(\d+)\*\* runs of\n40 characters", doc).group(1))
+    assert len(verbatim) == claimed, verbatim

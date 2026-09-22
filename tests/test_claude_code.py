@@ -391,10 +391,22 @@ CC_FIXTURES = (
 
 
 def _corpus() -> list[str]:
-    root = os.environ.get("GITMEMORY_CC_FIXTURES", str(CC_FIXTURES))
+    # `or`, not a `get` default: an env var set to the empty string is not an
+    # unset one, and `export GITMEMORY_CC_FIXTURES=` is what a shell script
+    # whose variable did not expand looks like. Measured: 410 collected cases
+    # became 88 — the same 322 disappearing without an error that the comment
+    # above CC_FIXTURES is about, reached through a different door. [E7b L4-F5]
+    root = os.environ.get("GITMEMORY_CC_FIXTURES") or str(CC_FIXTURES)
     if not os.path.isdir(root):
         return []
-    return sorted(str(p) for p in pathlib.Path(root).rglob("*.jsonl"))
+    # Resolved and bounded, because a corpus is somebody else's directory and
+    # `store._open_source` opens the same shape of file with `O_NOFOLLOW`. A
+    # `*.jsonl` symlink planted in it is read by whatever it points at, and the
+    # one thing this suite must never read is this machine's own history. The
+    # walk itself does not descend symlinked directories (3.13 default), so the
+    # leaf is the whole hole. [E7b L4-F4]
+    base = pathlib.Path(root).resolve()
+    return sorted(str(p) for p in base.rglob("*.jsonl") if p.resolve().is_relative_to(base))
 
 
 @pytest.mark.parametrize("path", _corpus())
@@ -416,6 +428,53 @@ def test_corpus_is_present_or_explicitly_absent():
     if os.environ.get("GITMEMORY_REQUIRE_CORPUS") == "1":
         raise AssertionError(msg)
     pytest.skip(msg)
+
+
+def test_a_symlink_in_the_corpus_does_not_walk_out_of_it(monkeypatch, tmp_path):
+    """A corpus is somebody else's directory, and the walks treat it as one.
+
+    `store._open_source` opens a transcript with `O_NOFOLLOW` precisely because
+    a `*.jsonl` that is a symlink is read by whatever it points at. The two
+    corpus walks — this module's and the secondary bench's — followed one
+    happily, and the file they must never read is this machine's own history.
+
+    Both walks are checked here because they are the same hole twice and the
+    fix is the same line twice. [E7b L4-F4]
+    """
+    from bench.secondary import transcripts
+
+    corpus, outside = tmp_path / "corpus", tmp_path / "outside"
+    (corpus / "real_projects").mkdir(parents=True)
+    outside.mkdir()
+    (outside / "elsewhere.jsonl").write_bytes(b"")
+    (corpus / "real_projects" / "planted.jsonl").symlink_to(outside / "elsewhere.jsonl")
+    (corpus / "real_projects" / "own.jsonl").write_bytes(b"")
+
+    monkeypatch.setenv("GITMEMORY_CC_FIXTURES", str(corpus))
+    assert _corpus() == [str(corpus / "real_projects" / "own.jsonl")]
+    assert transcripts(corpus / "real_projects") == [corpus / "real_projects" / "own.jsonl"]
+
+
+def test_an_empty_corpus_variable_is_an_unset_one(monkeypatch, tmp_path):
+    """The 322 cases do not get to disappear because a shell variable was empty.
+
+    `os.environ.get(k, default)` returns `""` for `export GITMEMORY_CC_FIXTURES=`
+    — the default is for *absent*, not for *empty* — and `""` is not a
+    directory, so the corpus came back empty and the parametrisation collected
+    nothing. Measured before the fix: 410 cases collected became 88, and
+    locally the guard below only skips. [E7b L4-F5]
+    """
+    monkeypatch.delenv("GITMEMORY_CC_FIXTURES", raising=False)
+    unset = _corpus()
+    monkeypatch.setenv("GITMEMORY_CC_FIXTURES", "")
+    assert os.environ.get("GITMEMORY_CC_FIXTURES", "the default") == "", "the premise"
+    assert _corpus() == unset
+
+    # And a value that is a real path still wins: the fallback is for empty,
+    # not for every value the reader would rather not have.
+    (tmp_path / "elsewhere.jsonl").write_bytes(b"")
+    monkeypatch.setenv("GITMEMORY_CC_FIXTURES", str(tmp_path))
+    assert _corpus() == [str(tmp_path / "elsewhere.jsonl")]
 
 
 # --- Review round 1 (Gemini pair-review): id stability and DAG integrity ---

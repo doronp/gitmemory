@@ -43,12 +43,20 @@ tool results and 20 are empty; the extractor reads none of them. The remaining
 219 are prose, 140 of them distinct, and **all 140 are labelled**. There is no
 sampling step to argue with.
 
-**No transcript text is committed.** `docs/benchmarks/E5-secondary-manifest.json`
+**The corpus is not vendored.** `docs/benchmarks/E5-secondary-manifest.json`
 carries a sha256 per item and the label; `bench/secondary.py` reads the text back
 out of the clone and refuses to score if a digest, a filename or the item count
 has moved. Same arrangement as LongMemEval — the corpus is fetched, never
 vendored — and here it also settles the question of republishing a stranger's
 sessions.
+
+It does not settle the question of quoting one. This file quotes **8** runs of
+40 characters or more out of those sessions verbatim, because an argument about
+whether a particular sentence is a directive cannot be made without the
+sentence. Eight sentences is a citation and 140 would be a republication; the
+line is drawn here and `tests/test_docs.py` holds it. Until E7b the paragraph
+above said "no transcript text is committed", in the file doing the quoting.
+[E7b L4-F3]
 
 **Three annotators, independently, blind to the extractor.** Each was given the
 definitions and the 140 texts, and forbidden to open this repository. They

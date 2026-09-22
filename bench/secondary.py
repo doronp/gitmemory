@@ -12,11 +12,17 @@ else — claude-code-log's `test_data/real_projects`, MIT, already pinned in thi
 repository for the parser conformance run. Not one byte of it is the owner's,
 which is the same rule every other corpus here is held to.
 
-**No transcript text is committed.** The manifest carries a sha256 per item and
+**The corpus is not vendored.** The manifest carries a sha256 per item and
 the label; the text is read back out of the clone, and an item whose digest has
 moved is a hard error rather than a silent relabelling. That is the LongMemEval
 arrangement — the corpus is fetched, never vendored — and here it also settles
 the question of republishing a stranger's sessions.
+
+It does not settle quoting one. `docs/benchmarks/E5-secondary-set.md` reproduces
+eight runs of 40 characters or more verbatim, and `main()` below prints 140
+characters of every miss, because a labelling argument cannot be made without
+the sentence. This docstring used to say "no transcript text is committed",
+which was true of the manifest and false of the write-up. [E7b L4-F3]
 
 **Census, not sample.** Of the user-role blocks in those sessions, 1095 are tool
 results and 20 are empty; the extractor reads none of them. The remaining 219
@@ -62,8 +68,34 @@ EXPECTED = {"directive": "directive", "none": None}
 
 def corpus_root() -> Path | None:
     """`real_projects` inside the pinned clone, or None if it is not here."""
-    root = Path(os.environ.get("GITMEMORY_CC_FIXTURES", str(FIXTURES))) / SUBTREE
+    # `or`, not a `get` default — see `_corpus` in tests/test_claude_code.py.
+    # An empty env var is the shape of an unexpanded shell variable, and here it
+    # would make the bench report a missing clone that is right there. [E7b L4-F5]
+    root = Path(os.environ.get("GITMEMORY_CC_FIXTURES") or str(FIXTURES)) / SUBTREE
     return root if root.is_dir() else None
+
+
+def transcripts(root: Path) -> list[Path]:
+    """Every session transcript under `root`, and nothing outside it.
+
+    Resolved and bounded because a corpus is somebody else's directory and
+    `store._open_source` opens the same shape of file with `O_NOFOLLOW`: a
+    `*.jsonl` symlink planted in it is read by whatever it points at, and the
+    one thing this repository must never read is the machine's own history.
+    The walk does not descend symlinked directories, so the leaf is the whole
+    hole. [E7b L4-F4]
+
+    Subagent transcripts are skipped here rather than at each of the three call
+    sites, which is where the rule used to live in triplicate.
+    """
+    base = root.resolve()
+    return [
+        path
+        for path in sorted(base.rglob("*.jsonl"))
+        if path.resolve().is_relative_to(base)
+        and not path.name.startswith("agent-")
+        and path.parent.name != "subagents"
+    ]
 
 
 def _blocks(root: Path) -> list[tuple[str, str, str, str]]:
@@ -89,9 +121,7 @@ def _blocks(root: Path) -> list[tuple[str, str, str, str]]:
     """
     seen: set[str] = set()
     out = []
-    for path in sorted(root.rglob("*.jsonl")):
-        if path.name.startswith("agent-") or path.parent.name == "subagents":
-            continue
+    for path in transcripts(root):
         session = claude_code.parse(str(path))
         for turn in session.turns:
             if turn.role != "user":
@@ -117,9 +147,7 @@ def _emitted_assistant(root: Path) -> list[tuple[str, str, str, str]]:
     """
     seen: set[str] = set()
     out = []
-    for path in sorted(root.rglob("*.jsonl")):
-        if path.name.startswith("agent-") or path.parent.name == "subagents":
-            continue
+    for path in transcripts(root):
         session = claude_code.parse(str(path))
         prose = {b.block_id: (t.role, b.text.strip()) for t, b in derive._prose(session)}
         for node in derive.decisions(session):
@@ -143,9 +171,7 @@ def _nodes(root: Path) -> dict[str, str]:
     would have scored every one of them exactly as before.
     """
     out: dict[str, str] = {}
-    for path in sorted(root.rglob("*.jsonl")):
-        if path.name.startswith("agent-") or path.parent.name == "subagents":
-            continue
+    for path in transcripts(root):
         session = claude_code.parse(str(path))
         prose = {b.block_id: b.text.strip() for _t, b in derive._prose(session)}
         for node in derive.decisions(session):

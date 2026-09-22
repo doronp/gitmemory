@@ -4350,7 +4350,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "11 mutants",
+        "a full pass is 5" + "14 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4587,6 +4587,31 @@ MUTANTS = [
         """    if _leaks(text.encode("utf-8", "surrogatepass")):""",
         "test_a_key_the_label_itself_assembles_is_redacted_before_it_is_published",
     ),
+    (
+        # An env var set to the empty string is not an unset one, and the `get`
+        # default is only for unset. 410 collected cases became 88. [E7b L4-F5]
+        "an empty corpus variable empties the corpus again",
+        "tests/test_claude_code.py",
+        '    root = os.environ.get("GITMEMORY_CC_FIXTURES") or str(CC_FIXTURES)',
+        '    root = os.environ.get("GITMEMORY_CC_FIXTURES", str(CC_FIXTURES))',
+        "test_an_empty_corpus_variable_is_an_unset_one",
+    ),
+    (
+        # A corpus is somebody else's directory and `store._open_source` opens
+        # this shape of file with `O_NOFOLLOW`. The walks did not. [E7b L4-F4]
+        "the conformance walk follows a transcript symlink out of the corpus",
+        "tests/test_claude_code.py",
+        " if p.resolve().is_relative_to(base))",
+        ")",
+        "test_a_symlink_in_the_corpus_does_not_walk_out_of_it",
+    ),
+    (
+        "the bench walk follows a transcript symlink out of the corpus",
+        "bench/secondary.py",
+        "        if path.resolve().is_relative_to(base)\n        and not path.name.startswith",
+        "        if not path.name.startswith",
+        "test_a_symlink_in_the_corpus_does_not_walk_out_of_it",
+    ),
     # --- E5 fix 2 reviewed: the conjunction was scoped to the block --------- #
     (
         "the concession and the substitution go back to sharing a whole block",
@@ -4812,7 +4837,7 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 511 mutants x two suite runs, which
+    The filter exists because a full pass is 514 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
     to mean either waiting for the other 501 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
