@@ -634,6 +634,39 @@ def test_the_shim_survives_being_run_under_nounset(clean_env):
     assert daemon._event_of(record.name) == "unknown"
 
 
+def test_the_shim_is_silent_under_xtrace_and_does_not_echo_the_home_it_was_given(clean_env):
+    """`SHELLOPTS=xtrace` is the nounset door one option over, and it is worse.
+
+    Trace goes to fd 2, which is the agent's stderr, and it prints the value of
+    every assignment — including `H`, which is `$GITMEMORY_HOME`. S7 built an
+    ASCII allowlist for the one message that echoes that variable; xtrace prints
+    it three lines earlier, raw. Measured before the fix: 700 bytes of trace per
+    compaction, with `ESC [ 2 K \\r` reaching the terminal byte for byte.
+
+    The value here is the refusal case on purpose — a relative path is when a
+    user's `GITMEMORY_HOME` is most likely to be something odd, and it is the
+    path that ends in the sanitised `echo`, so the assertion below is that the
+    sanitised message is the *only* thing written. [E7 pair review]
+    """
+    env, home = clean_env
+    env["SHELLOPTS"] = "xtrace"
+    env["GITMEMORY_HOME"] = "relative\x1b[2K\rHIJACKED"
+
+    res = subprocess.run(run_shim_cmd(), env=env, input=b"{}", capture_output=True)
+
+    assert res.returncode == 0
+    assert res.stderr.count(b"\n") == 1, res.stderr
+    assert b"\x1b" not in res.stderr, res.stderr
+    assert res.stderr.startswith(b"gitmemory: GITMEMORY_HOME must be an absolute path"), res.stderr
+
+    # And the accepted path says nothing at all, which is where 700 bytes of it
+    # would otherwise land: the refusal above is one fire, this is every fire.
+    env["GITMEMORY_HOME"] = str(home)
+    quiet = subprocess.run(run_shim_cmd(), env=env, input=b"{}", capture_output=True)
+    assert quiet.stderr == b"", quiet.stderr
+    assert len(list((home / "spool").glob("*.json"))) == 1
+
+
 def test_with_no_home_and_no_absolute_override_the_shim_refuses_out_loud(tmp_path):
     """`HOME` unset is a disagreement between the two ends of the seam.
 

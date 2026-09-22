@@ -13,6 +13,17 @@
 # exists not to make. The cost is real and is stated where a user meets it:
 # `hook/README.md` says that an installed hook producing no records should be
 # run by hand, because that is the only place the reason appears. [E7 S10]
+# First command in the file, because bash starts tracing before it. `SHELLOPTS`
+# is exported by some setups and `/bin/sh` here is bash, which honours it — the
+# same mechanism the `:-` defaults below exist for, one option over. Measured
+# with `SHELLOPTS=xtrace`: 700 bytes of trace into the agent's stderr on every
+# compaction, including `+ H=<value>` with `$GITMEMORY_HOME` **unfiltered**, so
+# an ESC in it reached the terminal raw. That is the sequence S7 strips from
+# the one message that echoes this variable — stripped there and printed here,
+# three lines earlier, without the message. The brace group is S8's trick and
+# for S8's reason: it takes the trace of its own contents and costs no fork.
+# `+v` as well, because `SHELLOPTS=verbose` is the same door. [E7 pair review]
+{ set +xv; } 2>/dev/null
 umask 077
 # Every parameter is expanded with a `:-` default, so the shim survives being
 # run under `set -u`. It does not set `-u` itself, but `SHELLOPTS=nounset` is

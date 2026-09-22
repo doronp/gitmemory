@@ -3673,8 +3673,8 @@ MUTANTS = [
         # marked attested, the walk skips it too and nothing is reported.
         "an unreadable manifest still vouches for the bytes beside it",
         "store.py",
-        "        if os.path.exists(manifest) and _own_manifest(home, manifest):",
-        "        if os.path.exists(manifest):",
+        "\n            and _own_manifest(home, manifest)",
+        "",
         "test_verify_says_the_same_thing_a_clone_of_the_store_would",
     ),
     (
@@ -3835,7 +3835,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "28 mutants",
+        "a full pass is 4" + "30 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -3877,6 +3877,21 @@ MUTANTS = [
         "                timed_out = True\n",
         "",
         "test_a_lock_that_timed_out_declines_the_sweep_rather_than_guessing_at_it",
+    ),
+    # --- E7 pair review (Gemini run B), findings 3 and 5 ---
+    (
+        "the two sweeps disagree again about what a generation directory is",
+        "store.py",
+        "            _GEN_RE.match(os.path.basename(manifest))\n            and os.path.exists",
+        "            os.path.exists",
+        "test_a_manifest_verify_will_not_look_at_cannot_attest_anything",
+    ),
+    (
+        "the shim lets an inherited xtrace print its variables to the agent",
+        "hook/gitmemory-hook.sh",
+        "{ set +xv; } 2>/dev/null\n",
+        "",
+        "test_the_shim_is_silent_under_xtrace_and_does_not_echo_the_home_it_was_given",
     ),
 ]
 
@@ -3965,9 +3980,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 428 mutants x two suite runs, which
+    The filter exists because a full pass is 430 mutants x two suite runs, which
     is about three hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 427 or trusting the new one untested.
+    to mean either waiting for the other 429 or trusting the new one untested.
     (Measured at 28 s a row against the 1,120-test offline suite; the number in
     this sentence has been wrong before, so it is `len(MUTANTS)` and a timing,
     not a memory.)

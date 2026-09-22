@@ -1300,7 +1300,21 @@ def _verify_unattested(home: str) -> list[str]:
         # attested, so the loop above skips it *and* the walk below skips it,
         # and the bytes nothing in the store speaks for are reported by
         # nobody. [E7 fs-F5]
-        if os.path.exists(manifest) and _own_manifest(home, manifest):
+        #
+        # And `_GEN_RE`, because "a manifest exists" was a laxer rule here than
+        # in the loop this defers to. `verify` skips `g-1.json` — `-` is not a
+        # digit — while this marked `raw/…/g-1` attested on the same file, so
+        # the bytes in it were reported by neither. The store is not silent
+        # about it: the `sessions/` walk below calls `g-1.json` "not a
+        # manifest", which uses this same regex and is why the two rules have
+        # to be the same one. But naming the odd manifest is not naming the
+        # transcript bytes beside it. One definition of "a generation
+        # directory", used by everything that skips one. [E7 pair review]
+        if (
+            _GEN_RE.match(os.path.basename(manifest))
+            and os.path.exists(manifest)
+            and _own_manifest(home, manifest)
+        ):
             attested.add(os.path.realpath(seg_dir))
     for dirpath, dirnames, filenames in os.walk(raw):
         if os.path.realpath(dirpath) in attested:

@@ -2683,6 +2683,39 @@ def test_verify_says_the_same_thing_a_clone_of_the_store_would(tmp_path):
     assert any("no manifest speaks for these bytes" in p for p in problems), problems
 
 
+def test_a_manifest_verify_will_not_look_at_cannot_attest_anything(tmp_path):
+    """Two sweeps skip a generation directory, and they used different rules.
+
+    `verify` skips `sessions/…/g-1.json` because `_GEN_RE` wants digits, and
+    `_verify_unattested` marked `raw/…/g-1` attested because a file of that
+    name exists — so the planted transcript beside it was reported by neither.
+    Measured before the fix: one problem, naming the odd manifest, and nothing
+    at all about `planted.jsonl`.
+
+    The store was never silent, which is why this is a reporting gap and not a
+    hiding place: the `sessions/` walk calls `g-1.json` "not a manifest" and
+    `verify` is red either way. Both lines are asserted, because the fix is that
+    the two sweeps ask the same question and dropping either one would mean they
+    had stopped. [E7 pair review]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    assert store.verify(home) == []
+
+    gen = Path(home, "raw", "claude-code", "sess", "g-1")
+    gen.mkdir()
+    (gen / "planted.jsonl").write_bytes(b'{"planted": true}\n')
+    sess = Path(home, "sessions", "claude-code", "sess")
+    shutil.copy(sess / "g00.json", sess / "g-1.json")
+
+    assert sorted(store.verify(home)) == [
+        "raw/claude-code/sess/g-1/planted.jsonl: no manifest speaks for these bytes",
+        "sessions/claude-code/sess/g-1.json: not a manifest",
+    ]
+
+
 def test_a_reader_refuses_a_store_whose_proof_is_not_in_it(tmp_path):
     """A skip here would make the index, the dashboard and the gate agree it is empty.
 

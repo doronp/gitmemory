@@ -130,8 +130,8 @@ rather than made silently:
 
 ### 2.3 Triggers — hook AND watcher
 
-- **Hook (latency, best-effort).** `PreCompact` + `SessionEnd` + `Stop`. 143 lines of POSIX sh,
-  53 of them not comments. **[E4, review: docs 9 — the estimate was "~20 lines" and it stayed in
+- **Hook (latency, best-effort).** `PreCompact` + `SessionEnd` + `Stop`. 154 lines of POSIX sh,
+  54 of them not comments. **[E4, review: docs 9 — the estimate was "~20 lines" and it stayed in
   the document while the file grew. What it grew for is in the file: every guard has a comment
   naming the failure it was written against.]**
   Reads hook JSON on stdin, writes **one file** to `spool/`, `exit 0`. No git, no Python, no
