@@ -1345,6 +1345,24 @@ def _decision_kind(text: str, role: str) -> str | None:
         # measured; the paragraph is the looser of the two and a hard-wrapped
         # line is a formatting artifact rather than a boundary.
         # [E5 fix 2 review, F3]
+        #
+        # ponytail: `_ABANDON` is not a third option here, and "Good catch.
+        # Dropping the retry wrapper." therefore scores nothing. It is a
+        # reversal on any reading — the concession names a prior position and
+        # the verb puts it down — and the stop/start pair above cannot reach it
+        # because nothing replaces the thing. Adding the disjunct was written
+        # and measured rather than argued about: probes 23/25/14/14, secondary
+        # user side 0/12/2, assistant side 7 of 7 with 54 withdrawn, gate dev
+        # 1.0000/0.9319, held-out 1.0000/0.7428 — every board identical to
+        # without it, because the construction does not occur in 559 real
+        # assistant blocks or in either synthetic split.
+        #
+        # Declined on that. `_RECANT`'s alternatives are vocabulary inside a
+        # construction this corpus does show (seven times); this would be a new
+        # construction, and fix 2 itself was bought with 61 adjudicated items.
+        # Retaining unobserved vocabulary and adding an unobserved rule are not
+        # the same act. One observed instance flips it.
+        # [E5 fix 2 review, M11]
         if any(
             _RECANT.search(part) and (_SWITCH.search(part) or _CONTRAST.search(part))
             for part in _PARAGRAPH.split(text)

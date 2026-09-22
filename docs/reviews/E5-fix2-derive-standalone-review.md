@@ -108,19 +108,31 @@ lives.
 
 ## Still open
 
-- **M11 — a concession plus an abandonment is not a pair.** *"Good catch.
-  Dropping the retry wrapper."* scores nothing: `_RECANT` fires, `_ABANDON`
-  fires, and the assistant branch wants `_RECANT` with `_SWITCH` or
-  `_CONTRAST`, none of which is there. It is a real reversal on any reading —
-  the assistant concedes and drops its own prior thing — and the stop/start pair
-  covers only the case where something replaces it. Confirmed against the
-  shipped code; the fix is a third conjunct and it has not been priced.
 - **Probe E is unscored.** 40 items in an unrelated domain, written to settle
   whether fix 2 generalises off the corpus it was tuned on. Until it is scored,
   fix 2's off-corpus behaviour rests on probes C and D.
 
 ## Recorded, not fixed
 
+- **M11 — a concession plus an abandonment is not a pair.** *"Good catch.
+  Dropping the retry wrapper."* scores nothing: `_RECANT` fires, `_ABANDON`
+  fires, and the assistant branch wants `_RECANT` with `_SWITCH` or
+  `_CONTRAST`, neither of which is there. It is a reversal on any reading, and
+  the stop/start pair cannot reach it because nothing replaces the thing.
+
+  Priced rather than argued about — the disjunct was added and every board
+  re-run: probes 23/25/14/14, secondary user side 0/12/2, assistant side 7 of 7
+  with 54 withdrawn, gate dev 1.0000/0.9319, held-out 1.0000/0.7428. **All five
+  identical**, because the construction occurs in neither the 559 real
+  assistant blocks nor either synthetic split.
+
+  Declined on that, and the reasoning is the mirror of F4's. Keeping `_RECANT`
+  vocabulary nobody has observed is cheap because it sits inside a construction
+  this corpus *does* show, seven times. This would be a new construction, and
+  fix 2 itself was bought with 61 adjudicated items. Retaining an unobserved
+  word and adding an unobserved rule are not the same act. One observed instance
+  flips it; the sentence is kept in `derive.py` beside the branch so the next
+  reader argues with it rather than with the abstraction.
 - `_REPAIR` shadows `_PIVOT` on *"scratch that"* — a guard wins over a class
   that would have labelled it.
 - The `over`-complement hole in `_CONTRAST`, declined twice; see
