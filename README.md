@@ -73,8 +73,8 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | The same extractor on text nobody wrote for a benchmark | a census of every distinct human turn in a third-party MIT corpus of real sessions — 140 items, labelled blind by three annotators at 139/140 agreement | **precision 0.0000, recall 0.0000** |
 | …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | 9 of 61 — precision 0.15. After the fix: **52 withdrawn, 7 of the 9 left are reversals**, precision **0.78** |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **836 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **451** negative controls |
+| The suite | on a fresh checkout, no downloads | **846 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **461** negative controls |
 
 The 322 conformance cases replay claude-code-log's MIT fixtures — third-party,
 real-shaped, and not one byte of anybody's own history — through this parser.
@@ -86,7 +86,7 @@ git -C .conformance/claude-code-log checkout 6ad029e   # the pin in docs/DESIGN.
 ```
 
 `.conformance/` is gitignored; `GITMEMORY_CC_FIXTURES` points at the
-`test/test_data` of a clone somewhere else. **The count above says 836 because
+`test/test_data` of a clone somewhere else. **The count above says 846 because
 that is what a fresh checkout collects.** It said 1127 for two epochs, which was
 true only on a machine that had already cloned the corpus — into a scratch
 directory, so the test written to stop this README quoting an unreachable number
