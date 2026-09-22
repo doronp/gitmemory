@@ -371,11 +371,12 @@ def test_truncated_final_line_is_counted(tmp_path):
 # --- Determinism across the whole corpus ----------------------------------
 
 
-# Where the 322 conformance cases come from when nobody says otherwise. This
+# Where 324 of the 328 conformance cases come from when nobody says otherwise
+# — claude-code-log's 162 fixtures, replayed by two parametrised tests. This
 # was `/tmp/gm-e0/...` — a scratch path, the one thing
 # `test_the_design_document_cites_nothing_in_tmp` exists to forbid in the
 # documentation, sitting in the code that documentation describes. It went
-# exactly the way that test predicts: a cleanup removed the clone, 322
+# exactly the way that test predicts: a cleanup removed the clone, the
 # parametrised cases vanished without an error (a parametrisation over an empty
 # list is not one), and the README's headline test count turned out to have been
 # reachable on one machine only. Repo-local and gitignored now; a module

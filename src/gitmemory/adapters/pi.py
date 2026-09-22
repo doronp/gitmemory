@@ -26,10 +26,16 @@ Three things this format does that Claude Code's does not, all load-bearing:
 
   - **A compaction is declared long after the cut it describes.** The entry
     names `firstKeptEntryId` (or, on legacy files, `firstKeptEntryIndex`) and is
-    itself written at the end of the pass: in the shipped fixtures the two
-    compaction records sit 111,630 and 102,084 bytes *after* their own cut
-    points. `Event.byte_offset` therefore stays the offset of the declaring
-    record, as everywhere else, and the resolved cut goes in `meta`.
+    itself written at the end of the pass. In oh-my-pi's
+    `before-compaction.jsonl` the two compaction records sit 111,630 and
+    102,084 bytes *after* their own cut points; in pi's, 111,830 and 102,180 —
+    the same session, differing only in the length of a path. Both numbers come
+    from indexing `firstKeptEntryIndex` into the file's physical line list,
+    which is exactly the mapping `parse` refuses to make (see `first_kept_
+    entry_index` below): fine for sizing the gap, not fine for computing an
+    offset to record. `Event.byte_offset` therefore stays the offset of the
+    declaring record, as everywhere else, and the resolved cut goes in `meta`
+    only when an *id* was there to resolve.
 
 Same two rules as every adapter: unknown fields survive verbatim in `native`,
 and unparseable input is *counted* in `Session.skipped`, never swallowed.
@@ -93,7 +99,15 @@ _TITLE_SLOT = "title"
 # which exists because reading only `message` lost 122 of 133 `system` lines on
 # the MIT corpus. Here it keeps `compaction` and `branch_summary` summaries,
 # which are the densest text in the file.
-_PROSE_KEYS = ("summary", "shortSummary", "data", "text")
+#
+# `content` is here for `custom_message`, which puts its prose at the *top*
+# level next to `customType` and has no `message` key at all
+# (`compaction.test.ts:138-148`, `session-manager-internal-details.test.ts:24`
+# @b52e1f5). Without it that entry is a turn with zero blocks: the text is in
+# `native`, so nothing is lost, but it is not in canonical JSON, not in the
+# index, and not counted in `skipped` either — invisible in the one direction
+# the accounting rule exists to prevent.
+_PROSE_KEYS = ("summary", "shortSummary", "content", "data", "text")
 
 
 def _blocks(content) -> list[tuple[str, str, str | None, dict]]:
@@ -157,19 +171,28 @@ def _message_blocks(message: dict, native_role) -> list[tuple[str, str, str | No
     return blocks
 
 
-def _header_model(obj: dict) -> str | None:
-    """The header's model in the same namespace `model_change` writes.
+def _compose_model(obj: dict) -> str | None:
+    """`provider` + `modelId`/`model` read as the one `"provider/model"` string.
 
-    The header splits it — `provider` plus `modelId` — while a `model_change`
-    entry writes one `"provider/modelId"` string. Two spellings of one value in
-    one field is the bug shape this file keeps tripping over, so the header's is
-    composed into the entry's spelling on the way in.
+    Four kinds of line name a model and they do not agree on how. The session
+    header splits it into `provider` and `modelId`; an assistant message splits
+    it into `provider` and `model`; a `model_usage` entry writes the joined
+    string *and* a redundant `provider`; and a `model_change` does whichever the
+    build was current for — every one of the twelve in the shipped fixtures
+    splits it, while oh-my-pi's own tests write it joined
+    (`sdk-model-selection.test.ts:1218,1331`). Reading only the joined spelling
+    is how `model_change` silently did nothing on all four corpus files.
+
+    Joining here rather than at each site keeps `Turn.model` one namespace. The
+    `startswith` is what stops `model_usage` becoming `anthropic/anthropic/…`.
     """
-    model_id = _get(obj, "modelId")
-    if not isinstance(model_id, str) or not model_id:
+    name = _get(obj, "modelId", "model")
+    if not isinstance(name, str) or not name:
         return None
     provider = obj.get("provider")
-    return f"{provider}/{model_id}" if isinstance(provider, str) and provider else model_id
+    if not isinstance(provider, str) or not provider or name.startswith(provider + "/"):
+        return _bounded_id(name)
+    return _bounded_id(f"{provider}/{name}")
 
 
 def parse(path: str) -> Session:
@@ -216,14 +239,21 @@ def parse(path: str) -> Session:
         if line_type == _HEADER:
             session.session_id = session.session_id or (_bounded_id(obj.get("id")) or "")
             session.cwd = session.cwd or _str_or_none(obj.get("cwd"))
+            # Both spellings: `branchedFrom` was renamed to `parentSession`
+            # (pi CHANGELOG, "`SessionHeader.branchedFrom` →
+            # `SessionHeader.parentSession`"), and both shipped
+            # `before-compaction.jsonl` headers still carry the old one. Reading
+            # only the new name loses the lineage on every pre-rename file,
+            # which is every file anybody already has.
             session.parent_session_id = session.parent_session_id or _bounded_id(
-                obj.get("parentSession")
+                _get(obj, "parentSession", "branchedFrom")
             )
-            model = _header_model(obj) or model
+            model = _compose_model(obj) or model
             # `version` here is the *file format* version (3 at the time of
             # writing), not the agent's — a different namespace from the
             # `version` claude_code reads, so it is not mapped to
-            # `agent_version`. It survives in `native`.
+            # `agent_version`. The header produces no turn, so it is not in
+            # `native` either: what is kept of it is the four fields above.
             bump("skip:session_header")
             continue
         if line_type == _TITLE_SLOT:
@@ -235,7 +265,7 @@ def parse(path: str) -> Session:
             offset_of.setdefault(entry_id, rec.offset)
 
         if line_type == "model_change":
-            model = _bounded_id(obj.get("model")) or model
+            model = _compose_model(obj) or model
 
         raw_message = obj.get("message")
         message: dict = raw_message if isinstance(raw_message, dict) else {}
@@ -291,7 +321,18 @@ def parse(path: str) -> Session:
             role=role,
             byte_offset=rec.offset,
             byte_len=rec.length,
-            model=(_bounded_id(obj.get("model")) if line_type == "model_usage" else turn_model),
+            # An assistant message states the model that answered it, and that
+            # beats whatever the carry-forward believes: `large-session.jsonl`
+            # has one aborted `openai/gpt-5.1-codex` call among 452 anthropic
+            # ones, and the header alone labels it anthropic. It is read per
+            # turn and does *not* clobber `model` for the lines after it —
+            # upstream's precedence rule is about which model is selected next,
+            # a different question from which model wrote this turn.
+            model=(
+                _compose_model(obj)
+                if line_type == "model_usage"
+                else _compose_model(message) or turn_model
+            ),
             ts=_bounded_id(obj.get("timestamp")),
             uuid=entry_id,
             parent_uuid=_bounded_id(obj.get("parentId")),
@@ -374,7 +415,8 @@ def find_session(session_id: str, projects_root: str) -> str | None:
     esc = _glob.escape(session_id)
     hits: set[str] = set()
     for name in (f"{esc}.jsonl", f"*_{esc}.jsonl"):
-        hits |= set(_glob.glob(os.path.join(base, "*", name)))
+        # Two *filename* shapes, one depth pattern. `**` matches zero or more
+        # directories, so this already covers `base/*/name`. [pair review]
         hits |= set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
     inside = [h for h in hits if os.path.realpath(h).startswith(root + os.sep)]
     if not inside:

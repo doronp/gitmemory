@@ -673,8 +673,12 @@ def find_session(session_id: str, projects_root: str) -> str | None:
     root = os.path.realpath(projects_root)
     name = _glob.escape(session_id) + ".jsonl"
     base = _glob.escape(root)
-    hits = set(_glob.glob(os.path.join(base, "*", name)))
-    hits |= set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
+    # One pattern, not two: `**` matches *zero* or more directories, so
+    # `base/*/**/name` already returns everything `base/*/name` does —
+    # symlinked project directories included, since `*` and `**` treat those
+    # the same way. The second glob was a second full traversal for a strictly
+    # smaller set. [pair review]
+    hits = set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
     inside = [h for h in hits if os.path.realpath(h).startswith(root + os.sep)]
     if not inside:
         return None

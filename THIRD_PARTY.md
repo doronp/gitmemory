@@ -79,7 +79,7 @@ code, not merely the copyright line.** Verbatim upstream texts:
   carries its author's home directory in a `cwd` field, and this repository
   does not carry anybody's absolute paths, its own owner's least of all.
 
-### oh-my-pi — MIT, Copyright (c) 2025 Mario Zechner and (c) 2025-2026 Can Bölük
+### oh-my-pi — MIT, Copyright (c) 2025 Mario Zechner, (c) 2025-2026 Can Bölük, (c) 2026 Stencil Labs, Inc.
 <https://github.com/can1357/oh-my-pi>
 
 - A fork of pi writing the same JSONL dialect, which is why one adapter reads

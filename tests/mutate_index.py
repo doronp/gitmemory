@@ -4362,7 +4362,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "19 mutants",
+        "a full pass is 5" + "28 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4782,6 +4782,78 @@ MUTANTS = [
         "            if chars_ranked > MAX_CHARS:",
         "test_a_block_with_no_ascii_words_is_capped_by_characters",
     ),
+    # --- the pi / oh-my-pi adapter. Shipped with 22 rows on claude_code.py and
+    # none on this one, which is the state the reference adapter's own review
+    # called "a guard whose removal changes no answer is pinned by nothing".
+    # The first four are the bugs the pair review found; the last five are the
+    # guards that were there and unpinned. [pi pair review]
+    (
+        "the model is read only in the spelling half the writers use",
+        "src/gitmemory/adapters/pi.py",
+        '    name = _get(obj, "modelId", "model")',
+        '    name = obj.get("model")',
+        "test_the_model_carries_forward_in_byte_order",
+    ),
+    (
+        "an assistant message does not get to say which model answered it",
+        "src/gitmemory/adapters/pi.py",
+        "                else _compose_model(message) or turn_model",
+        "                else turn_model",
+        "test_an_assistant_message_states_the_model_that_answered_it",
+    ),
+    (
+        "a custom_message loses its prose to `native` and is counted nowhere",
+        "src/gitmemory/adapters/pi.py",
+        '_PROSE_KEYS = ("summary", "shortSummary", "content", "data", "text")',
+        '_PROSE_KEYS = ("summary", "shortSummary", "data", "text")',
+        "test_a_custom_message_keeps_its_prose",
+    ),
+    (
+        "the lineage field is read under the name it was renamed to, only",
+        "src/gitmemory/adapters/pi.py",
+        '                _get(obj, "parentSession", "branchedFrom")',
+        '                obj.get("parentSession")',
+        "test_the_pre_rename_lineage_field_is_still_read",
+    ),
+    (
+        "the session header's id joins the entry-id namespace",
+        "src/gitmemory/adapters/pi.py",
+        '            bump("skip:session_header")',
+        '            offset_of.setdefault(obj.get("id"), rec.offset)\n'
+        '            bump("skip:session_header")',
+        "test_the_header_id_is_not_an_entry_id",
+    ),
+    (
+        "the untrusted session id goes into the glob uncharset-checked",
+        "src/gitmemory/adapters/pi.py",
+        '    if not _SESSION_ID_RE.match(session_id or ""):',
+        "    if False:",
+        "test_find_session_refuses_a_hostile_id",
+    ),
+    (
+        "a hit is returned without confirming it resolves inside the root",
+        "src/gitmemory/adapters/pi.py",
+        "    inside = [h for h in hits if os.path.realpath(h).startswith(root + os.sep)]",
+        "    inside = list(hits)",
+        "test_find_session_ignores_a_symlink_pointing_out_of_the_root",
+    ),
+    (
+        "equal mtimes are broken by whatever the set yields first",
+        "src/gitmemory/adapters/pi.py",
+        "            return (os.path.getmtime(p), p)",
+        "            return (os.path.getmtime(p),)",
+        "test_find_session_breaks_mtime_ties_deterministically",
+    ),
+    (
+        # The one the module docstring warns about in prose and nothing held:
+        # the roles are camelCase, so a casefold turns every one of them into an
+        # unknown and demotes half the transcript to `system`.
+        "the role lookup casefolds, so every camelCase role becomes unknown",
+        "src/gitmemory/adapters/pi.py",
+        "        role = _ROLES.get(native_role) if isinstance(native_role, str) else None",
+        "        role = _ROLES.get(native_role.lower()) if isinstance(native_role, str) else None",
+        "test_a_tool_result_is_not_indexed_as_prose",
+    ),
 ]
 
 
@@ -4897,7 +4969,7 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 519 mutants x two suite runs, which
+    The filter exists because a full pass is 528 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
     to mean either waiting for the other 501 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in

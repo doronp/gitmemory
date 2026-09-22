@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import subprocess
+import sys
 
 import pytest
 from conformance import check_adapter
@@ -216,19 +218,60 @@ def test_the_header_and_the_title_slot_are_named_skips(tmp_path):
 
 
 def test_the_header_id_is_not_an_entry_id(tmp_path):
-    """Two namespaces in one field name. Folding them makes the header collide."""
-    path = write(tmp_path, "s.jsonl", [header(id="e1"), msg("user", "hi", entry_id="e1")])
+    """Two namespaces in one field name. Folding them makes the header collide.
+
+    The collision is only observable through a compaction that cuts at the
+    shared id: fold the two and `first_kept_byte_offset` resolves to byte 0,
+    the header, instead of to the message the cut actually names. Without that
+    compaction the test passed whether or not the header entered `offset_of`,
+    which is the whole defect it is named after. [pair review, Gemini]
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(id="e1"),
+            msg("user", "hi", entry_id="e1"),
+            {
+                "type": "compaction",
+                "id": "c1",
+                "parentId": "e1",
+                "timestamp": "t",
+                "summary": "s",
+                "firstKeptEntryId": "e1",
+            },
+        ],
+    )
     session = check_adapter(pi, path)
     assert session.session_id == "e1"
-    (turn,) = session.turns
-    assert turn.uuid == "e1"
+    assert session.turns[0].uuid == "e1"
+    (event,) = session.events
+    assert event.meta["first_kept_byte_offset"] == session.turns[0].byte_offset
+    assert event.meta["first_kept_byte_offset"] != 0
+
+
+def test_the_pre_rename_lineage_field_is_still_read(tmp_path):
+    """`SessionHeader.branchedFrom` became `parentSession` (pi CHANGELOG).
+
+    Both shipped `before-compaction.jsonl` headers carry the old name, so
+    reading only the new one loses the lineage on every file written before the
+    rename — which is every file anybody already has.
+    """
+    old = write(tmp_path, "old.jsonl", [header(branchedFrom="/w/prev.jsonl"), msg("user", "hi")])
+    new = write(tmp_path, "new.jsonl", [header(parentSession="/w/prev.jsonl"), msg("user", "hi")])
+    assert check_adapter(pi, old).parent_session_id == "/w/prev.jsonl"
+    assert check_adapter(pi, new).parent_session_id == "/w/prev.jsonl"
 
 
 def test_the_model_carries_forward_in_byte_order(tmp_path):
-    """The header splits provider/modelId; `model_change` writes one string.
+    """Four kinds of line name a model and they disagree on how to spell it.
 
-    Without the carry-forward every turn has `model=None` and nothing can tell
-    which model produced which answer.
+    The header splits it into `provider` + `modelId`; a `model_change` writes
+    one joined string on a current build and the split pair on every one of the
+    twelve in the shipped fixtures; an assistant message splits it as `provider`
+    + `model`. Reading only the joined spelling made `model_change` a no-op on
+    all four corpus files — with nothing red, because the carry-forward from the
+    header still produced a plausible answer.
     """
     path = write(
         tmp_path,
@@ -236,22 +279,87 @@ def test_the_model_carries_forward_in_byte_order(tmp_path):
         [
             header(),
             msg("assistant", "a"),
-            {
+            {  # the spelling every fixture uses
                 "type": "model_change",
                 "id": "m1",
                 "parentId": None,
                 "timestamp": "t",
+                "provider": "anthropic",
+                "modelId": "claude-sonnet-4-5",
+            },
+            msg("assistant", "b"),
+            {  # the spelling oh-my-pi's own tests write
+                "type": "model_change",
+                "id": "m2",
+                "parentId": "m1",
+                "timestamp": "t",
                 "model": "openai/gpt-5",
             },
+            msg("user", "c"),
+        ],
+    )
+    session = check_adapter(pi, path)
+    # Five turns, not three: a v3 `model_change` carries an id, so it is a node
+    # of the DAG and gets the model it just switched to.
+    assert [t.model for t in session.turns] == [
+        "anthropic/claude-opus-4-5",
+        "anthropic/claude-sonnet-4-5",
+        "anthropic/claude-sonnet-4-5",
+        "openai/gpt-5",
+        "openai/gpt-5",
+    ]
+
+
+def test_an_assistant_message_states_the_model_that_answered_it(tmp_path):
+    """And it beats the carry-forward, for that turn and not for the next one.
+
+    `large-session.jsonl` has one aborted `openai/gpt-5.1-codex` call among 452
+    anthropic ones. Reading the header alone labels it anthropic; letting it
+    clobber the carry-forward labels the other 451 after it openai. Both are
+    wrong in the column `index.py` writes as `turns.model`.
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(),
+            msg("assistant", "a", provider="openai", model="gpt-5.1-codex"),
             msg("assistant", "b"),
         ],
     )
     session = check_adapter(pi, path)
     assert [t.model for t in session.turns] == [
+        "openai/gpt-5.1-codex",
         "anthropic/claude-opus-4-5",
-        "openai/gpt-5",
-        "openai/gpt-5",
     ]
+
+
+def test_a_custom_message_keeps_its_prose(tmp_path):
+    """`custom_message` puts `content` at the top level and has no `message`.
+
+    Zero blocks is the one loss the accounting rule cannot see: the text is in
+    `native`, so `skipped` stays empty and the turn count is right, while the
+    prose is absent from canonical JSON and from the index.
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(version=3),
+            {
+                "type": "custom_message",
+                "id": "cm1",
+                "parentId": None,
+                "timestamp": "t",
+                "customType": "skill-prompt",
+                "content": "read the deploy runbook",
+                "display": True,
+            },
+        ],
+    )
+    session = check_adapter(pi, path)
+    (turn,) = session.turns
+    assert [(b.kind, b.text) for b in turn.blocks] == [("text", "read the deploy runbook")]
 
 
 def test_a_branch_summary_is_a_fork(tmp_path):
@@ -346,10 +454,107 @@ def test_find_session_matches_the_timestamp_prefixed_name(tmp_path):
     assert pi.find_session("s1", str(root)) == str(hit)
 
 
-def test_find_session_refuses_a_traversal_id(tmp_path):
-    assert pi.find_session("../../etc/passwd", str(tmp_path)) is None
-    assert pi.find_session("*", str(tmp_path)) is None
-    assert pi.find_session("", str(tmp_path)) is None
+@pytest.mark.parametrize(
+    "hostile",
+    [
+        "../../../../etc/passwd",
+        "..",
+        "../secrets",
+        "*",
+        "?",
+        "[a-z]*",
+        "**/id_rsa",
+        "a/../../b",
+        "",
+        ".hidden",
+        "x" * 200,
+    ],
+)
+def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
+    """The id arrives in a hook payload and is interpolated into a glob.
+
+    Every hostile id gets a file it *would* resolve to, in both filename shapes
+    this adapter globs. The version before this planted nothing, so `is None`
+    held because the directory was empty — deleting `_SESSION_ID_RE` and the
+    containment filter outright left all three assertions green. That is the
+    same vacuity `test_claude_code.py::test_find_session_refuses_a_hostile_id`
+    documents having been found and fixed once already; copying the shape of
+    the test and not the reason it exists reintroduced it.
+    """
+    sessions = tmp_path / "sessions"
+    root = sessions / "--w--"
+    root.mkdir(parents=True)
+    (root / "real.jsonl").write_text("")
+    # A dotfile the glob matches the moment the leading-alphanumeric rule goes,
+    # and an over-length name the {0,127} bound is the only thing refusing.
+    # Both are inside the root, so containment passes them either way.
+    for stem in (".hidden", "x" * 200):
+        (root / f"{stem}.jsonl").write_text("")
+        (root / f"2026-01-01T00-00-00-000Z_{stem}.jsonl").write_text("")
+    # `sessions/*/../secrets.jsonl` realpaths back inside the root, so traversal
+    # is not caught by containment either — only by the charset.
+    (sessions / "secrets.jsonl").write_text("")
+    (tmp_path / "secrets.jsonl").write_text("")
+
+    found = pi.find_session(hostile, str(sessions))
+    assert found is None, f"escaped or widened the search: {found}"
+
+
+def test_find_session_ignores_a_symlink_pointing_out_of_the_root(tmp_path):
+    """A resume-rewrite leaves duplicates; a symlink leaves someone else's file.
+
+    The containment filter is the only thing between a planted link and this
+    machine's own history, which is the one thing this project must never read.
+    """
+    root = tmp_path / "sessions" / "--w--"
+    root.mkdir(parents=True)
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "s1.jsonl").write_text("")
+    (root / "s1.jsonl").symlink_to(outside / "s1.jsonl")
+    assert pi.find_session("s1", str(tmp_path / "sessions")) is None
+
+
+_TIE_SCRIPT = """
+import sys
+sys.path.insert(0, %r)
+from gitmemory.adapters import pi
+print(pi.find_session("s1", sys.argv[1]) or "")
+"""
+
+
+def test_find_session_breaks_mtime_ties_deterministically(tmp_path):
+    """`max` over a set of equal mtimes returns whichever the set yielded first.
+
+    Run in fresh interpreters: within one process set iteration order is a
+    constant, so looping proves nothing. With equal mtimes `max` falls through
+    to the path, so the lexicographically largest wins — spelled out rather
+    than only checked for agreement, because six runs that agree on the wrong
+    file are still six runs that agree.
+    """
+    root = tmp_path / "sessions"
+    for proj in ("--a--", "--b--", "--c--"):
+        d = root / proj
+        d.mkdir(parents=True)
+        f = d / "2026-01-01T00-00-00-000Z_s1.jsonl"
+        f.write_text("")
+        os.utime(f, (1000, 1000))  # identical mtimes: the tie-break is all there is
+
+    src = str(pathlib.Path(__file__).resolve().parent.parent / "src")
+    answers = {
+        subprocess.run(
+            [sys.executable, "-c", _TIE_SCRIPT % src, str(root)],
+            capture_output=True,
+            text=True,
+            env=dict(os.environ, PYTHONHASHSEED=seed),
+            check=True,
+        ).stdout.strip()
+        for seed in ("0", "1", "2", "7", "12345", "random")
+    }
+    expected = str(root / "--c--" / "2026-01-01T00-00-00-000Z_s1.jsonl")
+    assert answers == {expected}, (
+        f"the same input gave different answers across interpreters: {answers}"
+    )
 
 
 # --- The third-party corpus ------------------------------------------------
