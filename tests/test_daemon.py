@@ -12,6 +12,7 @@ import json
 import os
 import shutil
 import time
+from pathlib import Path
 
 import pytest
 
@@ -1790,3 +1791,82 @@ def test_an_adoption_only_pass_names_what_it_reclaimed(tmp_path):
     ], first
     assert not any("captured" in line for line in first), "this pass copies nothing out"
     assert not any("adopted" in line for line in after), after
+
+
+# --- E7 fs-F10: the window between discover and the read ---------------------
+
+
+def test_a_link_planted_after_discover_does_not_reach_the_store(tmp_path):
+    """The attack shape, at the two call sites `tick` performs in this order.
+
+    `discover` resolves and bounds-checks every path it returns; `capture_one`
+    then reads it. Between those, the name can change. Reproduced before
+    fixing: the deterministic swap below stored the key every time, and 400
+    ordinary `tick` calls against an uncooperative thread flipping the name
+    stored it 7 times — as attested segments that `verify` called clean.
+
+    The regression this pins is not only the missing `O_NOFOLLOW`. The first
+    fix also put a `realpath` in `store.capture`, which re-resolved the link a
+    moment before the open that was meant to refuse it; the deterministic arm
+    still leaked, and so did 3 of 400 ticks. A path resolved twice is a path
+    resolved at the wrong time. [E7 fs-F10]
+    """
+    home, root = str(tmp_path / "h"), tmp_path / "proj"
+    secret = tmp_path / "private" / "id_rsa"
+    os.makedirs(secret.parent, mode=0o700)
+    secret.write_text("-----BEGIN PRIVATE KEY-----\nsk-live-AAAABBBBCCCC\n")
+    src = _write(root / "a.jsonl", TURN)
+    _config(home, [str(root)])
+    watches = daemon.load_watches(home)
+
+    found = daemon.discover(watches)
+    assert [p for _, p in found] == [os.path.realpath(src)]
+
+    os.unlink(src)
+    os.symlink(str(secret), src)  # the window
+
+    for watch, path in found:
+        with pytest.raises(RuntimeError, match="is a symlink"):
+            daemon.capture_one(home, path, watch.agent)
+
+    held = b"".join(
+        Path(r, f).read_bytes()
+        for r, _, fs in os.walk(os.path.join(home, "raw"))
+        for f in fs
+    )
+    assert b"sk-live" not in held
+
+
+def test_the_session_recovers_once_the_real_transcript_is_back(tmp_path):
+    """The other direction: a refusal is a skipped pass, not a broken session.
+
+    The raise is new and it comes from a place nothing raised from before —
+    inside the read, after the session lock is taken and after `_adopt_orphans`
+    has already moved files. If it left the lock held, a stray `.incoming`
+    behind, or a half-written generation, the watcher would be stuck on that
+    session for good and the next pass would say so. [E7 fs-F10]
+    """
+    home, root = str(tmp_path / "h"), tmp_path / "proj"
+    secret = _write(tmp_path / "private" / "id_rsa", "sk-live-AAAABBBBCCCC\n")
+    src = _write(root / "a.jsonl", TURN)
+    _config(home, [str(root)])
+    watches = daemon.load_watches(home)
+    daemon.tick(home, watches, interval=0)
+
+    real = os.path.realpath(src)
+    os.unlink(src)
+    os.symlink(secret, src)
+    # Two defences, two windows: a link that is already there when the sweep
+    # runs never reaches `capture_one` at all, because `discover` resolves it
+    # and `_covers` sees it leave the root. The refusal below is for the link
+    # that arrives after that check has passed.
+    assert daemon.discover(watches) == []
+    with pytest.raises(RuntimeError, match="is a symlink"):
+        daemon.capture_one(home, real, "claude-code")
+
+    os.unlink(src)
+    _write(root / "a.jsonl", TURN * 2)
+
+    assert daemon.tick(home, watches, interval=0).captured
+    assert store.verify(home) == []
+    assert not list(tmp_path.glob("h/raw/**/.incoming*"))

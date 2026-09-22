@@ -46,6 +46,14 @@ A root is skipped, loudly, when it:
   time.
 - **is `/`.** Walking the filesystem every five seconds is never the intent.
 
+A *transcript* — as opposed to a root — is refused when it is a symlink, and
+that applies to `gitmemory capture <path>` too: pass the path the link resolves
+to. The sweep resolves every file it finds and drops the ones that resolve
+outside their root, so under ordinary operation this refusal never fires. It is
+there for the link that appears *after* that check and before the read, which
+would otherwise copy a file from outside the watch root into the store as an
+attested segment. [E7 fs-F10]
+
 An `agent` with no adapter is *not* refused. You get a warning naming the
 adapters that exist, and the watch runs anyway: an adapter supplies compaction
 boundaries, while discovery and byte-copying need none. Capturing the bytes

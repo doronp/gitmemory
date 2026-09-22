@@ -3608,6 +3608,38 @@ MUTANTS = [
         "    _mkdir(home)\n    os.chmod(os.path.dirname(home), 0o700)",
         "test_a_home_whose_parents_already_exist_is_left_as_the_user_had_it",
     ),
+    # --- E7 fs-F10 ---
+    (
+        "the capture reads the transcript through whatever the name points at",
+        "store.py",
+        "        fd = os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW)",
+        "        fd = os.open(source_path, os.O_RDONLY)",
+        "test_a_transcript_swapped_for_a_symlink_is_not_captured",
+    ),
+    (
+        # The mistake the first fix made, kept as a control because it is the
+        # one a later refactor would make again: resolving the path here looks
+        # like hardening and re-resolves the attacker's link a moment before
+        # the open that refuses it. Measured at 3 of 400 ticks.
+        "the path is resolved again just before it is read",
+        "store.py",
+        "    with _locked(home, agent, session_id):\n"
+        "        return _capture(home, source_path, agent, session_id, boundaries)",
+        "    source_path = os.path.realpath(source_path)\n"
+        "    with _locked(home, agent, session_id):\n"
+        "        return _capture(home, source_path, agent, session_id, boundaries)",
+        "test_a_link_planted_after_discover_does_not_reach_the_store",
+    ),
+    (
+        # The over-disclosure direction.
+        "the refusal prints the path the link points at",
+        "store.py",
+        '                f"{source_path} is a symlink; capture reads a file, not a name "\n'
+        '                f"for one \u2014 pass the path it resolves to"',
+        '                f"{source_path} is a symlink; pass "\n'
+        '                f"{os.path.realpath(source_path)} instead"',
+        "test_the_refusal_does_not_print_the_path_the_link_points_at",
+    ),
 ]
 
 

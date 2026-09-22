@@ -41,6 +41,7 @@ import threading
 import time
 from dataclasses import dataclass
 from glob import glob
+from typing import IO
 
 from .records import canonical_json
 
@@ -747,8 +748,58 @@ def capture(
     home = resolve_home(home)
     agent = _safe(agent, "agent")
     session_id = _safe(session_id, "session_id")
+    # No `realpath` here, deliberately: the first version of the fs-F10 fix put
+    # one on this line, and it re-resolved the attacker's link a moment before
+    # the read that was supposed to refuse it — the repro still leaked, 3 of 400
+    # ticks. Resolution belongs where the path is *validated* (`daemon.discover`)
+    # and must not happen again afterwards. [E7 fs-F10]
     with _locked(home, agent, session_id):
         return _capture(home, source_path, agent, session_id, boundaries)
+
+
+def _open_source(source_path: str) -> IO[bytes]:
+    """Open the transcript for reading. A transcript is a file, not a name for one.
+
+    `daemon.discover` resolves every path it hands down and drops anything that
+    resolves outside its watch root, so a symlink here is a link that appeared
+    *after* that check — the TOCTOU window between `discover` and this read.
+    Measured before fixing: a thread flipping the transcript to a symlink landed
+    a private key from outside the watch root into the store as an attested
+    segment on 7 of 400 ordinary `tick` calls, and deterministically when
+    swapped between the two steps `tick` already performs in that order. The
+    segment verified clean, because it was: the store faithfully recorded bytes
+    it should never have been shown. [E7 fs-F10]
+
+    The refusal is unconditional rather than a flag the daemon sets, because
+    the first attempt at this *was* conditional — a `realpath` in `capture` so
+    that naming a link on the command line kept working — and it re-resolved
+    the attacker's link a moment before this open, leaking on 3 of 400 ticks.
+    A path resolved twice is a path resolved at the wrong time. So
+    `gitmemory capture <link>` now refuses too, and says to name the target;
+    it was always a half-truth anyway, since the manifest records the realpath.
+
+    `O_NOFOLLOW` guards the final component only. Swapping an intermediate
+    *directory* needs write access to a parent of the watch root, and there the
+    glob's own `_covers` check — realpath against the resolved root — is what
+    refuses the climb.
+
+    ponytail: no `openat` walk. The demonstrated attack is the leaf, the leaf
+    is closed, and a full fd-relative descent is the upgrade if a watch root
+    ever lives somewhere a stranger can rename directories.
+    """
+    try:
+        fd = os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        if os.path.islink(source_path):
+            raise RuntimeError(
+                # The target is deliberately not named. For the command-line
+                # case the user can see it; for the attack case, "pass
+                # /home/…/id_rsa instead" is the wrong advice to print.
+                f"{source_path} is a symlink; capture reads a file, not a name "
+                f"for one — pass the path it resolves to"
+            ) from None
+        raise
+    return os.fdopen(fd, "rb")
 
 
 def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting hides the ordering
@@ -767,7 +818,7 @@ def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting
     carried: list[int] = []
     carried_adopted: list[str] = []
 
-    with open(source_path, "rb") as fh:
+    with _open_source(source_path) as fh:
         if prior:
             prev_gen, prev_path = prior[-1]
             with open(prev_path, "rb") as pf:

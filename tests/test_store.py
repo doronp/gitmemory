@@ -9,7 +9,6 @@ single time. A test that only checks the happy path would pass against a
 
 from __future__ import annotations
 
-import builtins
 import contextlib
 import fcntl
 import hashlib
@@ -367,14 +366,15 @@ def test_source_shrinking_mid_read_abandons_the_capture(home, src, monkeypatch):
         def __exit__(self, *exc):
             return self._fh.__exit__(*exc)
 
-    real_open = builtins.open
+    # Patched at `_open_source`, not at `store.open`: the capture used to read
+    # the transcript through the builtin, and fs-F10 moved it to an `os.open`
+    # with `O_NOFOLLOW` behind that helper. The old patch went on missing
+    # silently — the shrink never happened and the test passed by not raising.
+    real = store._open_source
     monkeypatch.setattr(
         store,
-        "open",
-        lambda p, m="r", **kw: (
-            Shrinking(real_open(p, m, **kw)) if p == src else real_open(p, m, **kw)
-        ),
-        raising=False,
+        "_open_source",
+        lambda p: Shrinking(real(p)) if p == src else real(p),
     )
 
     with pytest.raises(RuntimeError, match="shrank"):
@@ -2858,3 +2858,54 @@ def test_a_dangling_symlink_is_not_excused_by_being_deep(tmp_path):
         "raw/claude-code/sess/dangling: no manifest speaks for these bytes"
     ]
 
+
+
+# --- E7 fs-F10: a transcript is a file, not a name for one -------------------
+
+
+def test_a_transcript_swapped_for_a_symlink_is_not_captured(tmp_path):
+    """The bytes a capture stores must be the bytes at the path it was given.
+
+    Reproduced before fixing, at the daemon's own call sites: swapping the
+    transcript for a link between `discover` and `capture_one` — the two steps
+    `tick` already performs in that order — put a private key from outside the
+    watch root into the store as an attested segment, and `verify` called it
+    clean. [E7 fs-F10]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    secret = tmp_path / "id_rsa"
+    secret.write_text("-----BEGIN PRIVATE KEY-----\nsk-live-AAAABBBBCCCC\n")
+
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)  # the ordinary case still works
+    os.unlink(src)
+    os.symlink(str(secret), src)
+
+    with pytest.raises(RuntimeError, match="is a symlink"):
+        store.capture(src, "claude-code", "sess", home=home)
+
+    held = b"".join(
+        Path(r, f).read_bytes() for r, _, fs in os.walk(Path(home, "raw")) for f in fs
+    )
+    assert b"sk-live" not in held
+    assert store.verify(home) == []
+
+
+def test_the_refusal_does_not_print_the_path_the_link_points_at(tmp_path):
+    """The over-disclosure direction, and the reason the message is worded as it is.
+
+    An earlier draft said `pass <realpath> instead`, which is useful advice for
+    a user who symlinked their own transcript and exactly the wrong advice when
+    the link was planted — the store would print the attacker's chosen target
+    as the thing to capture next. [E7 fs-F10]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    secret = tmp_path / "id_rsa"
+    secret.write_text("x")
+    os.symlink(str(secret), src)
+
+    with pytest.raises(RuntimeError) as exc:
+        store.capture(src, "claude-code", "sess", home=home)
+    assert "id_rsa" not in str(exc.value)
