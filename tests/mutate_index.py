@@ -413,8 +413,8 @@ MUTANTS = [
     (
         "a run of horizontal whitespace stops collapsing",
         "derive.py",
-        '    return _HSPACE.sub(" ", _LINE_MARKUP.sub("", _INVISIBLE.sub("", text)))',
-        '    return _LINE_MARKUP.sub("", _INVISIBLE.sub("", text))',
+        '_HSPACE.sub(" ", _LINE_MARKUP.sub("", _INVISIBLE.sub("", text)))',
+        '_LINE_MARKUP.sub("", _INVISIBLE.sub("", text))',
         "test_a_directive_typed_with_extra_spaces_is_still_a_directive",
     ),
     (
@@ -481,6 +481,27 @@ MUTANTS = [
         "|\\d{1,3}[.)]|",
         "|(?!x)x|",
         "test_the_verdict_does_not_depend_on_the_formatting_layer",
+    ),
+    # The third thing in front of the words, found by asking the same question
+    # about cost rather than about meaning: `_BACKREF` opens on `\n`, so a run
+    # of blank lines is a run of start positions and the scan is quadratic in
+    # the run. 10,000 newlines took 17.3 s. The rows are a deletion and a
+    # narrowing, because the pattern has to reach the run a Windows client
+    # sends as well. [E5 fix7 review, own finding]
+    (
+        "a run of blank lines stops being collapsed",
+        "derive.py",
+        '_BLANK_RUN.sub("\\n\\n", _HSPACE.sub(" ", '
+        '_LINE_MARKUP.sub("", _INVISIBLE.sub("", text))))',
+        '_HSPACE.sub(" ", _LINE_MARKUP.sub("", _INVISIBLE.sub("", text)))',
+        "test_a_run_of_blank_lines_does_not_make_the_scan_quadratic",
+    ),
+    (
+        "the blank-line run stops covering a carriage return",
+        "derive.py",
+        '(?:\\n[^\\S\\n]*){2,}\\n',
+        '\\n{3,}',
+        "test_a_run_of_blank_lines_does_not_make_the_scan_quadratic",
     ),
     # Two latent repairs out of the fix-7 standalone review, each free on every
     # board and each recovering a real verdict nobody had typed yet. The rows
@@ -4324,7 +4345,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "00 mutants",
+        "a full pass is 5" + "02 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4708,9 +4729,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 500 mutants x two suite runs, which
+    The filter exists because a full pass is 502 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 499 or trusting the new one untested.
+    to mean either waiting for the other 501 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

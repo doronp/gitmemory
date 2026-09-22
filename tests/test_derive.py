@@ -3148,3 +3148,38 @@ def test_a_bullet_does_not_turn_a_restatement_back_into_a_rule(home, src):
     # And the marker on an inner line, which is what `re.M` is for: a heading
     # followed by the rule is how a person writes a list of them.
     assert _user_says(home, src, "Ground rules\n\n- Never commit to main.") == ["directive"]
+
+
+def test_a_run_of_blank_lines_does_not_make_the_scan_quadratic():
+    """`_BACKREF` opens on `\\n`, so a run of them is a run of start positions.
+
+    Every newline in the run is a place the whole alternation behind the opener
+    is tried from, and the scan goes quadratic in the length of the *run* — not
+    of the block. Measured before the fix: 2,000 consecutive newlines 0.71 s,
+    10,000 newlines 17.3 s. Ten kilobytes.
+
+    Pasted output is not the shape that does it: 2,000 log lines with a blank
+    line between each pair is 25 KB and 12 ms, because the runs in it are two
+    long. A trailing wall of blank lines at the end of a paste is, and nothing
+    stops a block being one.
+
+    `_flatten` collapses the run to the one blank line `_PARAGRAPH` reads, which
+    is the only length anything here can tell apart, so no split and no verdict
+    moves — the four assertions below are that claim, and the two after them are
+    the fix, on the two line endings.
+
+    0.5 s, not 5: the whole call is under a millisecond now and 17 s is what it
+    was, so a bound that only fails once the blow-up is catastrophic again would
+    not be a bound. This fails at 40x the current cost and long before a user
+    would notice. [E5 fix7 review, own finding]
+    """
+    assert derive._flatten("a\n\nb") == "a\n\nb"
+    assert derive._flatten("a\n\n\n\n\nb") == "a\n\nb"
+    assert derive._flatten("a\nb") == "a\nb"
+    assert derive._PARAGRAPH.split(derive._flatten("a\n\n\n\n\nb")) == ["a", "b"]
+
+    for label, text in (("lf", "\n" * 10_000), ("crlf", "\r\n" * 10_000)):
+        started = time.monotonic()
+        assert derive._decision_kind(text, "user") is None
+        elapsed = time.monotonic() - started
+        assert elapsed < 0.5, f"{label}: the blank-line run went quadratic again: {elapsed:.2f}s"

@@ -1402,6 +1402,26 @@ _INVISIBLE = re.compile(r"[\xad\u180e\u200b-\u200f\u2060\ufeff]")
 # expects the cue immediately after it.
 _LINE_MARKUP = re.compile(r"^[ \t]*(?:[-*+>#|]+|\d{1,3}[.)]|[\"'“‘])[ \t]*", re.M)
 
+# A run of blank lines is one blank line. Not a tidiness rule: `_BACKREF` opens
+# on `\n`, so every newline in a run is a start position for the whole
+# alternation behind it and the scan is quadratic in the length of the run.
+# Measured on this module: 2,000 consecutive newlines took 0.71 s and 10,000
+# took 17.3 s, which is 2 KB and 10 KB of input. Realistic pasted output is
+# unaffected — 2,000 log lines with a blank line between each pair is 12 ms —
+# because the runs in it are two long, and it is the run and not the file that
+# is squared.
+#
+# Two is what the rest of the module can tell apart: `_PARAGRAPH` looks for one
+# blank line between two paragraphs and nothing anywhere reads a longer gap, so
+# collapsing to two changes no split and no verdict. Bounding `_BACKREF` itself
+# would be the other repair and it is the wrong one — the opener is correct,
+# the input is what is pathological.
+#
+# The blank line keeps its horizontal space because `_HSPACE` has already run
+# and turned every `\r` into one, so `\n{3,}` would miss a CRLF run and leave
+# exactly the input a Windows client sends. [E5 fix7 review, own finding]
+_BLANK_RUN = re.compile(r"(?:\n[^\S\n]*){2,}\n")
+
 
 def _flatten(text: str) -> str:
     """`text` as the rules assume it was typed: no formatting layer, one space.
@@ -1455,7 +1475,7 @@ def _flatten(text: str) -> str:
     the class. Zero of those 140 blocks *begin* with a marker, so the census is
     evidence about the inner lines and silent about the leading one.
     """
-    return _HSPACE.sub(" ", _LINE_MARKUP.sub("", _INVISIBLE.sub("", text)))
+    return _BLANK_RUN.sub("\n\n", _HSPACE.sub(" ", _LINE_MARKUP.sub("", _INVISIBLE.sub("", text))))
 
 
 def _decision_kind(text: str, role: str) -> str | None:
