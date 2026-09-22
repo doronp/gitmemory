@@ -128,23 +128,32 @@ the same way on every iteration as a control:
 
 | Metric | Shim | Spawning `true` |
 |---|---|---|
-| p50 | 7.43 ms | 1.86 ms |
-| p95 | 9.06 ms | 2.32 ms |
-| p99 | 10.48 ms | 2.68 ms |
-| max | 37.18 ms | 3.41 ms |
+| p50 | 7.42 – 7.53 ms | 1.84 – 1.89 ms |
+| p95 | 8.88 – 9.82 ms | 2.38 – 2.55 ms |
+| p99 | 10.24 – 11.50 ms | 2.80 – 3.09 ms |
+| worst seen | 14.14 ms | 3.78 ms |
 
-400 iterations on Darwin 25.6.0, arm64 (Apple M4 Pro), under `/bin/sh` — here
-bash 3.2.57 in posix mode — against a 58.9 KB `PreCompact` payload.
+Three runs of 400 iterations on Darwin 25.6.0, arm64 (Apple M4 Pro), under
+`/bin/sh` — here bash 3.2.57 in posix mode — against a 58.9 KB `PreCompact`
+payload, at **load average 10.5 – 11.8**.
 
-**What the load was is not in that row, and it should be.** The table above does
-not say whether the machine was quiet, so a reader cannot tell whether it is a
-best case. A re-run at **load average 7.87** — eight background agents, the
-worst this machine sees — gives p50 **8.00 ms**, p99 **11.24 ms**, against a
-control of 1.99 ms and 3.56 ms. Both columns moved by about the same 7%, which
-is the useful part: the shim's share of p50 goes 5.6 ms → 6.0 ms, so the
-breakdown below survives the contention rather than being an artefact of an idle
-box. Re-measure with `python3 tools/hook_latency.py 400` and print `uptime`
-beside it. **[E4, review: docs — the latency table's quiescence]**
+**A range, and three runs, because the single-run table this replaces published
+a `max` of 37.18 ms that nothing since has come near.** A maximum is one sample
+of one scheduling accident; 1200 iterations put the worst at 14 ms. The
+percentiles from that first table — 7.43 / 9.06 / 10.48 — sit inside the ranges
+above, so they reproduced; the max did not, and a number that does not reproduce
+does not belong in a row a reader compares against.
+
+**The load sensitivity this section used to claim is not there.** It reported
+p50 rising 7.43 → 8.00 ms at load average 7.87, "the worst this machine sees",
+and read the 7% as contention the breakdown below survives. These runs are at
+load 10.5 – 11.8 — half again as loaded — and p50 does not move: 7.42, 7.48,
+7.53. The 8.00 was inside run-to-run spread and was read as a trend. What can be
+said is narrower and is what the table now says: across a 4× spread of load
+average this shim costs 7.4 – 7.5 ms at the median, and the spread that does
+move is in the tail. Re-measure with `python3 tools/hook_latency.py 400`, three
+times, and print `uptime` beside them. **[E4, review: docs — the latency table's
+quiescence; re-measured at E7 close]**
 
 **Every number in this table used to be measured under `/bin/dash`, which does
 not run this shim.** The shebang says `#!/bin/sh` and an agent firing the hook

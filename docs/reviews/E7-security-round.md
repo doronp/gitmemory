@@ -73,7 +73,7 @@ negative-control index **265 → 423 rows**: 161 tests and 158 controls, for 56
 fixes. The [pair review](E7-pair-review.md) then added 6 and 7, for four more
 fixes, and removed one row that could only ever score MISSED; the full mutation
 pass that followed it added 6 and 7 again, for three rows that held nothing and
-one that could not be run — **1133 and 437** today, where the test figure counts
+one that could not be run — **1134 and 437** today, where the test figure counts
 the 322 conformance cases and the README's does not.
 
 One of each is this page's own doing: writing the paragraph above meant reading

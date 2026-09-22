@@ -354,7 +354,7 @@ corpus-inclusive, and that unit is the last thing this round retired.
 
 **The 1127 is retired, and finding out why is the last thing this round did.**
 It was the count on a machine that had cloned claude-code-log's corpus; a fresh
-checkout collects 811. The test that exists to stop the README quoting a number
+checkout collected 811 at that point, and 812 once this round's last doc test landed. The test that exists to stop the README quoting a number
 nobody else can reproduce was itself asserting one, and passed for two epochs
 because the clone happened to still be in `/tmp`. The README now states the
 offline count and names the corpus separately, and no environment default in

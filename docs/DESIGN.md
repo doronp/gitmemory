@@ -135,13 +135,14 @@ rather than made silently:
   the document while the file grew. What it grew for is in the file: every guard has a comment
   naming the failure it was written against.]**
   Reads hook JSON on stdin, writes **one file** to `spool/`, `exit 0`. No git, no Python, no
-  network on the hot path. Target <50 ms; **p50/p99 measured and published** — 7.43 ms and
-  10.48 ms, in `hook/README.md`, against a control that times spawning `true` the same way.
+  network on the hot path. Target <50 ms; **p50/p99 measured and published** — 7.4–7.5 ms and
+  10.2–11.5 ms over three runs, in `hook/README.md`, against a control that times spawning `true`
+  the same way.
   **[E4, review: docs — this said "Budget is 10 s", which is not the budget for any event this
   shim binds. Claude Code gives a `command` hook 600 s by default, and `SessionEnd` hooks *share a
   1.5-second budget* (code.claude.com/docs/en/hooks, read 2026-09-21). 1.5 s shared is the binding
   constraint and it is 6.7× tighter than the number we published, so the figure was not just
-  unsourced, it was slack in the wrong direction — the shim's 10.48 ms p99 is 0.7% of a budget it
+  unsourced, it was slack in the wrong direction — the shim's ~11 ms p99 is under 1% of a budget it
   does not get to itself. It also said "which no tool in the field does", which is a claim about
   every tool that exists and cannot be checked. Narrowed to what §6 actually read: none of the four
   publishes percentiles for the hook it puts in the agent's critical path. Two publish *retrieval*

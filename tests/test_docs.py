@@ -136,6 +136,33 @@ def test_the_documented_shim_length_is_the_shim_length():
     assert abs(int(claimed.group(2)) - body) <= 10, f"shim has {body} non-comment lines"
 
 
+def test_the_published_latency_is_one_measurement_quoted_three_times():
+    """The hook's p50 and p99 are in `hook/README.md`, `README.md` and
+    `DESIGN.md`, and only the first of the three is next to the tool that
+    produces them. Re-measuring at the E7 close moved all three — and moved the
+    table's `max` from 37.18 ms to 14, which is what a maximum does — so the two
+    downstream copies are now checked against the table rather than against a
+    reader's memory. Rounded to 0.1 ms, because the downstream two quote one
+    decimal and the table two. [E7]
+    """
+    dash = r"\s*[-–]\s*"
+    table = _read("hook/README.md")
+
+    def published(metric: str) -> tuple[float, float]:
+        row = re.search(rf"\|\s*{metric}\s*\|\s*([\d.]+){dash}([\d.]+) ms", table)
+        assert row, f"hook/README.md no longer publishes a {metric} range"
+        return round(float(row.group(1)), 1), round(float(row.group(2)), 1)
+
+    for doc, pattern in [
+        ("README.md", rf"p50 \*\*([\d.]+){dash}([\d.]+) ms\*\*, p99 \*\*([\d.]+){dash}([\d.]+) ms"),
+        ("docs/DESIGN.md", rf"([\d.]+){dash}([\d.]+) ms and\s*\n?\s*([\d.]+){dash}([\d.]+) ms"),
+    ]:
+        quoted = re.search(pattern, _read(doc))
+        assert quoted, f"{doc} no longer quotes the hook's p50/p99"
+        got = tuple(round(float(n), 1) for n in quoted.groups())
+        assert got == published("p50") + published("p99"), f"{doc} quotes {got}"
+
+
 def test_the_design_document_cites_nothing_in_tmp():
     """A citation only a scratch directory can resolve is not a citation.
 
