@@ -1445,6 +1445,61 @@ def test_a_torn_temp_file_is_swept_not_adopted(home, src):
     assert not (seg_dir / ".incoming.4242.beef").exists()
 
 
+# Each entry rejects the manifest at a different one of `_verify_declared`'s ten
+# early exits, and the attacker picks which. The last one is not a field at all:
+# `_verify_one` guards the checks with `except Exception` precisely so that a
+# crash nobody predicted cannot switch the sweep off either.
+MANIFEST_REJECTIONS = {
+    "unreadable": lambda m: "not json at all",
+    "not an object": lambda m: "[1, 2, 3]",
+    "unsafe agent": lambda m: m | {"agent": "../../etc"},
+    "unsafe session": lambda m: m | {"session_id": "a b"},
+    "wrong generation": lambda m: m | {"generation": 7},
+    "segments not a list": lambda m: m | {"segments": "nope"},
+    "malformed segment": lambda m: m | {"segments": [{"start": 0}]},
+    "segment escapes": lambda m: m | {"segments": [m["segments"][0] | {"path": "../../etc/hosts"}]},
+    # A NUL in a path is a `str`, so it passes every type check above and then
+    # raises out of `os.lstat` — an unpredicted crash, which is the case the
+    # blanket guard exists for.
+    "crashes the checks": lambda m: m | {"segments": [m["segments"][0] | {"path": "a\x00b"}]},
+}
+
+
+@pytest.mark.parametrize("how", sorted(MANIFEST_REJECTIONS))
+def test_a_rejected_manifest_does_not_hide_a_plant_beside_it(home, src, how):
+    """[E7 S6] The stray-file check used to sit behind ten early `return`s.
+
+    So the one check whose job is to find bytes no manifest attests could be
+    switched off from inside the file being checked, and the attacker chose
+    which failure to show: plant a transcript, break the manifest, and `verify`
+    said "unreadable manifest" and nothing else. Measured before the fix, all
+    eight tamperings tried hid the plant.
+
+    `_verify_unattested` does not cover for it. That sweep marks a generation
+    directory attested when a manifest for it *exists*, not when it verifies —
+    so it skips the directory as somebody else's job, and nobody reports the
+    bytes.
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    plant = Path(home, "raw", "claude-code", "sess", "g00", "evil.jsonl")
+    plant.write_bytes(b'{"type":"user","content":"bytes nothing speaks for"}\n')
+    assert [p for p in store.verify(home) if "unrecorded file" in p and "evil" in p]
+
+    man_path = Path(home, "sessions", "claude-code", "sess", "g00.json")
+    broken = MANIFEST_REJECTIONS[how](json.loads(man_path.read_text()))
+    man_path.write_text(broken if isinstance(broken, str) else json.dumps(broken))
+
+    problems = store.verify(home)
+    assert [p for p in problems if "evil.jsonl" in p], problems
+    # And it says which of the two things went wrong. `listed` is empty or
+    # partial when the manifest was rejected, so the sound segments land here
+    # too; calling those "unrecorded" would point at the directory when the
+    # finding is in the manifest.
+    assert all("unrecorded file" not in p for p in problems if "evil.jsonl" in p), problems
+    assert any("manifest rejected" in p for p in problems), problems
+
+
 # --- identity: agent, session, and source ---------------------------------- #
 
 

@@ -2935,9 +2935,41 @@ MUTANTS = [
         "            # open, it never finishes opening, and this read holds the session\n"
         "            # lock. [E7]\n"
         "            out.append(f\"{rel}: segment {seg['path']} is not a regular file\")\n"
-        "            return out\n",
+        "            return out, False\n",
         "",
         "test_a_fifo_named_as_a_segment_does_not_hang_verify",
+    ),
+    # --- E7 carry-in S6: the sweep the manifest under suspicion could switch off ---
+    (
+        "a rejected manifest takes the generation sweep down with it",
+        "store.py",
+        "    out += _verify_generation_dir("
+        "home, path, rel, filed_agent, filed_session, listed, reconciled)",
+        "    if reconciled:\n"
+        "        out += _verify_generation_dir(\n"
+        "            home, path, rel, filed_agent, filed_session, listed, reconciled\n"
+        "        )",
+        "test_a_rejected_manifest_does_not_hide_a_plant_beside_it",
+    ),
+    (
+        "a crash in the manifest checks switches the generation sweep off",
+        "store.py",
+        "    try:\n"
+        "        out, reconciled = _verify_declared("
+        "home, path, rel, filed_agent, filed_session, listed)\n"
+        "    except Exception as exc:  # noqa: BLE001 - a manifest is untrusted data\n"
+        '        out, reconciled = [f"{rel}: unverifiable manifest ({exc!r})"], False',
+        "    out, reconciled = _verify_declared("
+        "home, path, rel, filed_agent, filed_session, listed)",
+        "test_a_rejected_manifest_does_not_hide_a_plant_beside_it",
+    ),
+    (
+        "the sweep calls a rejected manifest's segments unrecorded",
+        "store.py",
+        '                out.append(f"{rel}: manifest rejected, so nothing attests {entry.name}")',
+        '                out.append('
+        'f"{rel}: unrecorded file in the generation directory: {entry.name}")',
+        "test_a_rejected_manifest_does_not_hide_a_plant_beside_it",
     ),
     (
         "adoption rehashes a run it cannot read",

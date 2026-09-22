@@ -1475,38 +1475,114 @@ def _verify_manifest(home: str, path: str) -> list[str]:
         return _verify_one(home, path, filed_agent, filed_session)
 
 
-def _verify_one(  # noqa: PLR0912 - one branch per failure mode
-    home: str, path: str, filed_agent: str, filed_session: str
-) -> list[str]:
+def _verify_one(home: str, path: str, filed_agent: str, filed_session: str) -> list[str]:
+    """The manifest's own checks, and then — always — the directory it speaks for.
+
+    The stray-file check used to be the last statement of one long function with
+    ten early `return`s in front of it, so any manifest that failed an earlier
+    check took it down. That is the one check whose job is to find bytes no
+    manifest attests, and the attacker chooses which check fails: plant a
+    transcript in the generation directory, break the manifest, and `verify`
+    reports "unreadable manifest" and nothing else. Measured, all eight
+    tamperings tried hid the plant.
+
+    `_verify_unattested` does not cover for it, which is what makes this a hole
+    rather than a duplicated message: that sweep marks a generation directory
+    attested when a manifest for it *exists*, not when it verifies, so it skips
+    the directory too. Nobody reports the bytes.
+
+    The sweep runs even if the checks raise, for the reason `verify` has its own
+    blanket guard: a manifest is untrusted data, and "the directory is always
+    swept" is only worth having if nothing in the file being checked can switch
+    it off. [E7 S6]
+    """
     rel = os.path.relpath(path, home)
+    listed: set[str] = set()
+    try:
+        out, reconciled = _verify_declared(home, path, rel, filed_agent, filed_session, listed)
+    except Exception as exc:  # noqa: BLE001 - a manifest is untrusted data
+        out, reconciled = [f"{rel}: unverifiable manifest ({exc!r})"], False
+    out += _verify_generation_dir(home, path, rel, filed_agent, filed_session, listed, reconciled)
+    return out
+
+
+def _verify_generation_dir(
+    home: str,
+    path: str,
+    rel: str,
+    filed_agent: str,
+    filed_session: str,
+    listed: set[str],
+    reconciled: bool,
+) -> list[str]:
+    """Files in the generation directory that no verified segment entry names.
+
+    The directory name comes off the manifest's own filename, not its declared
+    `generation`, for the reason `_verify_manifest` builds the agent and session
+    from the location: the declaration is the thing under suspicion. It is also
+    the only way this can run at all when `generation` is what failed.
+
+    `glob("*")` used to be the enumeration, and it skips dotfiles, so the one
+    artefact a killed capture leaves — `.incoming.<pid>.<tid>`, real unattested
+    transcript bytes — was the one file this check could not see, and
+    `.evil.jsonl` passed the proof. [E2]
+    """
+    seg_dir = os.path.join(
+        home, "raw", filed_agent, filed_session, os.path.splitext(os.path.basename(path))[0]
+    )
+    out = []
+    with contextlib.suppress(OSError), os.scandir(seg_dir) as it:
+        for entry in sorted(it, key=lambda e: e.name):
+            if os.path.realpath(entry.path) in listed:
+                continue
+            if reconciled:
+                out.append(f"{rel}: unrecorded file in the generation directory: {entry.name}")
+            else:
+                # Not the same sentence, because it is not the same claim. The
+                # manifest was rejected, so `listed` is partial or empty and
+                # every segment of a perfectly sound generation lands here too.
+                # Saying "unrecorded" would point at the directory when the
+                # finding is in the manifest. [E7 S6]
+                out.append(f"{rel}: manifest rejected, so nothing attests {entry.name}")
+    return out
+
+
+def _verify_declared(  # noqa: PLR0912 - one branch per failure mode
+    home: str, path: str, rel: str, filed_agent: str, filed_session: str, listed: set[str]
+) -> tuple[list[str], bool]:
+    """Everything the manifest says about itself, and whether it got to the end.
+
+    The flag is what lets the caller tell "this directory disagrees with a
+    manifest that parsed" from "this manifest never got far enough to say".
+    """
     out: list[str] = []
     try:
         with open(path, "rb") as fh:
             raw = fh.read()
         man = json.loads(raw)
     except (OSError, ValueError) as exc:
-        return [f"{rel}: unreadable manifest ({exc})"]
+        return [f"{rel}: unreadable manifest ({exc})"], False
 
     if not isinstance(man, dict):
-        return [f"{rel}: manifest is {type(man).__name__}, not an object"]
+        return [f"{rel}: manifest is {type(man).__name__}, not an object"], False
 
     agent = man.get("agent")
     if not isinstance(agent, str) or not _SAFE_RE.match(agent):
-        return [f"{rel}: declares unsafe agent name {agent!r}"]
+        return [f"{rel}: declares unsafe agent name {agent!r}"], False
 
     session_id = man.get("session_id")
     if not isinstance(session_id, str) or not _SAFE_RE.match(session_id):
-        return [f"{rel}: declares unsafe session_id {session_id!r}"]
+        return [f"{rel}: declares unsafe session_id {session_id!r}"], False
 
     gen = man.get("generation")
     filed_as = os.path.basename(path)
     if not isinstance(gen, int) or _gen_file(gen) != filed_as:
         # Stop here: every check below feeds `gen` to a path or a format spec.
-        return [f"{rel}: declares generation {gen!r} but is filed as {filed_as}"]
+        return [f"{rel}: declares generation {gen!r} but is filed as {filed_as}"], False
 
     raw_segments = man.get("segments")
     if not isinstance(raw_segments, list):
-        return [f"{rel}: segments is {type(raw_segments).__name__}, not a list"]
+        return [f"{rel}: segments is {type(raw_segments).__name__}, not a list"], False
     for s in raw_segments:
         if not (
             isinstance(s, dict)
@@ -1515,11 +1591,10 @@ def _verify_one(  # noqa: PLR0912 - one branch per failure mode
             and isinstance(s.get("path"), str)
             and isinstance(s.get("sha256"), str)
         ):
-            return [f"{rel}: malformed segment entry {s!r}"]
+            return [f"{rel}: malformed segment entry {s!r}"], False
     segments = sorted(raw_segments, key=lambda s: s["start"])
     whole = hashlib.sha256()
     cursor = 0
-    listed: set[str] = set()
     for seg in segments:
         if seg["start"] != cursor:
             kind = "hole" if seg["start"] > cursor else "overlap"
@@ -1527,20 +1602,20 @@ def _verify_one(  # noqa: PLR0912 - one branch per failure mode
         full = _inside(home, seg["path"])
         if full is None:
             out.append(f"{rel}: segment path escapes the store: {seg['path']!r}")
-            return out
+            return out, False
         listed.add(full)
         if not _regular(full):
             # Before the open, not inside the `except`: a FIFO does not fail to
             # open, it never finishes opening, and this read holds the session
             # lock. [E7]
             out.append(f"{rel}: segment {seg['path']} is not a regular file")
-            return out
+            return out, False
         try:
             with open(full, "rb") as fh:
                 data = fh.read()
         except OSError as exc:
             out.append(f"{rel}: segment {seg['path']} unreadable ({exc})")
-            return out
+            return out, False
         want = seg["end"] - seg["start"]
         if len(data) != want:
             out.append(f"{rel}: segment {seg['path']} is {len(data)} bytes, manifest says {want}")
@@ -1564,15 +1639,6 @@ def _verify_one(  # noqa: PLR0912 - one branch per failure mode
         out.append(
             f"{rel}: declares {agent}/{session_id} but is filed under {filed_agent}/{filed_session}"
         )
-    seg_dir = os.path.join(home, "raw", filed_agent, filed_session, _gen_dir(gen))
-    # `glob("*")` skips dotfiles, so the one artefact a killed capture leaves —
-    # `.incoming.<pid>.<tid>`, real unattested transcript bytes — was the one
-    # file this check could not see, and `.evil.jsonl` passed the proof. [E2]
-    with contextlib.suppress(OSError), os.scandir(seg_dir) as it:
-        for entry in sorted(it, key=lambda e: e.name):
-            if os.path.realpath(entry.path) not in listed:
-                out.append(f"{rel}: unrecorded file in the generation directory: {entry.name}")
-
     # The writer's floor, applied by the reader. `verify` checked the fields it
     # needed for its own arithmetic and never `_FIELDS`, so a `size` of `370.0`
     # passed every one of them — `370 != 370.0` is False — while
@@ -1587,7 +1653,7 @@ def _verify_one(  # noqa: PLR0912 - one branch per failure mode
         out.append(f"{rel}: {exc}")
 
     out += _verify_chain(path, rel, man, gen)
-    return out
+    return out, True
 
 
 def _verify_chain(path: str, rel: str, man: dict, gen: object) -> list[str]:
