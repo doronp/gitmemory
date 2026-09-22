@@ -288,3 +288,15 @@ def test_every_mutation_row_has_a_distinct_name():
     names = [m[0] for m in MUTANTS]
     dupes = sorted({n for n in names if names.count(n) > 1})
     assert not dupes, f"duplicated: {dupes}"
+
+
+def test_the_row_count_in_the_docstring_is_the_row_count():
+    """`main`'s docstring justifies the name filter with the size of a full
+    pass. That number has been wrong twice — it was written when the index held
+    146 rows and stayed there through 276 more — and a stale one understates the
+    cost of the thing it exists to excuse. [E7]"""
+    from mutate_index import main
+
+    claimed = re.search(r"a full pass is ([\d,]+) mutants", main.__doc__)
+    assert claimed, "the docstring no longer states a row count"
+    assert int(claimed.group(1).replace(",", "")) == len(MUTANTS)

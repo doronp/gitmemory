@@ -3828,6 +3828,16 @@ MUTANTS = [
         "                log(f\"error: git init: {exc}\")",
         "test_a_standing_init_failure_is_not_logged_once_per_poll",
     ),
+    (
+        # The only row that mutates this file. The anchors are split across a
+        # `+` because a row holding the literal it looks for would make the
+        # anchor appear twice and the harness would skip itself. [E7]
+        "the docstring's row count drifts away from the index again",
+        "tests/mutate_index.py",
+        "a full pass is 4" + "23 mutants",
+        "a full pass is 14" + "6 mutants",
+        "test_the_row_count_in_the_docstring_is_the_row_count",
+    ),
 ]
 
 
@@ -3915,9 +3925,12 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 146 mutants x two suite runs, which
-    is an hour — long enough that adding one row and checking it used to mean
-    either waiting for the other 145 or trusting the new one untested.
+    The filter exists because a full pass is 423 mutants x two suite runs, which
+    is about three hours — long enough that adding one row and checking it used
+    to mean either waiting for the other 422 or trusting the new one untested.
+    (Measured at 28 s a row against the 1,120-test offline suite; the number in
+    this sentence has been wrong before, so it is `len(MUTANTS)` and a timing,
+    not a memory.)
     """
     wanted = sys.argv[1:]
     selected = [m for m in MUTANTS if not wanted or any(w.lower() in m[0].lower() for w in wanted)]

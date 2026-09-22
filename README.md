@@ -71,8 +71,8 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | The same extractor, in a vocabulary its corpus does not contain | two adversarial probes hand-written by a reviewer, both since spent | 26/32 and 27/32 |
 | The same extractor again, on a probe written blind and scored once | 32 items in a domain chosen to share no vocabulary with the corpus | **14/32** |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way | p50 **7.43 ms**, p99 **10.48 ms** |
-| The suite | | **1120 tests**, plus one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **422** negative controls |
+| The suite | | **1121 tests**, plus one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **423** negative controls |
 
 **Read the extraction numbers carefully — the gap between them is the finding.**
 1.0000 precision and recall is the score on a held-out split the extractor's
@@ -179,7 +179,7 @@ Under construction, epoch by epoch.
 | E4 | Hook shim + watcher + git daemon | in review |
 | E5 | Derivation and decision graph | passed — [gate report](docs/benchmarks/E5-decision-gate.md); three artifacts per generation. Reopened by [probe C](docs/benchmarks/E5-probe-C.md): user-reverses-own-instruction is 0 of 11 |
 | E6 | Dashboard | passed — seven views over the index, served read-only on loopback, [review record](docs/reviews/E6-standalone-review.md) |
-| E7 | RC1: security review, private repo | in progress |
+| E7 | RC1: security review, private repo | in progress — six surfaces reviewed and closed, 68 findings, [round record](docs/reviews/E7-security-round.md) |
 
 ## How this is built
 
