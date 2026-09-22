@@ -4198,11 +4198,8 @@ MUTANTS = [
     (
         "the reader waits for the writer forever",
         "store.py",
-        "            if not _flock_within(fd, LOCK_WAIT):\n"
-        "                timed_out = True\n"
-        "                os.close(fd)\n"
-        "                fd = None",
-        "            fcntl.flock(fd, fcntl.LOCK_EX)",
+        "            if not _flock_within(fd, LOCK_WAIT):",
+        "            if False:",
         "test_verify_returns_even_when_a_writer_never_lets_go",
     ),
     (
@@ -4255,8 +4252,8 @@ MUTANTS = [
     (
         "a dangling symlink is excused because its target does not exist",
         "store.py",
-        "        return os.path.lexists(os.path.join(home, rel))",
-        "        return os.path.exists(os.path.join(home, rel))",
+        "            keep |= {r for r in rows[key] if os.path.lexists(os.path.join(home, r))}",
+        "            keep |= {r for r in rows[key] if os.path.exists(os.path.join(home, r))}",
         "test_a_dangling_symlink_is_not_excused_by_being_deep",
     ),
     # --- E7 fs-F9 ---
@@ -4345,7 +4342,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "02 mutants",
+        "a full pass is 5" + "09 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4384,7 +4381,7 @@ MUTANTS = [
     (
         "a reader that gave up on the lock sweeps anyway and calls live bytes litter",
         "store.py",
-        "    if timed_out:\n        return out + [",
+        "    if unswept:\n        return out + [",
         "    if False:\n        return out + [",
         "test_a_lock_that_timed_out_declines_the_sweep_rather_than_guessing_at_it",
     ),
@@ -4393,7 +4390,10 @@ MUTANTS = [
         # guard is never armed, so the reader is back to guessing.
         "the lock timeout is not reported to the caller that acts on it",
         "store.py",
-        "                timed_out = True\n",
+        "                unswept = (\n"
+        '                    f"another process held the session lock for more than '
+        "{LOCK_WAIT:g}s\"\n"
+        "                )\n",
         "",
         "test_a_lock_that_timed_out_declines_the_sweep_rather_than_guessing_at_it",
     ),
@@ -4401,8 +4401,8 @@ MUTANTS = [
     (
         "the two sweeps disagree again about what a generation directory is",
         "store.py",
-        "            _GEN_RE.match(os.path.basename(manifest))\n            and os.path.exists",
-        "            os.path.exists",
+        "            _GEN_RE.match(os.path.basename(manifest))\n            and _listed",
+        "            _listed",
         "test_a_manifest_verify_will_not_look_at_cannot_attest_anything",
     ),
     (
@@ -4503,6 +4503,68 @@ MUTANTS = [
         "    print(line, flu" + "sh=True)",
         "    print(line)",
         "test_a_verdict_reaches_the_log_before_the_next_row_runs",
+    ),
+    # --- E7b, the RC1 security review's delta ------------------------------ #
+    (
+        # The gate and the sweep have to ask the filesystem the same question.
+        # `exists` resolves a name case-insensitively on APFS and `glob` matches
+        # its pattern case-sensitively, so `G00.json` was a manifest to one and
+        # not to the other. [E7b L2-F1]
+        "the attested-manifest gate asks whether a name resolves, not whether it is there",
+        "store.py",
+        "        return os.path.basename(path) in os.listdir(os.path.dirname(path))",
+        "        return os.path.exists(path)",
+        "test_a_manifest_spelled_in_another_case_attests_nothing",
+    ),
+    (
+        "the unattested sweep gives up on the lock and then answers anyway",
+        "store.py",
+        "        with _locked_if_writable(home, *key) as unswept:\n            if unswept:",
+        "        with _locked_if_writable(home, *key) as unswept:\n            if False:",
+        "test_the_unattested_sweep_declines_rather_than_guesses_when_the_lock_runs_out",
+    ),
+    (
+        # The grouping is the whole of L2-F3: without it every candidate file
+        # pays the full `LOCK_WAIT` on the same lock.
+        "every candidate file takes the session lock for itself again",
+        "store.py",
+        "        if key not in rows:",
+        "        if True:",
+        "test_the_unattested_sweep_takes_each_session_lock_once",
+    ),
+    (
+        "a manifest name may end in a newline again",
+        "store.py",
+        '_GEN_RE = re.compile(r"^g(\\d+)\\.json\\Z")',
+        '_GEN_RE = re.compile(r"^g(\\d+)\\.json$")',
+        "test_a_trailing_newline_does_not_hide_a_file_in_the_proof_tree",
+    ),
+    (
+        "a path component may end in a newline again",
+        "store.py",
+        '_SAFE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\Z")',
+        '_SAFE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")',
+        "test_a_newline_is_not_a_legal_path_component",
+    ),
+    (
+        # Read-only is the one errno family that makes an unlocked sweep sound;
+        # every other one is a lock we failed to take on a live store.
+        "a lock that could not be opened is a lock that was not needed again",
+        "store.py",
+        "            if exc.errno not in _UNWRITABLE:",
+        "            if False:",
+        "test_a_lock_that_cannot_be_opened_is_not_a_lock_that_was_not_needed",
+    ),
+    (
+        # The guard's patterns all require a literal `/`, and Claude Code's own
+        # on-disk encoding has none — it flattens the path into a directory
+        # name. Derived at run time, because writing the account name down to
+        # search for it is the leak. [E7b L4-F1]
+        "the owner-data guard goes back to looking only for slash-shaped paths",
+        "tests/test_no_owner_data.py",
+        '    FORBIDDEN["this machine\'s account name"] = re.compile(re.escape(ACCOUNT), re.I)',
+        "    pass",
+        "test_the_account_name_scan_is_on_or_says_why_it_is_not",
     ),
     # --- E5 fix 2 reviewed: the conjunction was scoped to the block --------- #
     (
@@ -4729,7 +4791,7 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 502 mutants x two suite runs, which
+    The filter exists because a full pass is 509 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
     to mean either waiting for the other 501 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in

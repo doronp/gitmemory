@@ -2716,6 +2716,45 @@ def test_a_manifest_verify_will_not_look_at_cannot_attest_anything(tmp_path):
     ]
 
 
+def test_a_manifest_spelled_in_another_case_attests_nothing(tmp_path):
+    """The same reporting gap as the test above, reached through the filesystem.
+
+    `_verify_unattested` asked `os.path.exists` whether the manifest was there
+    and the manifest-driven sweep asks `glob("g*.json")`, and on a
+    case-insensitive filesystem — the macOS default, so this is the ordinary
+    configuration and not a contrived one — those two disagree. Measured on one
+    directory holding `G00.json`: `exists(".../g00.json")` True, `glob` empty.
+    The generation directory was therefore attested by a manifest that nothing
+    went on to verify, and the file planted beside the segments was named by
+    nobody.
+
+    Asserted without an exact list because the segment's own name carries the
+    transcript's byte count: what matters is that the planted file is named, and
+    that the odd manifest is still called one. On a case-*sensitive* filesystem
+    this passes for a different reason — `exists` is False there too — which is
+    why `_listed` is pinned directly underneath. [E7b L2-F1]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    assert store.verify(home) == []
+
+    sess = Path(home, "sessions", "claude-code", "sess")
+    (sess / "g00.json").rename(sess / "G00.json")
+    (Path(home, "raw", "claude-code", "sess", "g00") / "planted.jsonl").write_bytes(b"{}\n")
+
+    problems = store.verify(home)
+    assert "raw/claude-code/sess/g00/planted.jsonl: no manifest speaks for these bytes" in problems
+    assert "sessions/claude-code/sess/G00.json: not a manifest" in problems
+
+    # The helper itself, because the assertions above are satisfied on a
+    # case-sensitive filesystem by the bug being unreachable rather than fixed.
+    assert store._listed(str(sess / "G00.json"))
+    assert not store._listed(str(sess / "g00.json"))
+    assert not store._listed(str(sess / "nope" / "g00.json"))
+
+
 def test_a_reader_refuses_a_store_whose_proof_is_not_in_it(tmp_path):
     """A skip here would make the index, the dashboard and the gate agree it is empty.
 
@@ -2887,14 +2926,160 @@ def test_a_lock_released_in_time_is_still_waited_for(tmp_path):
         os.close(fd)
 
 
+def _unattested(home: str, names: tuple[str, ...]) -> str:
+    """A store with files no manifest speaks for, and the lock path for them."""
+    gen = Path(home, "raw", "claude-code", "sess", "g00")
+    gen.mkdir(parents=True)
+    for name in names:
+        (gen / name).write_bytes(b"{}\n")
+    lock = Path(home, ".locks", "claude-code", "sess.lock")
+    lock.parent.mkdir(parents=True)
+    lock.touch()
+    return str(lock)
+
+
+def test_the_unattested_sweep_declines_rather_than_guesses_when_the_lock_runs_out(
+    tmp_path, monkeypatch
+):
+    """The other side of fs-F6, which was fixed on the manifest side only.
+
+    A generation directory with no manifest is never reached by `_verify_one`,
+    so the whole "did I get the lock?" question is asked again here — and the
+    answer was thrown away. The planted `.incoming` file is what a capture looks
+    like mid-publication: real bytes the manifest does not name yet. Measured
+    before the fix, on one sound store with one live writer, varying nothing but
+    how long the writer held the lock: `0 problem(s)` at a 2 s hold, and at an
+    8 s hold `raw/claude-code/sess/g00/.incoming.999.abc: no manifest speaks for
+    these bytes`. Giving up on the lock is the moment the answer stops being
+    worth anything, and it was the moment the old code started answering.
+    [E7b L2-F2]
+    """
+    home = str(tmp_path / "h")
+    os.mkdir(home)
+    lock = _unattested(home, (".incoming.1.2",))
+
+    monkeypatch.setattr(store, "LOCK_WAIT", 0.05)
+    fd = os.open(lock, os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        held = store.verify(home)
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+    assert held == [
+        "claude-code/sess: not swept for unattested files — another process "
+        "held the session lock for more than 0.05s"
+    ], held
+
+    # The positive control, for the reason the fs-F6 test gives: a check that
+    # never reports anything passes the assertion above for the wrong reason.
+    assert store.verify(home) == [
+        "raw/claude-code/sess/g00/.incoming.1.2: no manifest speaks for these bytes"
+    ]
+
+
+def test_the_unattested_sweep_takes_each_session_lock_once(tmp_path, monkeypatch):
+    """It was once per candidate file, on the same lock, each paying the full wait.
+
+    So the cost of a held lock was linear in the number of findings rather than
+    in the number of sessions: measured at `LOCK_WAIT` 5 s, two unattested files
+    took 15.01 s and four took 25.05 s, to produce two and four wrong answers.
+    Counted rather than timed, because the claim is about how many times the
+    lock is taken and a stopwatch would only be evidence of it. [E7b L2-F3]
+    """
+    home = str(tmp_path / "h")
+    os.mkdir(home)
+    _unattested(home, tuple(f"{i:012d}-{i:012d}.jsonl" for i in range(6)))
+
+    taken = []
+    real = store._flock_within
+    monkeypatch.setattr(
+        store, "_flock_within", lambda fd, s: (taken.append(s), real(fd, s))[1]
+    )
+
+    problems = store.verify(home)
+    assert len(problems) == 6, problems
+    assert len(taken) == 1, f"the lock was taken {len(taken)} times for 6 findings"
+
+
+def test_a_trailing_newline_does_not_hide_a_file_in_the_proof_tree(tmp_path):
+    """`$` matches before a trailing newline; a filename may end in one.
+
+    So `_GEN_RE.match("g00.json\\n")` was True while `fnmatch("g00.json\\n",
+    "g*.json")` was False — a check and an enumeration disagreeing about which
+    files exist, which is `_listed`'s bug arriving through a byte instead of
+    through a case. The `sessions/` walk skipped the file as a manifest and the
+    manifest-driven `glob` never yielded it to be read, so nothing named it:
+    `verify` returned `[]` with the file on disk, and `git add --all` would
+    commit it. The same bytes as `g99x.json` were reported. [E7b L2-F4]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    assert store.verify(home) == []
+
+    planted = Path(home, "sessions", "claude-code", "sess", "g00.json\n")
+    planted.write_bytes(b'{"not": "a manifest"}\n')
+    assert store.verify(home) == ["sessions/claude-code/sess/g00.json\n: not a manifest"]
+
+    assert not store._GEN_RE.match("g00.json\n")
+    assert store._GEN_RE.match("g00.json")
+
+
+def test_a_newline_is_not_a_legal_path_component(tmp_path):
+    """`_SAFE_RE` is the trust boundary for names that become directories.
+
+    `$` let `sess\\n` through it, so a newline could reach a directory name, the
+    `session_id` field of a manifest, and from there a commit. [E7b L2-F4]
+    """
+    for name in ("sess\n", "claude-code\n", "ok\n\n"):
+        assert not store._SAFE_RE.match(name), name
+        with pytest.raises(ValueError, match="unsafe"):
+            store.identity("claude-code", name)
+    assert store.identity("claude-code", "sess") == ("claude-code", "sess")
+
+
+def test_a_lock_that_cannot_be_opened_is_not_a_lock_that_was_not_needed(tmp_path):
+    """`timed_out=False` means "no capture can be in flight", and only `EROFS`-
+    family errnos say that.
+
+    Every other `OSError` from the open is a lock we failed to take on a store
+    that can still be written, and reporting it as the read-only case runs the
+    sweep unlocked beside a live capture — the E4 store-5 false positive, back
+    deterministically. `ELOOP` is the reachable one: `O_NOFOLLOW` has been on
+    this open since fs-F5, and any process running as the user can replace
+    `.locks/<agent>/<sid>.lock` with a symlink after a capture has taken it.
+    [E7b L2-F5]
+    """
+    home = str(tmp_path / "h")
+    os.mkdir(home)
+    with store._locked_if_writable(home, "claude-code", "sess") as unswept:
+        assert unswept is None
+
+    lock = Path(home, ".locks", "claude-code", "sess.lock")
+    lock.unlink()
+    lock.symlink_to(tmp_path / "elsewhere")
+    with store._locked_if_writable(home, "claude-code", "sess") as unswept:
+        assert unswept == "the session lock could not be opened (ELOOP)"
+
+
 def test_a_reader_does_not_create_a_file_through_a_symlinked_lock(tmp_path):
     """The second open of the lock file, reached from `verify` rather than `capture`.
 
     `_lockfile` got `O_NOFOLLOW` for fs-F5 and this one did not, so the same
-    file-creation primitive was still there one command over. Degrading is the
-    right answer here — `_locked_if_writable` already runs without the lock
-    when it cannot take one — so the observable is what is *not* created.
-    [E7 fs-F6, fs-F5]
+    file-creation primitive was still there one command over. The observable is
+    what is *not* created.
+
+    This used to assert `verify` returned `[]`, which was the second half of
+    fs-F5 and the whole of L2-F5: the `ELOOP` was swallowed into
+    `timed_out=False`, so `verify` ran its sweep unlocked and said the store was
+    clean in the same breath as failing to lock it. Degrading is still the right
+    answer — a reader that raised would be a store an attacker could make
+    uncheckable by planting one symlink — but a degraded answer has to be
+    legible as one, which is the rule fs-F6 established for the ordinary
+    timeout. [E7 fs-F6, fs-F5; E7b L2-F5]
     """
     home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
     os.mkdir(home)
@@ -2907,7 +3092,10 @@ def test_a_reader_does_not_create_a_file_through_a_symlinked_lock(tmp_path):
     os.makedirs(target.parent)
     os.symlink(str(target), lock)
 
-    assert store.verify(home) == []
+    assert store.verify(home) == [
+        "sessions/claude-code/sess/g00.json: not swept for unrecorded files — "
+        "the session lock could not be opened (ELOOP)"
+    ]
     assert not target.exists(), "a file was created outside the store"
 
 

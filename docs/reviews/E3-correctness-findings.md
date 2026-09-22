@@ -157,7 +157,10 @@ cross-session collapse.
 - **Query sanitisation.** `___`, `_`, `hel*`, a 100 000-char token, 5 000 digits, `café` vs
   `cafe`, `foo_bar` — all handled, no crash, no operator injection found.
 - **sqlite connection leaks.** None; `build()` and `_recall()` both close in `finally`.
-- **Owner paths in shipped code.** None. `rg <owner> src/ bench/ tests/` → no hits.
+- **Owner paths in shipped code.** None. A scan for the author's account name
+  across `src/`, `bench/` and `tests/` → no hits. The name is not written here:
+  a finding that says the account name is absent, and spells it to say so, is
+  the leak it is reporting the absence of. [E7b L4-F6]
 
 ## Unverified suspicions
 

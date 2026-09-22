@@ -14,7 +14,8 @@ tests/test_jsonl.py -q` for your own loop; run the full suite only at the end, a
 ## The six hard constraints, again
 
 1. **No owner data.** Never read, copy, or reference anything under `~/.claude/projects`,
-   `~/memory`, or any path containing `<owner>`. Fixtures are synthetic, in `tmp_path`.
+   `~/memory`, or any path naming the author's account — which this line deliberately
+   does not spell, for the reason it exists. Fixtures are synthetic, in `tmp_path`.
    Secrets in tests are fake (`AKIAZZZZQQQQWWWW1234`, `ghp_` + 36 `A`s).
 2. **Stdlib first.** No new dependency for any of this.
 3. **Fewest files.** Fix in place; no new modules.

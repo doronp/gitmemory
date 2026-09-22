@@ -65,12 +65,15 @@ _MAX_DEPTH = 32
 # Skip reasons are keyed on a `type` value we do not control and then written
 # into committed canonical JSON. Bound both the shape of each key and how many
 # distinct ones a single file can mint.
-_TYPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,39}$")
+_TYPE_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,39}\Z")
 _MAX_REASONS = 64
 
 # Same rule as the store's path guard: leading alphanumeric bans `..` and
-# dotfiles, and the charset bans every glob metacharacter and separator.
-_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+# dotfiles, and the charset bans every glob metacharacter and separator. `\Z`
+# for the same reason the store's do: `$` also matches before a trailing
+# newline, so `sess\n` passed a guard whose whole job is to say what may become
+# a path component. [E7b L2-F4]
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 # Every short identifier a line supplies: `sessionId`, `model`, `requestId`,
 # `timestamp`, and the keys of `usage`. All of them are re-hashed or rewritten
@@ -589,7 +592,7 @@ _CACHE_READ_MULT = 0.1
 # and bill it at the retired $15/$75, ~3x over, while reporting `estimated:
 # True` with a same-day `as_of` that reads as freshly checked. A version we have
 # not priced has to come back unknown, which is what the docstring promises. [E2]
-_MODEL_TAIL = re.compile(r"^(?:-\d{8})?$")
+_MODEL_TAIL = re.compile(r"^(?:-\d{8})?\Z")
 
 
 def _priced_as(model: str) -> str | None:

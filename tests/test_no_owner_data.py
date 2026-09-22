@@ -51,6 +51,56 @@ FORBIDDEN = {
     "the author's private memory tree": re.compile(r"\.claude-auto-memory\b", re.I),
 }
 
+# The three patterns above are shapes a path takes. None of them is the thing
+# they are proxies for, which is *the account name*, and the proxies have the
+# hole you would expect: Claude Code names a project directory by flattening the
+# absolute path — `/Users/someone/work/x` becomes `-Users-someone-work-x` — and
+# not one of the three matches that. It is not an exotic encoding. It is the
+# name of every directory under `~/.claude/projects`, which is to say the single
+# most likely spelling for an owner path to arrive in here by accident. A review
+# built the whole chain under `/tmp` — a corpus path pointed at sessions, the
+# manifest written from it, the manifest committed — and all three patterns
+# reported nothing, in the checkout and in the object graph both. [E7b L4-F1]
+#
+# So ask the question directly instead of through a spelling of it. The name is
+# read off `~` at run time and is *never written down*: a literal here would put
+# the account name in a tracked file, which is the thing being forbidden, and
+# would also be wrong on anybody else's machine. Any encoding is caught —
+# flattened, slashed, bare, inside a URL — because the account name is in all of
+# them.
+#
+# What is deliberately *not* here is a generic `-Users-<anything>-` pattern.
+# This repository legitimately contains 173 of those: the corpus manifest keys
+# each item by its path inside the pinned third-party clone, and those directory
+# names are the upstream repository's own, public at the commit we cite. A
+# pattern that cannot tell a public fixture locator from an account leak would
+# be answered by an allowlist over the file that has the most to hide, which is
+# the wrong end of the trade. [E7b L4-F1, rejected half]
+GENERIC_ACCOUNTS = {
+    "user", "users", "home", "root", "admin",
+    "runner", "ubuntu", "build", "vagrant", "docker",
+}
+
+
+def _account() -> str | None:
+    """This machine's account name, or `None` when it is too generic to scan for.
+
+    A CI runner's home is `/home/runner` and a container's is `/root`; matching
+    those as bare substrings would fire on prose everywhere and the guard would
+    be turned off within a day. Short names have the same problem for the same
+    reason. When the name is unusable the other patterns still run, and the case
+    below says so out loud rather than leaving a silent gap — a scan that is off
+    and looks on is how the last three holes in this file lasted as long as they
+    did.
+    """
+    name = os.path.basename(os.path.expanduser("~"))
+    return None if len(name) < 4 or name.lower() in GENERIC_ACCOUNTS else name
+
+
+ACCOUNT = _account()
+if ACCOUNT:
+    FORBIDDEN["this machine's account name"] = re.compile(re.escape(ACCOUNT), re.I)
+
 # This file has to contain the strings it forbids, to prove it can catch them.
 # Named explicitly rather than honoured as a marker comment any file could claim.
 ALLOWED = {"tests/test_no_owner_data.py"}
@@ -72,6 +122,11 @@ ALLOWED = {"tests/test_no_owner_data.py"}
 # which the allowlist covers by name in both scans, so exempting their text as
 # well would blind the scanner everywhere for nothing. [E7 S13]
 PLACEHOLDERS = {"/Users/x"}
+
+# The two lines of a commit object that are a git identity rather than content.
+# Matched at the start, so a message line reading "author of the patch" is not
+# one of them. [E7b L4-F6]
+_IDENTITY = re.compile(r"(author|committer) ")
 
 
 def _hits(pattern: re.Pattern, text: str) -> bool:
@@ -102,6 +157,11 @@ SAMPLES = {
     "a Linux home directory": "/home/someone/work/gitmemory",
     "the author's private memory tree": "~/memory/.claude-auto-memory/MEMORY.md",
 }
+if ACCOUNT:
+    # Built rather than written, for the reason the pattern is: the sample is
+    # the flattened spelling, because that is the one the three patterns above
+    # miss and the one this case exists to prove is caught.
+    SAMPLES["this machine's account name"] = f"-Users-{ACCOUNT}-work-gitmemory"
 
 
 def _tracked(root: Path = ROOT) -> list[str]:
@@ -215,6 +275,15 @@ def _history_scan(root: Path, pattern: re.Pattern, allowed: set[str]) -> list[st
 
     Decoded with `errors="replace"`: there is no `_is_text` gate here. A blob
     that does not decode is still shipped byte for byte.
+
+    A commit's `author` and `committer` lines are skipped, and only those two,
+    and only before the blank line that ends a commit's headers. They carry the
+    account name of whoever made the commit — that is what a git identity is —
+    so the account pattern added above would otherwise report every commit in
+    the repository, forever, for something no edit can remove: authorship is
+    metadata `git push` sends by construction and every public repository
+    publishes. The commit *message* is still read, which is the half that has
+    caught a real leak. [E7b L4-F6]
     """
     hits = []
     for label, data in gitrepo.pushable_objects(str(root)):
@@ -222,25 +291,81 @@ def _history_scan(root: Path, pattern: re.Pattern, allowed: set[str]) -> list[st
             continue
         if _hits(pattern, label):
             hits.append(f"{label}:name")
+        header = label.startswith("<commit ")
         for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
+            if header and not line:
+                header = False
+            if header and _IDENTITY.match(line):
+                continue
             if _hits(pattern, line):
                 hits.append(f"{label}:{n}")
     return hits
 
 
-@pytest.mark.parametrize("what,pattern", sorted(FORBIDDEN.items()))
-def test_no_tracked_file_contains_owner_data(what: str, pattern: re.Pattern):
+def test_the_account_name_scan_is_on_or_says_why_it_is_not():
+    """A scan that is off and looks on is the failure mode this file keeps having.
+
+    `_account` declines a name a substring match would drown in — a CI runner's
+    `runner`, a container's `root`, anything under four characters. That is the
+    right call and it is also a hole with a friendly face, because the two cases
+    below simply have one fewer pattern to run and say nothing about it. The
+    skip line in the test output is the saying-so.
+    """
+    if ACCOUNT is None:
+        pytest.skip(
+            "the account name of this machine is generic or too short to match on; "
+            f"the other {len(FORBIDDEN)} patterns still ran"
+        )
+    assert "this machine's account name" in FORBIDDEN
+    # And the encoding that motivated it: the three path patterns miss the
+    # flattened form, this one must not. [E7b L4-F1]
+    flattened = f"-Users-{ACCOUNT}-work-gitmemory"
+    assert FORBIDDEN["this machine's account name"].search(flattened)
+    others = (p for k, p in FORBIDDEN.items() if k != "this machine's account name")
+    assert not any(p.search(flattened) for p in others)
+
+
+# Two blobs in the object graph, and the reason they are not being rewritten out
+# of it. Both are a doc that spelled the account name *inside a sentence saying
+# the account name is absent* — one a review finding reporting a clean scan, one
+# a brief telling reviewers what not to write. Both are fixed in the working
+# tree, so the tracked-file case above holds with no exception at all.
+#
+# History is left alone because rewriting it would be theatre: the account name
+# is inside the author email of 138 of this repository's 141 commits, which
+# `git push` sends by construction and which no edit to a file removes. Scrubbing
+# two prose mentions while authorship carries the same string 138 times buys
+# nothing and costs every commit id cited across `docs/reviews/`, which is most
+# of them. Scoped to these two labels rather than to the pattern, so a *new*
+# historical hit still fails this case. [E7b L4-F6]
+KNOWN_HISTORY = {
+    "this machine's account name": {
+        "docs/reviews/E3-correctness-findings.md",
+        "docs/tasks/E3-round3-brief.md",
+    }
+}
+
+
+# Parametrised over the keys, not the items: the id pytest builds from a
+# compiled pattern is its source text, so `sorted(FORBIDDEN.items())` printed the
+# account name into every test report and log that ran this file — including
+# the one that proves the account name appears nowhere. [E7b L4-F6]
+@pytest.mark.parametrize("what", sorted(FORBIDDEN))
+def test_no_tracked_file_contains_owner_data(what: str):
     # This case owns its pattern: narrowing it until it stops catching its own
     # sample fails here, not only in the sibling control test. [E4, pass 2: F2]
+    pattern = FORBIDDEN[what]
     assert pattern.search(SAMPLES[what]), f"the {what} pattern matches nothing"
     hits = _scan(ROOT, _tracked(), pattern, ALLOWED)
     assert not hits, f"{what} appears in tracked files: {', '.join(hits[:20])}"
 
 
-@pytest.mark.parametrize("what,pattern", sorted(FORBIDDEN.items()))
-def test_no_object_this_repository_would_push_contains_owner_data(what, pattern):
+@pytest.mark.parametrize("what", sorted(FORBIDDEN))
+def test_no_object_this_repository_would_push_contains_owner_data(what: str):
+    pattern = FORBIDDEN[what]
     assert pattern.search(SAMPLES[what]), f"the {what} pattern matches nothing"
-    hits = _history_scan(ROOT, pattern, ALLOWED)
+    known = KNOWN_HISTORY.get(what, set())
+    hits = [h for h in _history_scan(ROOT, pattern, ALLOWED) if h.rsplit(":", 1)[0] not in known]
     assert not hits, f"{what} is in this repository's history: {', '.join(hits[:20])}"
 
 

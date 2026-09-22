@@ -31,6 +31,7 @@ Two invariants this module exists to hold:
 from __future__ import annotations
 
 import contextlib
+import errno
 import fcntl
 import hashlib
 import json
@@ -63,22 +64,39 @@ SCHEMA = 1
 CHUNK = 1 << 20
 EMPTY_SHA256 = hashlib.sha256().hexdigest()
 
-_GEN_RE = re.compile(r"^g(\d+)\.json$")
+# `\Z` and not `$` in every anchored pattern in this module, because `$` also
+# matches immediately before a trailing newline and a newline is a legal
+# character in a POSIX filename. Measured: `_GEN_RE.match("g00.json\n")` was
+# True while `fnmatch("g00.json\n", "g*.json")` was False — the same check-says-
+# yes/enumeration-says-no split as `_listed`, reached through a byte instead of
+# through a case. The consequence was a file in the proof tree that `verify`
+# never named: planting `sessions/<a>/<s>/g00.json\n` left `verify` reporting
+# `[]`, because the `sessions/` walk skipped it as a manifest and the
+# manifest-driven `glob` never yielded it to be read. Renaming the same bytes to
+# `g99x.json` got it reported. `_SAFE_RE` had it worse, since it is the trust
+# boundary for path components: `_SAFE_RE.match("sess\n")` was True, so a
+# newline could reach a directory name, a manifest field and a commit.
+# [E7b L2-F4]
+_GEN_RE = re.compile(r"^g(\d+)\.json\Z")
 # What `_write_atomic` leaves behind when it is killed between the create and
 # the rename. See `_sweep_temps`.
 _TMP_RE = re.compile(r"^g\d+\.json\.tmp\.")
 # Leading alnum bans `..`, `-rf`, and dotfiles in one rule. `agent` and
 # `session_id` become path components, so they are a trust boundary even when
 # today's only caller is our own adapter.
-_SAFE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SAFE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 # A segment file, and nothing else, in a generation directory.
-_SEG_RE = re.compile(r"^(\d{12})-(\d{12})\.jsonl$")
+_SEG_RE = re.compile(r"^(\d{12})-(\d{12})\.jsonl\Z")
 # How long a reader waits for a writer's session lock before going without it.
 # A capture holds that lock for one tail copy, one fsync and one manifest
 # write — milliseconds — so this is ~50x headroom for the case it is meant to
 # wait out, and a bound at all for the case it is not. See
 # `_locked_if_writable`. [E7 fs-F6]
 LOCK_WAIT = 5.0
+# The errnos that mean "this store cannot be written to", which is the one case
+# where not holding the session lock is sound rather than degraded. See
+# `_locked_if_writable`. [E7b L2-F5]
+_UNWRITABLE = frozenset({errno.EROFS, errno.EACCES, errno.EPERM})
 
 
 def _safe(name: str, what: str) -> str:
@@ -1242,6 +1260,23 @@ def verify(home: str | None = None) -> list[str]:
     return problems
 
 
+def _listed(path: str) -> bool:
+    """Is `path` a name the directory actually holds, spelled the way it asks?
+
+    `os.path.exists` asks the filesystem to resolve a name, and a
+    case-insensitive one resolves `g00.json` onto `G00.json` and says yes. Every
+    enumeration in this module is a `glob`, which matches its pattern
+    case-sensitively against the listing and says no. A check and a sweep that
+    disagree about which files are there is how bytes end up attested by a
+    manifest nothing verifies. This asks the enumeration's question.
+    [E7b L2-F1]
+    """
+    try:
+        return os.path.basename(path) in os.listdir(os.path.dirname(path))
+    except OSError:
+        return False
+
+
 def _verify_unattested(home: str) -> list[str]:
     """Every file in the store that no manifest speaks for.
 
@@ -1310,9 +1345,23 @@ def _verify_unattested(home: str) -> list[str]:
         # to be the same one. But naming the odd manifest is not naming the
         # transcript bytes beside it. One definition of "a generation
         # directory", used by everything that skips one. [E7 pair review]
+        #
+        # `_listed` rather than `os.path.exists`, because on a case-insensitive
+        # filesystem — which is the macOS default, so it is the common case and
+        # not the exotic one — those are different questions. A manifest on disk
+        # as `G00.json` answers `exists(".../g00.json")` with True, while the
+        # `glob("g*.json")` the manifest-driven sweep enumerates with matches its
+        # pattern case-sensitively and never yields it. Measured: `exists` True,
+        # `glob` empty, on the same directory. So the generation directory was
+        # marked attested by a manifest that nothing then verified, and a file
+        # planted beside the segments went unnamed — the `g-1.json` asymmetry
+        # above, reappearing through a spelling instead of through a regex. The
+        # store still says *something* (`G00.json: not a manifest`), and saying
+        # something about the manifest is not naming the transcript bytes, which
+        # is the distinction the paragraph above exists to make. [E7b L2-F1]
         if (
             _GEN_RE.match(os.path.basename(manifest))
-            and os.path.exists(manifest)
+            and _listed(manifest)
             and _own_manifest(home, manifest)
         ):
             attested.add(os.path.realpath(seg_dir))
@@ -1338,7 +1387,7 @@ def _verify_unattested(home: str) -> list[str]:
                 continue
             rel = os.path.relpath(os.path.join(dirpath, name), home)
             found.append((rel, f"{rel}: not a manifest"))
-    return [msg for rel, msg in found if _abandoned(home, rel)]
+    return _settled(home, found)
 
 
 def _linked(home: str, dirpath: str, dirnames: list[str]) -> list[tuple[str, str]]:
@@ -1365,8 +1414,14 @@ def _linked(home: str, dirpath: str, dirnames: list[str]) -> list[tuple[str, str
     return out
 
 
-def _abandoned(home: str, rel: str) -> bool:
-    """Whether a candidate finding is litter rather than a file being written.
+def _session_of(rel: str) -> tuple[str, str] | None:
+    """The session a candidate finding belongs to, or None above that level."""
+    parts = rel.split(os.sep)
+    return (parts[1], parts[2]) if len(parts) >= 4 else None  # <tree>/<agent>/<session>/…
+
+
+def _settled(home: str, found: list[tuple[str, str]]) -> list[str]:
+    """The candidate findings that are litter rather than files being written.
 
     The walk above is lockless by nature: it has no session in hand until it has
     already found something. So it sees the in-flight artefacts too — the
@@ -1390,12 +1445,48 @@ def _abandoned(home: str, rel: str) -> bool:
     so `verify` returned `[]`. The same link one level up was reported, because
     that depth never reaches this function — a finding that appeared or
     vanished with how deep the attacker put it. [E7 fs-F7]
+
+    **Once per session, and the wait's verdict is used.** This was once per
+    candidate *file*, and it threw away the `timed_out` the lock yields — so
+    both halves of fs-F6 were undone here, in the sweep, after being fixed in
+    `_verify_one`. Two measurements, both on a sound store with one live writer:
+
+    - The same in-flight `.incoming` file was reported as litter or not
+      depending only on how long the writer held the lock — `0 problem(s)` at a
+      2 s hold, `no manifest speaks for these bytes` at an 8 s hold. Giving up
+      on the lock is exactly the moment the answer stops being trustworthy, and
+      it was the moment the old code started answering from the filesystem.
+    - Every candidate paid the full `LOCK_WAIT` on the *same* lock, so the cost
+      was linear in the number of findings: 2 files took 15.01 s, 4 took 25.05 s.
+      A hundred stray files in one session is over eight minutes of waiting to
+      produce a hundred wrong answers.
+
+    So the lock is taken once per session, held across every candidate of that
+    session, and a session whose lock never came says so in one line instead of
+    guessing for each of its files. Output order follows the walk, because the
+    walk's order is `verify`'s. [E7b L2-F2, L2-F3]
     """
-    parts = rel.split(os.sep)
-    if len(parts) < 4:  # <tree>/<agent>/<session>/…
-        return True
-    with _locked_if_writable(home, parts[1], parts[2]):
-        return os.path.lexists(os.path.join(home, rel))
+    order: list[tuple[str, str]] = []
+    rows: dict[tuple[str, str], list[str]] = {}
+    keep: set[str] = set()
+    for rel, _ in found:
+        key = _session_of(rel)
+        if key is None:
+            keep.add(rel)
+            continue
+        if key not in rows:
+            rows[key] = []
+            order.append(key)
+        rows[key].append(rel)
+
+    declined: list[str] = []
+    for key in order:
+        with _locked_if_writable(home, *key) as unswept:
+            if unswept:
+                declined.append(f"{key[0]}/{key[1]}: not swept for unattested files — {unswept}")
+                continue
+            keep |= {r for r in rows[key] if os.path.lexists(os.path.join(home, r))}
+    return [msg for rel, msg in found if rel in keep] + declined
 
 
 def _flock_within(fd: int, seconds: float) -> bool:
@@ -1442,11 +1533,29 @@ def _locked_if_writable(home: str, agent: str, session_id: str):
     process holding this lock and not letting go was a third answer: measured,
     `verify` did not return at all while the lock was held.
 
-    Yields whether the wait ran out, which is *not* the same question as whether
-    the lock is held. A read-only store yields False with no lock, because a
-    store nobody can write to is one where no capture can be in flight — the
-    sweep is sound without the lock. A timeout yields True, because a holder
-    exists and is mid-publication. Bounding the wait without telling the caller
+    Yields **why the sweep would be unsound**, or None, which is *not* the same
+    question as whether the lock is held. A read-only store yields None with no
+    lock, because a store nobody can write to is one where no capture can be in
+    flight — the sweep is sound without the lock. A timeout yields a reason,
+    because a holder exists and is mid-publication.
+
+    Which of those a failed `os.open` is depends on *why* it failed, and it used
+    to be read as the first one unconditionally. `EROFS`, `EACCES` and `EPERM`
+    are the read-only checkout this function is named for. Every other errno is
+    a lock we did not take on a store that can still be written: `ELOOP` from the
+    `O_NOFOLLOW` that fs-F5 added, which an unprivileged local process causes at
+    will by replacing `.locks/<agent>/<sid>.lock` with a symlink *after* a
+    capture has taken it; `EMFILE` under fd pressure, which needs no attacker at
+    all; `ENOSPC` from `_mkdir`. Measured: with a symlink at the lock path this
+    yielded the same thing an ordinary writable store did, so the sweep ran
+    unlocked beside a live capture and the E4 store-5 false positive came back —
+    deterministically, and silently. [E7b L2-F5]
+
+    A reason rather than a flag, because the two ways of not having the lock are
+    not the same sentence, and the caller prints what it is given: "another
+    process held it" is a lie about a lock that was never opened. [E7b L2-F5]
+
+    Bounding the wait without telling the caller
     put the E4 store-5 false positive back, gated behind five seconds: under a
     saturated machine `verify` gave up on the lock and reported 71 of a healthy
     store's live segments as litter, silently, in the command whose whole job is
@@ -1456,22 +1565,29 @@ def _locked_if_writable(home: str, agent: str, session_id: str):
     it was the second open of it. [E7 fs-F6, fs-F5, E7 pair review]
     """
     fd = None
-    timed_out = False
+    unswept: str | None = None
     if _SAFE_RE.match(agent) and _SAFE_RE.match(session_id):
         try:
             lock = os.path.join(home, ".locks", agent, f"{session_id}.lock")
             _mkdir(os.path.dirname(lock))
             fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             if not _flock_within(fd, LOCK_WAIT):
-                timed_out = True
+                unswept = (
+                    f"another process held the session lock for more than {LOCK_WAIT:g}s"
+                )
                 os.close(fd)
                 fd = None
-        except OSError:
+        except OSError as exc:
             if fd is not None:
                 os.close(fd)
             fd = None
+            if exc.errno not in _UNWRITABLE:
+                # The errno and not the message: `strerror` is the same phrase
+                # for everyone and the path is already the caller's subject.
+                code = errno.errorcode.get(exc.errno or 0, exc.errno)
+                unswept = f"the session lock could not be opened ({code})"
     try:
-        yield timed_out
+        yield unswept
     finally:
         if fd is not None:
             os.close(fd)
@@ -1495,12 +1611,12 @@ def _verify_manifest(home: str, path: str) -> list[str]:
     session_dir = os.path.dirname(path)
     filed_agent = os.path.basename(os.path.dirname(session_dir))
     filed_session = os.path.basename(session_dir)
-    with _locked_if_writable(home, filed_agent, filed_session) as timed_out:
-        return _verify_one(home, path, filed_agent, filed_session, timed_out)
+    with _locked_if_writable(home, filed_agent, filed_session) as unswept:
+        return _verify_one(home, path, filed_agent, filed_session, unswept)
 
 
 def _verify_one(
-    home: str, path: str, filed_agent: str, filed_session: str, timed_out: bool = False
+    home: str, path: str, filed_agent: str, filed_session: str, unswept: str | None = None
 ) -> list[str]:
     """The manifest's own checks, and then — always — the directory it speaks for.
 
@@ -1522,9 +1638,9 @@ def _verify_one(
     swept" is only worth having if nothing in the file being checked can switch
     it off. [E7 S6]
 
-    It does not run when the session lock timed out, and that is the one thing
-    the manifest cannot switch off either — `timed_out` comes from the lock, not
-    from the file. A capture mid-publication has segments on disk that its
+    It does not run when the session lock could not be had, and that is the one
+    thing the manifest cannot switch off either — `unswept` comes from the lock,
+    not from the file. A capture mid-publication has segments on disk that its
     manifest does not name yet, so the sweep would report a sound store as
     littered; the declared checks above are safe either way, because segments
     are immutable and the manifest is replaced atomically. Saying which session
@@ -1537,11 +1653,8 @@ def _verify_one(
         out, reconciled = _verify_declared(home, path, rel, filed_agent, filed_session, listed)
     except Exception as exc:  # noqa: BLE001 - a manifest is untrusted data
         out, reconciled = [f"{rel}: unverifiable manifest ({exc!r})"], False
-    if timed_out:
-        return out + [
-            f"{rel}: not swept for unrecorded files — another process held the session "
-            f"lock for more than {LOCK_WAIT:g}s"
-        ]
+    if unswept:
+        return out + [f"{rel}: not swept for unrecorded files — {unswept}"]
     out += _verify_generation_dir(home, path, rel, filed_agent, filed_session, listed, reconciled)
     return out
 
