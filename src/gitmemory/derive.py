@@ -1326,6 +1326,47 @@ def _without_opinion(text: str) -> str:
     )
 
 
+# Horizontal whitespace, newline excepted. `\S` is negated rather than `[ \t]`
+# listed so the class covers the non-breaking space and the other invisible
+# things that survive a copy out of a browser. [E5 review round, Gemini F1]
+_HSPACE = re.compile(r"[^\S\n]+")
+
+
+def _flatten(text: str) -> str:
+    """`text` with every run of horizontal whitespace made one space.
+
+    Every rule in this module is written for prose typed one space at a time,
+    and three of them turn out to *depend* on that. `_PERSIST` rejects the
+    aspectual reading with fixed-width lookbehinds — Python's `re` allows no
+    other kind — so `(?<!\\bi )` checks exactly one space and "I  keep getting
+    build errors" walks past it. `_PROHIBIT` admits at most three characters
+    between a coordinator and the contraction, so "please    don't push" is
+    missed. And `_PARAGRAPH` looks for `\\n[ \\t]*\\n`, which a Windows line
+    ending breaks outright: the `\\r` is neither, so a CRLF message is one
+    paragraph and the assistant's conjunction scopes over all of it.
+
+    One normalisation instead of three patterns, because it is one defect — the
+    rules model a space, the input carries whitespace — and widening each
+    pattern to accept runs would leave the fourth instance of it for the next
+    reader to find. Applied here and not in `_prose`, because this is the only
+    consumer that pattern-matches: `_injected` reads markers the CLI writes, and
+    the block text that reaches the graph is the bytes as they were committed.
+
+    Nothing measurable moves. Probes A-E, the 140-turn census, the 61-item
+    assistant adjudication and both gate splits are identical either side of it,
+    which is the honest statement of what it is worth: no corpus here contains
+    the input, and the three defects are real anyway. Found by review, held by
+    tests rather than by a board. [E5 review round, Gemini F1-F3]
+
+    There is no `\\r\\n` -> `\\n` here and there was, for one mutation run: the
+    `\\r` is horizontal whitespace, so the class below already turns it into the
+    space `_PARAGRAPH` admits between two newlines, and the replace changed no
+    answer. It scored SURVIVED against the CRLF test that was written for it,
+    which is what a redundant line looks like from the outside.
+    """
+    return _HSPACE.sub(" ", text)
+
+
 def _decision_kind(text: str, role: str) -> str | None:
     """The label for one block's text, or None. At most one per block.
 
@@ -1341,6 +1382,10 @@ def _decision_kind(text: str, role: str) -> str | None:
     loosening these two, because loosening them makes every polite suggestion a
     directive.
     """
+    # Whitespace first, before any pattern reads the text: three of them are
+    # written for one space and get a different answer on two. See `_flatten`.
+    text = _flatten(text)
+
     # Six ways of writing a sentence that is *about* a decision without being
     # one, all of which borrow the vocabulary of the thing they describe. The
     # seventh, the reported attitude, is below: it is the one that comes joined

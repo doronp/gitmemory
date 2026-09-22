@@ -2943,3 +2943,69 @@ def test_two_cases_side_by_side_are_a_deliberation(home, src):
     assert _user_says(
         home, src, "There's a case for dropping the cache. The index stays in memory.",
     ) == ["directive"]
+
+
+# --- E5 review round: the rules model a space, the input carries whitespace --- #
+#
+# Three findings from the standalone review of fix 7, one cause. Each was
+# reproduced through `decisions()` before `_flatten` was written, and each is
+# input nobody has typed into a corpus we own — which is the point: no board
+# here moves, and all three are wrong anyway.
+
+
+def test_a_windows_line_ending_still_ends_a_paragraph(home, src):
+    """`_PARAGRAPH` is `\\n[ \\t]*\\n`, and in `\\r\\n\\r\\n` the `\\r` between
+    the newlines is neither a space nor a tab. So a message typed on Windows —
+    or pasted out of one — was one paragraph however many it had, and the
+    assistant's conjunction scoped over all of it: the concession in the first
+    paragraph licensed the `instead` in the second, which is exactly the false
+    positive the paragraph scope exists to stop.
+
+    Same body as `test_a_concession_three_paragraphs_from_a_substitution_licenses_nothing`,
+    with the other line ending.
+    """
+    body = (
+        "Oh no! You're absolutely right.\r\n\r\n"
+        "The issue is likely that the template is now only showing the combined "
+        "transcript link instead of the session navigation."
+    )
+    assert _assistant_says(home, src, body) == []
+
+    # The control: one paragraph, CRLF or not, is still a reversal.
+    assert [
+        d.kind
+        for d in _assistant_says(
+            home, src, "You're absolutely right —\r\nI'll use a bounded queue instead."
+        )
+    ] == ["reversal"]
+
+
+def test_two_spaces_do_not_get_a_report_past_the_persistence_guard(home, src):
+    """`_PERSIST`'s lookbehinds are fixed-width because Python's `re` allows no
+    other kind, so each one checks exactly one space. "I  keep getting build
+    errors" — the shape the guard was written for, typed with a double space —
+    walked straight past it and came back a standing rule.
+
+    A tab and a non-breaking space are the same hole. The last is not a typo: it
+    is what a copy out of a rendered page puts in the message.
+    """
+    for body in (
+        "I  keep getting mysterious build errors when MDX files have URLs in brackets.",
+        "I\tkeep getting mysterious build errors when the MDX has brackets.",
+        "I\u00a0keep getting mysterious build errors when the MDX has brackets.",
+        "I keep getting mysterious build errors when the MDX has brackets.",
+    ):
+        assert _user_says(home, src, body) == [], body
+
+    # The control, because a guard that ate every `keep` would pass the above.
+    assert _user_says(home, src, "Keep  it as YAML.") == ["directive"]
+
+
+def test_a_directive_typed_with_extra_spaces_is_still_a_directive(home, src):
+    """`_PROHIBIT` admits at most three characters between a coordinator and the
+    contraction, which is a real bound — the alternative is `don't` anywhere in
+    the block, and on real sessions that is a complaint 18 times in 21. Four
+    spaces is still a person typing a rule.
+    """
+    assert _user_says(home, src, "please    don't push to main") == ["directive"]
+    assert _user_says(home, src, "and\t\tdon't touch the vendored tree") == ["directive"]

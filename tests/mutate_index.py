@@ -400,6 +400,41 @@ MUTANTS = [
         '                agent=_safe(man["agent"], "agent"),',
         "test_a_hostile_manifest_field_cannot_opt_a_segment_run_out_of_the_seam_scan",
     ),
+    # One normalisation, four ways to lose it. No board moves either side of
+    # `_flatten` — the input is not in any corpus here — so these rows and the
+    # three tests they name are the whole of what holds it. [E5 review round]
+    (
+        "the decision path stops flattening its input",
+        "derive.py",
+        "    text = _flatten(text)",
+        "    text = text",
+        "test_two_spaces_do_not_get_a_report_past_the_persistence_guard",
+    ),
+    (
+        "a run of horizontal whitespace stops collapsing",
+        "derive.py",
+        '    return _HSPACE.sub(" ", text)',
+        '    return text',
+        "test_a_directive_typed_with_extra_spaces_is_still_a_directive",
+    ),
+    (
+        # The class is `[^\S\n]` and not `[ \t]` for two inputs, and it takes
+        # two rows to say so: the carriage return, which is what makes a CRLF
+        # paragraph still a paragraph, and the non-breaking space a copy out of
+        # a rendered page leaves behind.
+        "the whitespace class stops covering the carriage return",
+        "derive.py",
+        '_HSPACE = re.compile(r"[^\\S\\n]+")',
+        '_HSPACE = re.compile(r"[ \\t\\xa0]+")',
+        "test_a_windows_line_ending_still_ends_a_paragraph",
+    ),
+    (
+        "the whitespace class stops covering the non-breaking space",
+        "derive.py",
+        '_HSPACE = re.compile(r"[^\\S\\n]+")\n',
+        '_HSPACE = re.compile(r"[^\\S\\n\\xa0]+")\n',
+        "test_two_spaces_do_not_get_a_report_past_the_persistence_guard",
+    ),
     # `_safe` is the only thing between a hook payload and a directory name,
     # and it had no row until a bench caller passed a whole dataclass where a
     # session id belongs and the *type* half caught it. Both halves, separately:
@@ -4210,7 +4245,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "88 mutants",
+        "a full pass is 4" + "92 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4594,9 +4629,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 488 mutants x two suite runs, which
+    The filter exists because a full pass is 492 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 487 or trusting the new one untested.
+    to mean either waiting for the other 491 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this
