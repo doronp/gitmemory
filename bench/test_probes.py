@@ -85,7 +85,14 @@ from bench.probes import PROBES, score
 # assistant branch recovers a course change only when the author announces one.
 # The trade above is therefore real and now measured on both sides.
 # `docs/benchmarks/E5-probe-E.md` is the record, and E is spent as of that page.
-FLOOR = {"A": 23, "B": 25, "C": 14, "D": 14, "E": 19}
+#
+# **E is pinned at 20, not 19, and the difference is training data.** One of the
+# two defects E's miss list turned up was worth fixing — `_PIVOT`'s cancel marker
+# only ever worked with a pronoun — and the fix lifts E's own item and probe A's
+# ceiling item (aside 2/5 -> 3/5) and moves nothing else on any board. So 19 is
+# what E measured blind and 20 is what it scores having been read. Pinning 20
+# keeps the floor honest; quoting 20 as a generalisation number would not be.
+FLOOR = {"A": 23, "B": 25, "C": 14, "D": 14, "E": 20}
 
 
 def test_probe_e_is_the_authors_file_and_not_a_copy_of_it():

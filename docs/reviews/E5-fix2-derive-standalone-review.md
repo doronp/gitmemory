@@ -108,9 +108,20 @@ lives.
 
 ## Still open
 
-- **Probe E is unscored.** 40 items in an unrelated domain, written to settle
-  whether fix 2 generalises off the corpus it was tuned on. Until it is scored,
-  fix 2's off-corpus behaviour rests on probes C and D.
+- **`_PROHIBIT` reads pasted machine output as a rule.** *"blocked because of a
+  disallowed MIME type"* and a `gh pr view` man page's *"no arguments"* both
+  score `directive` from a user turn, and both are currently invisible because
+  `_DELIBERATION` happens to catch the same blocks on the word `options`. This
+  is the already-known bare-negation item with real instances attached, and it
+  blocks the `options` narrowing below.
+
+## Closed after this file was written
+
+- **Probe E is scored: 19 of 32**, on 2026-09-22. Fix 2's claim holds off the
+  corpus it was tuned on — 12 of 12 non-decisions, ten of them wearing the
+  substitution frame the fix exists to ignore. The price is 2 of 12 reversals,
+  because nine were written with no self-correction marker and the assistant
+  branch is a marker detector. `docs/benchmarks/E5-probe-E.md`.
 
 ## Recorded, not fixed
 
@@ -134,7 +145,17 @@ lives.
   flips it; the sentence is kept in `derive.py` beside the branch so the next
   reader argues with it rather than with the abstraction.
 - `_REPAIR` shadows `_PIVOT` on *"scratch that"* — a guard wins over a class
-  that would have labelled it.
+  that would have labelled it. Still true, and now known to have been the whole
+  of `_PIVOT`'s cancel marker: the alternative was unreachable, so probe E's
+  *"Scratch the SEARCH ALL"* had nothing to fall back on. The nominal form is
+  `_PIVOT`'s as of `docs/benchmarks/E5-probe-E.md`; the deictic is still
+  `_REPAIR`'s and the ordering question is still open.
+- **`_DELIBERATION` fires on the bare noun `options`**, and narrowing it is
+  blocked rather than declined. Zero verdict changes on 559 real assistant
+  blocks, three new false positives on the 89 user blocks — and those three are
+  `_PROHIBIT` matching `disallowed` and `no arguments` inside pasted machine
+  output, which this guard is masking on an unrelated word. The `_PROHIBIT`
+  repair comes first. See `docs/benchmarks/E5-probe-E.md`.
 - The `over`-complement hole in `_CONTRAST`, declined twice; see
   `docs/reviews/E5-gemini-pair-review-derive.md`.
 - A contrast between two **facts** reads as a contrast between two **plans**:

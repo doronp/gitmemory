@@ -1,7 +1,7 @@
 # E5 probe E — does fix 2 generalise?
 
-**19 of 32**, scored once, on 2026-09-22. The number is not the finding. The
-split inside it is:
+**19 of 32**, scored once, on 2026-09-22 at `53c6464`. The number is not the
+finding. The split inside it is:
 
 | | probe E — COBOL batch on an IBM mainframe |
 |---|---|
@@ -99,9 +99,9 @@ rule.
 Neither is the recall ceiling above; both are cases where a rule that claims the
 shape did not deliver it.
 
-**1. `_DELIBERATION` fires on the bare noun `options`.** This item has
-`_ABANDON` and `_ADOPT` in it and reaches the stop/start pair, which would have
-labelled it correctly:
+**1. `_DELIBERATION` fires on the bare noun `options` — measured, and not
+fixed.** This item has `_ABANDON` and `_ADOPT` in it and reaches the stop/start
+pair, which would have labelled it correctly:
 
 > *"I've spent the whole morning trying to get the OCCURS DEPENDING ON table to
 > behave under the compiler **options** this shop still uses … I'm **dropping**
@@ -115,13 +115,43 @@ options, command-line options — and this is the third time a bare word in a
 guard's alternation has swallowed a real decision (round 4's `same request`,
 F6's `scratches the surface`).
 
-**2. `_PIVOT`'s cancel marker is pinned to a pronoun.** It lists `scratch that`
-and nothing else, so *"Scratch the SEARCH ALL."* falls through — as would
-*scratch the plan*, *scratch the two-pass design*. The deictic is the one form
-the guard `_REPAIR` also claims; the nominal forms are claimed by nobody.
+The narrowing is nonetheless **blocked**, and the measurement is why. Replacing
+the bare set-nouns with a token that cannot match:
 
-Both are recorded here and fixed separately, so that this page reports what the
-probe found rather than what was done about it.
+| | blocks containing one | verdict changed |
+|---|---|---|
+| 559 real assistant blocks | 12 | **0** |
+| 89 real user blocks | 6 | **3**, all `None` → `directive` |
+
+Zero cost on the side that matters, and three *new* false positives on the other
+side — which turn out not to be about this guard at all. The three are pasted
+machine output, and what labels them is `_PROHIBIT`: `disallowed` in a browser's
+*"blocked because of a disallowed MIME type"*, and `no arguments` in a pasted
+`gh pr view` man page. `_DELIBERATION` is masking them by accident, on an
+unrelated word, which is the worst kind of green. So the order of work is fixed
+by the measurement: `_PROHIBIT`'s descriptive matches first — they are the
+already-open *bare negation* item, now with real-corpus instances — and the
+`options` narrowing after, or the board goes from 12 false positives to 15.
+
+**2. `_PIVOT`'s cancel marker was pinned to a pronoun — fixed.** It listed
+`scratch that` and nothing else, so *"Scratch the SEARCH ALL."* fell through, as
+would *scratch the plan* or *scratch the two-pass design*. The deictic is the one
+form the guard `_REPAIR` also claims and runs first on, so the alternative was
+**dead** in F5's sense rather than merely unused: no input could reach it. The
+reachable form, the one that names its object instead of pointing at it, was
+claimed by nobody.
+
+Replaced with the complement of `_REPAIR`'s deictics, carrying `_ABANDON`'s
+`surface` exclusion so one rule governs the idiom. Measured across 726 real
+blocks in both roles, all five probes and both gate splits: **nothing moves
+except probe E's own item and probe A's ceiling item**, which the same change
+lifts — A's aside goes 2/5 to 3/5 and E goes 19 to 20. The recorded diagnosis
+that probe A's item was a guard-ordering casualty (F7) is what made it possible
+to see that the repair belonged in `_PIVOT`.
+
+**Probe E's headline stays 19.** 20 is what it scores after being shown its own
+miss list, which is training data, and the floor in `bench/test_probes.py` is
+re-pinned to 20 with that said out loud.
 
 ## What it does not measure
 

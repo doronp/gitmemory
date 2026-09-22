@@ -1758,6 +1758,24 @@ MUTANTS = [
         r'''    r" (?!x)x)\b",''',
         "test_every_recant_alternative_is_held_by_something",
     ),
+    # --- E5 probe E: the cancel marker that only worked with a pronoun ------ #
+    #
+    # Two rows, because the alternative and its one exclusion are separate
+    # decisions and a single row would let either cover for the other.
+    (
+        "cancelling a thing by name stops being a change of course",
+        "derive.py",
+        "|(?:scratch|strike) (?:the|my|our)(?! surface\\b)",
+        "|(?!x)x",
+        "test_cancelling_a_named_thing_is_a_pivot_and_not_only_cancelling_a_pronoun",
+    ),
+    (
+        "the cancel marker readmits the idiom it was given an exclusion for",
+        "derive.py",
+        "(?:scratch|strike) (?:the|my|our)(?! surface\\b)",
+        "(?:scratch|strike) (?:the|my|our)",
+        "test_cancelling_a_named_thing_is_a_pivot_and_not_only_cancelling_a_pronoun",
+    ),
     (
         "an artifact is published by rename, never written in place",
         "derive.py",
@@ -4136,7 +4154,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "74 mutants",
+        "a full pass is 4" + "76 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4462,9 +4480,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 474 mutants x two suite runs, which
+    The filter exists because a full pass is 476 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 473 or trusting the new one untested.
+    to mean either waiting for the other 475 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

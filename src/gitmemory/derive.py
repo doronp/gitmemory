@@ -1143,9 +1143,25 @@ _COMMIT = re.compile(
 # cannot change your mind without there being something to change it from.
 # Deliberative verbs ("rethink", "reconsider") are deliberately *not* here: they
 # propose thinking again, which is the opposite of having decided.
+#
+# The cancel marker takes a noun phrase, not only a pronoun. `scratch that` was
+# the whole of it and could never fire: `_REPAIR` claims the deictics — `scratch
+# that`, `scratch this`, `scratch the last` — and `_REPAIR` is a guard, checked
+# first, so the alternative was dead in the F5 sense rather than merely unused.
+# What nobody claimed was the nominal form. *"Scratch the SEARCH ALL"* names the
+# thing being cancelled instead of pointing at it, which is the version you write
+# when the thing is two turns back, and it fell through both. So the alternative
+# is the complement of `_REPAIR`'s: a determiner that is not a demonstrative.
+# Measured — 726 real blocks across both roles, every probe, both gate splits: no
+# verdict moves anywhere except the probe E item that found it and probe A's
+# ceiling item, which this lifts. The idiom is refused the same way `_ABANDON`
+# refuses it and for the same reason, because one rule about `surface` is enough:
+# the inflections cannot reach here at all, and the bare imperative would.
+# [E5 probe E, and F6 for the exclusion]
 _PIVOT = re.compile(
     r"\b(?:on second thought|second thoughts|change of plan|new plan"
-    r"|scratch that|chang(?:e|ed|ing) (?:my|our) mind|pivot(?:s|ed|ing)?"
+    r"|(?:scratch|strike) (?:the|my|our)(?! surface\b)"
+    r"|chang(?:e|ed|ing) (?:my|our) mind|pivot(?:s|ed|ing)?"
     r"|(?:chang|alter|revers|shift)(?:e|es|ed|ing)? (?:our |the )?"
     r"(?:course|direction|approach|tack|plan)"
     r"|course.correct\w*|backtrack\w*|u-turn|start over|on reflection)\b",

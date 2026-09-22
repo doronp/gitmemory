@@ -2319,11 +2319,19 @@ def test_a_directory_called_scratch_is_not_an_abandonment(home, src):
     timer is the right tool here" was cited here and in the benchmark write-up as
     the same guard-ordering casualty, and it is not: `_REPAIR`'s object list is
     `that|this|my last|my previous|the last|the previous`, and "the cron" is none
-    of them, so `_REPAIR` never fires on it at all. It fails one layer down —
-    `_ABANDON` matches "Scratch the" and neither `_ADOPT` nor `_COMMIT` fires,
+    of them, so `_REPAIR` never fires on it at all. It failed one layer down —
+    `_ABANDON` matched "Scratch the" and neither `_ADOPT` nor `_COMMIT` fired,
     because "is the right tool here" names the replacement with no adoption verb
     and no first-person commitment. Reordering the guards, which is what the
     recorded diagnosis implies, would not have moved it. [E5 fix 2 review, F7]
+
+    **That ceiling is now lifted, and the correction above is why it could be.**
+    Probe E found the nominal cancel marker — *"Scratch the SEARCH ALL"* — going
+    nowhere, and the repair is in `_PIVOT` rather than in the guard order,
+    exactly where F7's diagnosis said the problem was not. `_PIVOT` is sufficient
+    on its own, so the missing second half stops mattering and the item passes.
+    The deictic is untouched: `_REPAIR` still claims `scratch that`, still runs
+    first, and the assertion below still holds. [E5 probe E]
     """
     body = "Let me check what scratch/ contains - it looks like a dev artifact. I'll use the cache."
     assert _assistant_says(home, src, body) == []
@@ -2334,14 +2342,16 @@ def test_a_directory_called_scratch_is_not_an_abandonment(home, src):
 
     # The corrected diagnosis, asserted rather than narrated: a `== []` here
     # would hold under either story, and the wrong one survived three commits
-    # precisely because nothing distinguished them.
+    # precisely because nothing distinguished them. Kept after the ceiling was
+    # lifted, because what makes the item pass now is `_PIVOT` and the two
+    # predicates F7 was wrong about are still the ones that do not reach it.
     ceiling = "Scratch the cron approach; a systemd timer is the right tool here"
-    assert _assistant_says(home, src, ceiling) == []
+    assert [d.kind for d in _assistant_says(home, src, ceiling)] == ["reversal"]
     assert not derive._REPAIR.search(ceiling), "_REPAIR was never the reason"
-    assert derive._ABANDON.search(ceiling), "_ABANDON is"
     assert not derive._ADOPT.search(ceiling) and not derive._COMMIT.search(ceiling), (
-        "and it is alone, which is a recall gap in the stop/start pair"
+        "the stop/start pair still cannot reach it; `_PIVOT` is what does"
     )
+    assert derive._PIVOT.search(ceiling), "and it needs no second half"
 
 
 # --- E5 fix 2, reviewed: an object list that admitted an idiom --- #
@@ -2733,3 +2743,42 @@ def test_every_recant_alternative_is_held_by_something(home, src):
     )
     for body in observed + declared:
         assert [d.kind for d in _assistant_says(home, src, body)] == ["reversal"], body
+
+
+# --- E5 probe E: the cancel marker that only worked with a pronoun --- #
+
+
+def test_cancelling_a_named_thing_is_a_pivot_and_not_only_cancelling_a_pronoun(home, src):
+    """*"Scratch the SEARCH ALL"* — the form you write when the thing is not the
+    last thing you said.
+
+    `_PIVOT`'s entire cancel marker was `scratch that`, which could never fire:
+    `_REPAIR` claims the demonstratives and runs first, so the alternative was
+    dead in the F5 sense — a mutant of it survives because the code cannot be
+    reached, not because nobody wrote the input. The reachable form is the one
+    that names its object, and nothing claimed it.
+
+    Two things this does *not* change, asserted because both were load-bearing
+    decisions before it:
+
+      - the deictic is still `_REPAIR`'s, which is the recorded guard-ordering
+        trade and not something this touches;
+      - `surface` is still refused in the object position, the same exclusion
+        `_ABANDON` carries for the same idiom. The inflected forms cannot reach
+        `_PIVOT` at all — it wants the bare verb — but *"let me scratch the
+        surface here"* is the bare imperative and would otherwise be a reversal.
+
+    The gain over the stop/start pair is that `_PIVOT` is sufficient alone, so a
+    cancellation whose replacement is named without an adoption verb now lands.
+    That is probe A's ceiling item, and it is the same sentence as probe E's.
+    """
+    for body in (
+        "Scratch the SEARCH ALL. The table isn't guaranteed ascending.",
+        "Scratch the cron approach; a systemd timer is the right tool here.",
+        "Strike my earlier answer on the sort card.",
+        "Scratch our two-pass design. One pass, totals in a table.",
+    ):
+        assert [d.kind for d in _assistant_says(home, src, body)] == ["reversal"], body
+
+    assert _assistant_says(home, src, "Scratch that, I'll use the cache.") == [], "_REPAIR's"
+    assert _assistant_says(home, src, "Let me scratch the surface here first.") == [], "the idiom"
