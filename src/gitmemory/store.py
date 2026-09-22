@@ -38,6 +38,7 @@ import os
 import re
 import stat
 import threading
+import time
 from dataclasses import dataclass
 from glob import glob
 
@@ -71,6 +72,12 @@ _TMP_RE = re.compile(r"^g\d+\.json\.tmp\.")
 _SAFE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 # A segment file, and nothing else, in a generation directory.
 _SEG_RE = re.compile(r"^(\d{12})-(\d{12})\.jsonl$")
+# How long a reader waits for a writer's session lock before going without it.
+# A capture holds that lock for one tail copy, one fsync and one manifest
+# write — milliseconds — so this is ~50x headroom for the case it is meant to
+# wait out, and a bound at all for the case it is not. See
+# `_locked_if_writable`. [E7 fs-F6]
+LOCK_WAIT = 5.0
 
 
 def _safe(name: str, what: str) -> str:
@@ -1292,6 +1299,26 @@ def _abandoned(home: str, rel: str) -> bool:
         return os.path.exists(os.path.join(home, rel))
 
 
+def _flock_within(fd: int, seconds: float) -> bool:
+    """Take an exclusive lock, or give up after `seconds`. True if we hold it.
+
+    Polled rather than alarm-based: `signal.setitimer` is main-thread-only and
+    this runs under the daemon's threads too, and `SIGALRM` would race any
+    other timer in the process. The sleep is short enough that an ordinary
+    capture is waited out in one or two passes, and the whole point is the
+    deadline, not the latency. [E7 fs-F6]
+    """
+    deadline = time.monotonic() + seconds
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.02)
+
+
 @contextlib.contextmanager
 def _locked_if_writable(home: str, agent: str, session_id: str):
     """The session lock when the store can be written to, and nothing when it cannot.
@@ -1310,14 +1337,26 @@ def _locked_if_writable(home: str, agent: str, session_id: str):
     lock we cannot take is a lock we do not need. The names are checked because
     they come off the filesystem rather than through `_safe`, and they are about
     to be joined into a path.
+
+    Bounded since E7, because `LOCK_EX` had no bound and `verify`'s contract is
+    that there is an empty list or a list of problems and no third answer. One
+    process holding this lock and not letting go was a third answer: measured,
+    `verify` did not return at all while the lock was held. A holder that takes
+    longer than `LOCK_WAIT` now gets the treatment a read-only store already
+    gets — the check runs without the lock, and may report an in-flight
+    artefact as litter — which is a wrong answer where there used to be none.
+    `O_NOFOLLOW` for the reason `_lockfile` has it: this is the same file, and
+    it was the second open of it. [E7 fs-F6, fs-F5]
     """
     fd = None
     if _SAFE_RE.match(agent) and _SAFE_RE.match(session_id):
         try:
             lock = os.path.join(home, ".locks", agent, f"{session_id}.lock")
             _mkdir(os.path.dirname(lock))
-            fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+            if not _flock_within(fd, LOCK_WAIT):
+                os.close(fd)
+                fd = None
         except OSError:
             if fd is not None:
                 os.close(fd)

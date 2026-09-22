@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -2675,3 +2676,90 @@ def test_an_ordinary_lock_is_still_created_and_still_locks(tmp_path):
     assert oct(lock.stat().st_mode & 0o777) == "0o600"
     transcript(src, 5, start=5)
     assert store.capture(src, "claude-code", "sess", home=home).appended
+
+
+def test_verify_returns_even_when_a_writer_never_lets_go(tmp_path, monkeypatch):
+    """The README's contract is a list or an empty list; a hang is a third answer.
+
+    Run in a thread with a join bound, because the bug *is* a hang: a test that
+    called `verify` directly would wedge the suite instead of failing it.
+    `flock` conflicts between open file descriptions, so a second `os.open`
+    here is as good a holder as another process and needs no subprocess.
+    [E7 fs-F6]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+
+    monkeypatch.setattr(store, "LOCK_WAIT", 0.05)
+    fd = os.open(Path(home, ".locks", "claude-code", "sess.lock"), os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        out: list[list[str]] = []
+        done = threading.Event()
+
+        def run():
+            out.append(store.verify(home))
+            done.set()
+
+        threading.Thread(target=run, daemon=True).start()
+        assert done.wait(10), "verify did not return while the session lock was held"
+        assert out == [[]], out
+    finally:
+        os.close(fd)
+
+
+def test_a_lock_released_in_time_is_still_waited_for(tmp_path):
+    """Otherwise the bound is a no-op and every ordinary concurrent run degrades.
+
+    The wait is the reason the lock is here at all — a `verify` that gave up
+    instantly would report a live capture's `.incoming` file as litter, which
+    is the false positive `_locked_if_writable` was written to stop. [E7 fs-F6]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+
+    fd = os.open(Path(home, ".locks", "claude-code", "sess.lock"), os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    released = threading.Event()
+
+    def hold():
+        time.sleep(0.3)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        released.set()
+
+    threading.Thread(target=hold, daemon=True).start()
+    try:
+        started = time.monotonic()
+        assert store.verify(home) == []
+        assert time.monotonic() - started >= 0.3, "the reader did not wait for the writer"
+        assert released.is_set()
+    finally:
+        os.close(fd)
+
+
+def test_a_reader_does_not_create_a_file_through_a_symlinked_lock(tmp_path):
+    """The second open of the lock file, reached from `verify` rather than `capture`.
+
+    `_lockfile` got `O_NOFOLLOW` for fs-F5 and this one did not, so the same
+    file-creation primitive was still there one command over. Degrading is the
+    right answer here — `_locked_if_writable` already runs without the lock
+    when it cannot take one — so the observable is what is *not* created.
+    [E7 fs-F6, fs-F5]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+
+    lock = Path(home, ".locks", "claude-code", "sess.lock")
+    target = tmp_path / "elsewhere" / "created-by-verify"
+    lock.unlink()
+    os.makedirs(target.parent)
+    os.symlink(str(target), lock)
+
+    assert store.verify(home) == []
+    assert not target.exists(), "a file was created outside the store"

@@ -71,8 +71,8 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | The same extractor, in a vocabulary its corpus does not contain | two adversarial probes hand-written by a reviewer, both since spent | 26/32 and 27/32 |
 | The same extractor again, on a probe written blind and scored once | 32 items in a domain chosen to share no vocabulary with the corpus | **14/32** |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way | p50 **7.43 ms**, p99 **10.48 ms** |
-| The suite | | **1079 tests**, plus one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **390** negative controls |
+| The suite | | **1082 tests**, plus one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **393** negative controls |
 
 **Read the extraction numbers carefully — the gap between them is the finding.**
 1.0000 precision and recall is the score on a held-out split the extractor's

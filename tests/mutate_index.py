@@ -3527,6 +3527,33 @@ MUTANTS = [
         "    fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)",
         "test_a_symlinked_lock_file_is_not_a_place_to_create_a_file",
     ),
+    # --- E7 fs-F6 ---
+    (
+        "the reader waits for the writer forever",
+        "store.py",
+        "            if not _flock_within(fd, LOCK_WAIT):\n"
+        "                os.close(fd)\n"
+        "                fd = None",
+        "            fcntl.flock(fd, fcntl.LOCK_EX)",
+        "test_verify_returns_even_when_a_writer_never_lets_go",
+    ),
+    (
+        # The other half of the bound: a deadline of zero returns instantly and
+        # passes the hang test, and reintroduces the false positive the lock is
+        # there to prevent.
+        "the reader does not wait for the writer at all",
+        "store.py",
+        "    deadline = time.monotonic() + seconds",
+        "    deadline = time.monotonic()",
+        "test_a_lock_released_in_time_is_still_waited_for",
+    ),
+    (
+        "the reader's open of the lock file follows a symlink again",
+        "store.py",
+        "            fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)",
+        "            fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)",
+        "test_a_reader_does_not_create_a_file_through_a_symlinked_lock",
+    ),
 ]
 
 
