@@ -3689,6 +3689,7 @@ MUTANTS = [
         "the reader waits for the writer forever",
         "store.py",
         "            if not _flock_within(fd, LOCK_WAIT):\n"
+        "                timed_out = True\n"
         "                os.close(fd)\n"
         "                fd = None",
         "            fcntl.flock(fd, fcntl.LOCK_EX)",
@@ -3834,9 +3835,48 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "23 mutants",
+        "a full pass is 4" + "28 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
+    ),
+    # --- E7 pair review (Gemini), findings 1 and 2 ---
+    (
+        "the placeholder excuse goes back to comparing the span alone",
+        "tests/test_no_owner_data.py",
+        '        m.group(0) not in PLACEHOLDERS or text[m.end() : m.end() + 1] == "/"',
+        "        m.group(0) not in PLACEHOLDERS",
+        "test_a_placeholder_does_not_excuse_the_path_underneath_it",
+    ),
+    (
+        "the gitlink parse looks for the mode a regular file has",
+        "tests/test_no_owner_data.py",
+        'if e.startswith("160000 ")]',
+        'if e.startswith("100644 ")]',
+        "test_nothing_in_this_repository_hides_bytes_from_the_object_graph",
+    ),
+    (
+        "the LFS guard looks for a filter name git does not write",
+        "tests/test_no_owner_data.py",
+        '        and "filter=lfs" in (root / p).read_text()',
+        '        and "filter=git-lfs" in (root / p).read_text()',
+        "test_nothing_in_this_repository_hides_bytes_from_the_object_graph",
+    ),
+    # --- E7 pair review, the lock timeout the live-capture test caught ---
+    (
+        "a reader that gave up on the lock sweeps anyway and calls live bytes litter",
+        "store.py",
+        "    if timed_out:\n        return out + [",
+        "    if False:\n        return out + [",
+        "test_a_lock_that_timed_out_declines_the_sweep_rather_than_guessing_at_it",
+    ),
+    (
+        # The other end of the same wire: the sweep is still guarded, but the
+        # guard is never armed, so the reader is back to guessing.
+        "the lock timeout is not reported to the caller that acts on it",
+        "store.py",
+        "                timed_out = True\n",
+        "",
+        "test_a_lock_that_timed_out_declines_the_sweep_rather_than_guessing_at_it",
     ),
 ]
 
@@ -3925,9 +3965,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 423 mutants x two suite runs, which
+    The filter exists because a full pass is 428 mutants x two suite runs, which
     is about three hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 422 or trusting the new one untested.
+    to mean either waiting for the other 427 or trusting the new one untested.
     (Measured at 28 s a row against the 1,120-test offline suite; the number in
     this sentence has been wrong before, so it is `len(MUTANTS)` and a timing,
     not a memory.)

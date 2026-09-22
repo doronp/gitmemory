@@ -1426,20 +1426,30 @@ def _locked_if_writable(home: str, agent: str, session_id: str):
     Bounded since E7, because `LOCK_EX` had no bound and `verify`'s contract is
     that there is an empty list or a list of problems and no third answer. One
     process holding this lock and not letting go was a third answer: measured,
-    `verify` did not return at all while the lock was held. A holder that takes
-    longer than `LOCK_WAIT` now gets the treatment a read-only store already
-    gets — the check runs without the lock, and may report an in-flight
-    artefact as litter — which is a wrong answer where there used to be none.
+    `verify` did not return at all while the lock was held.
+
+    Yields whether the wait ran out, which is *not* the same question as whether
+    the lock is held. A read-only store yields False with no lock, because a
+    store nobody can write to is one where no capture can be in flight — the
+    sweep is sound without the lock. A timeout yields True, because a holder
+    exists and is mid-publication. Bounding the wait without telling the caller
+    put the E4 store-5 false positive back, gated behind five seconds: under a
+    saturated machine `verify` gave up on the lock and reported 71 of a healthy
+    store's live segments as litter, silently, in the command whose whole job is
+    to be believed. `_verify_one` now declines the sweep and says which session
+    it declined, so a degraded answer is legible as one.
     `O_NOFOLLOW` for the reason `_lockfile` has it: this is the same file, and
-    it was the second open of it. [E7 fs-F6, fs-F5]
+    it was the second open of it. [E7 fs-F6, fs-F5, E7 pair review]
     """
     fd = None
+    timed_out = False
     if _SAFE_RE.match(agent) and _SAFE_RE.match(session_id):
         try:
             lock = os.path.join(home, ".locks", agent, f"{session_id}.lock")
             _mkdir(os.path.dirname(lock))
             fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             if not _flock_within(fd, LOCK_WAIT):
+                timed_out = True
                 os.close(fd)
                 fd = None
         except OSError:
@@ -1447,7 +1457,7 @@ def _locked_if_writable(home: str, agent: str, session_id: str):
                 os.close(fd)
             fd = None
     try:
-        yield
+        yield timed_out
     finally:
         if fd is not None:
             os.close(fd)
@@ -1471,11 +1481,13 @@ def _verify_manifest(home: str, path: str) -> list[str]:
     session_dir = os.path.dirname(path)
     filed_agent = os.path.basename(os.path.dirname(session_dir))
     filed_session = os.path.basename(session_dir)
-    with _locked_if_writable(home, filed_agent, filed_session):
-        return _verify_one(home, path, filed_agent, filed_session)
+    with _locked_if_writable(home, filed_agent, filed_session) as timed_out:
+        return _verify_one(home, path, filed_agent, filed_session, timed_out)
 
 
-def _verify_one(home: str, path: str, filed_agent: str, filed_session: str) -> list[str]:
+def _verify_one(
+    home: str, path: str, filed_agent: str, filed_session: str, timed_out: bool = False
+) -> list[str]:
     """The manifest's own checks, and then — always — the directory it speaks for.
 
     The stray-file check used to be the last statement of one long function with
@@ -1495,6 +1507,15 @@ def _verify_one(home: str, path: str, filed_agent: str, filed_session: str) -> l
     blanket guard: a manifest is untrusted data, and "the directory is always
     swept" is only worth having if nothing in the file being checked can switch
     it off. [E7 S6]
+
+    It does not run when the session lock timed out, and that is the one thing
+    the manifest cannot switch off either — `timed_out` comes from the lock, not
+    from the file. A capture mid-publication has segments on disk that its
+    manifest does not name yet, so the sweep would report a sound store as
+    littered; the declared checks above are safe either way, because segments
+    are immutable and the manifest is replaced atomically. Saying which session
+    went unswept is the difference between a degraded answer and a wrong one.
+    [E7 pair review]
     """
     rel = os.path.relpath(path, home)
     listed: set[str] = set()
@@ -1502,6 +1523,11 @@ def _verify_one(home: str, path: str, filed_agent: str, filed_session: str) -> l
         out, reconciled = _verify_declared(home, path, rel, filed_agent, filed_session, listed)
     except Exception as exc:  # noqa: BLE001 - a manifest is untrusted data
         out, reconciled = [f"{rel}: unverifiable manifest ({exc!r})"], False
+    if timed_out:
+        return out + [
+            f"{rel}: not swept for unrecorded files — another process held the session "
+            f"lock for more than {LOCK_WAIT:g}s"
+        ]
     out += _verify_generation_dir(home, path, rel, filed_agent, filed_session, listed, reconciled)
     return out
 

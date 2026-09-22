@@ -2235,6 +2235,13 @@ def test_verify_does_not_report_a_live_capture_as_corruption(home, src):
     A watcher and a `verify` in another terminal is the ordinary case. The
     reviewer measured 79 of 82 concurrent runs reporting a healthy store
     corrupt. [E4, review: store 5]
+
+    It found the regression it was written for, twice, on a machine saturated by
+    a three-hour mutation pass: the E7 bound on the lock wait meant a loaded
+    `verify` gave up and swept anyway, and 71 live segments came back as litter.
+    A lock that timed out is now its own line, so the assertion is "no litter",
+    not "nothing at all" — with a floor, because thirty timeouts in a row would
+    make this pass while measuring nothing. [E7 pair review]
     """
     transcript(src, 200)
     store.capture(src, "claude-code", "sess", home=home)
@@ -2255,12 +2262,15 @@ def test_verify_does_not_report_a_live_capture_as_corruption(home, src):
     writer = threading.Thread(target=grow)
     writer.start()
     try:
-        problems = [p for _ in range(30) for p in store.verify(home)]
+        passes = [store.verify(home) for _ in range(30)]
     finally:
         stop.set()
         writer.join()
     assert failed == [], failed
-    assert problems == [], problems[:5]
+
+    litter = [p for one in passes for p in one if "held the session lock" not in p]
+    assert litter == [], litter[:5]
+    assert [one for one in passes if one == []], "every pass gave up on the lock"
 
 
 def test_a_generation_with_no_segments_is_still_the_live_one(home, src):
@@ -2740,7 +2750,11 @@ def test_verify_returns_even_when_a_writer_never_lets_go(tmp_path, monkeypatch):
     called `verify` directly would wedge the suite instead of failing it.
     `flock` conflicts between open file descriptions, so a second `os.open`
     here is as good a holder as another process and needs no subprocess.
-    [E7 fs-F6]
+
+    The list is not empty, and asserting that it was is how this test missed
+    what bounding the wait cost: giving up on the lock re-opened the E4 store-5
+    false positive behind a five-second delay. It now names the session it could
+    not sweep. [E7 fs-F6, E7 pair review]
     """
     home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
     os.mkdir(home)
@@ -2760,9 +2774,53 @@ def test_verify_returns_even_when_a_writer_never_lets_go(tmp_path, monkeypatch):
 
         threading.Thread(target=run, daemon=True).start()
         assert done.wait(10), "verify did not return while the session lock was held"
-        assert out == [[]], out
+        assert out == [
+            [
+                "sessions/claude-code/sess/g00.json: not swept for unrecorded files — "
+                "another process held the session lock for more than 0.05s"
+            ]
+        ], out
     finally:
         os.close(fd)
+
+
+def test_a_lock_that_timed_out_declines_the_sweep_rather_than_guessing_at_it(tmp_path, monkeypatch):
+    """The whole point of the bound is that a reader gives up. What it gives up
+    is the one check that needs the lock, and it has to say which.
+
+    The planted `.incoming` file is what a capture looks like mid-publication:
+    real bytes on disk that the manifest does not name yet. Without the lock the
+    sweep cannot tell that from litter, so before this it reported litter — the
+    exact E4 store-5 false positive the lock was added to stop, back again for
+    any reader unlucky enough to wait five seconds. [E7 pair review]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    Path(home, "raw", "claude-code", "sess", "g00", ".incoming.1.2").write_bytes(b"{}\n")
+
+    monkeypatch.setattr(store, "LOCK_WAIT", 0.05)
+    fd = os.open(Path(home, ".locks", "claude-code", "sess.lock"), os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        held = store.verify(home)
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+    assert held == [
+        "sessions/claude-code/sess/g00.json: not swept for unrecorded files — "
+        "another process held the session lock for more than 0.05s"
+    ], held
+
+    # And the positive control, because a check that never reports anything
+    # would pass the assertion above for the wrong reason: with the lock free,
+    # the same file is litter and is named as such.
+    assert store.verify(home) == [
+        "sessions/claude-code/sess/g00.json: unrecorded file in the generation "
+        "directory: .incoming.1.2"
+    ]
 
 
 def test_a_lock_released_in_time_is_still_waited_for(tmp_path):

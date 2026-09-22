@@ -62,6 +62,12 @@ ALLOWED = {"tests/test_no_owner_data.py"}
 # every historical blob of that file, which cannot be. Compared whole rather than
 # as a prefix: `/Users/xavier` is a different span and is still a finding.
 #
+# "Whole span" is not the same as "whole path", and this comment claimed it was
+# for one round. The pattern's character class stops at `/`, so the span matched
+# in `/Users/x/private_key.pem` is `/Users/x` — identical to the placeholder —
+# and the whole path went through. `_hits` now asks what follows the span; see
+# there. [E7 pair review, finding 1]
+#
 # The control samples are deliberately *not* in here. They live in this file,
 # which the allowlist covers by name in both scans, so exempting their text as
 # well would blind the scanner everywhere for nothing. [E7 S13]
@@ -69,8 +75,22 @@ PLACEHOLDERS = {"/Users/x"}
 
 
 def _hits(pattern: re.Pattern, text: str) -> bool:
-    """Does `text` match, ignoring spans that are known placeholders?"""
-    return any(m.group(0) not in PLACEHOLDERS for m in pattern.finditer(text))
+    """Does `text` match, ignoring spans that are known placeholders?
+
+    A placeholder followed by `/` is not a placeholder. It is the first
+    component of a real path, and the span the pattern reports is the same
+    either way, so comparing the span alone excused everything underneath it:
+    a fixture repository whose only file read `the key is at
+    /Users/x/private_key.pem` scanned clean through `_scan`, `_tracked` and all.
+    Every occurrence in this repository's history is a quoted or backticked
+    token — no blob anywhere in the object graph contains `/Users/x/` — so
+    looking at the next character costs nothing and closes it.
+    [E7 pair review, finding 1]
+    """
+    return any(
+        m.group(0) not in PLACEHOLDERS or text[m.end() : m.end() + 1] == "/"
+        for m in pattern.finditer(text)
+    )
 
 
 # One string per pattern that the pattern must match. Module-level rather than
@@ -148,6 +168,22 @@ def _scan(root: Path, files: list[str], pattern: re.Pattern, allowed: set[str]) 
             if _hits(pattern, line):
                 hits.append(f"{rel}:{n}")
     return hits
+
+
+def _gitlinks(ls_files_s_z: str) -> list[str]:
+    """Submodule paths in `git ls-files -s -z` output. [E7 pair review, finding 2]"""
+    return [e.split("\t", 1)[-1] for e in ls_files_s_z.split("\0") if e.startswith("160000 ")]
+
+
+def _lfs_attributes(root: Path, paths: set[str]) -> list[str]:
+    """Tracked `.gitattributes` that route content through LFS. [E7 pair review, finding 2]"""
+    return sorted(
+        p
+        for p in paths
+        if os.path.basename(p) == ".gitattributes"
+        and (root / p).is_file()
+        and "filter=lfs" in (root / p).read_text()
+    )
 
 
 def _opaque(root: Path, files: list[str]) -> list[str]:
@@ -409,3 +445,81 @@ def test_the_patterns_would_actually_catch_something():
     ):
         for what, pattern in FORBIDDEN.items():
             assert not pattern.search(legitimate), f"{what} falsely matches {legitimate!r}"
+
+
+def test_a_placeholder_does_not_excuse_the_path_underneath_it(tmp_path):
+    """The excuse is for a token, not for a home directory called `x`.
+
+    Reported by the pair reviewer against `_hits`; reproduced here through the
+    real scanner instead, because the interesting question is not whether the
+    helper returns `False` but whether a repository containing the leak comes
+    back clean. Before the fix this fixture produced no hits at all.
+    [E7 pair review, finding 1]
+    """
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    (tmp_path / "leak.md").write_text("the key is at /Users/x/private_key.pem\n")
+    hits = _scan(tmp_path, _tracked(tmp_path), FORBIDDEN["a macOS home directory"], set())
+    assert hits == ["leak.md:1"], hits
+
+    # And the other direction, or the fix is just "delete the excuse": the two
+    # shapes the placeholder exists for still have to pass.
+    # The two shapes it really takes in this history: a quoted token in a
+    # mutation row, and a backticked one in prose. Written a third way here on
+    # purpose — spelling the row's own source line out would give that row's
+    # anchor a second occurrence and make the harness skip it.
+    for excused in ('the mutant writes "/Users/x" as a span', "it failed on `/Users/x` itself"):
+        assert not _hits(FORBIDDEN["a macOS home directory"], excused), excused
+
+
+def test_nothing_in_this_repository_hides_bytes_from_the_object_graph(tmp_path):
+    """`pushable_objects` walks one repository's objects. Two git features move
+    shipped bytes outside that walk, and neither is in use here:
+
+    - a **submodule** is a gitlink, 20 bytes of commit id; the blobs it names
+      live in another object database that `git rev-list --objects --all` never
+      enumerates.
+    - **LFS** commits a pointer file; the content is fetched from a server, so
+      the history scan reads `oid sha256:...` and calls it clean.
+
+    Neither is a bug to fix — they are assumptions to keep true. Same shape as
+    `test_nothing_tracked_is_a_file_the_scanner_cannot_read`: make the class
+    empty, so introducing the first one is a deliberate act with this assertion
+    in the diff. [E7 pair review, finding 2]
+    """
+    out = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-s", "-z"],
+        capture_output=True, text=True, check=True,
+    )
+    assert not _gitlinks(out.stdout), (
+        f"submodules are invisible to the history scan: {_gitlinks(out.stdout)}"
+    )
+    # Empty is also what a broken parse returns, so: two entries git would
+    # really emit, through the same helper. `\x00` and not `\0`, because `\0`
+    # ahead of the `160000` is an octal escape and the first draft of this line
+    # fed the helper one record instead of two. [E7 pair review, finding 2]
+    zero = "0" * 40
+    assert _gitlinks(f"100644 {zero} 0\tREADME.md\x00160000 {zero} 0\tvendor/thing\x00") == [
+        "vendor/thing"
+    ]
+
+    names = subprocess.run(
+        ["git", "-C", str(ROOT), "rev-list", "--objects", "--all"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    ever = [ln.split(" ", 1)[1] for ln in names.splitlines() if " " in ln]
+    assert not [p for p in ever if os.path.basename(p) == ".gitmodules"], (
+        "a .gitmodules is in this repository's history; the history scan cannot "
+        "see into whatever it points at"
+    )
+
+    lfs = _lfs_attributes(ROOT, set(ever))
+    assert not lfs, f"LFS-tracked paths ship bytes the history scan never reads: {lfs}"
+    # Same again: there is no `.gitattributes` here, so the real call above is
+    # an empty list over an empty class, and that passes when the helper is
+    # wrong. One planted file, through the same helper.
+    (tmp_path / "sub").mkdir()
+    (tmp_path / ".gitattributes").write_text("*.bin filter=lfs diff=lfs -text\n")
+    (tmp_path / "sub" / ".gitattributes").write_text("*.md text\n")
+    assert _lfs_attributes(tmp_path, {".gitattributes", "sub/.gitattributes"}) == [
+        ".gitattributes"
+    ]
