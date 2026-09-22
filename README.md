@@ -70,8 +70,10 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | Decision extraction | held-out split, gate pre-registered at precision ≥ 0.85 / recall ≥ 0.60 | **1.0000 / 1.0000** — and see below |
 | The same extractor, in a vocabulary its corpus does not contain | two adversarial probes hand-written by a reviewer, both since spent | 26/32 and 27/32 |
 | The same extractor again, on two probes written blind and each scored once | 32 items apiece, in two unrelated domains chosen to share no vocabulary with the corpus or with each other | **14/32** and **14/32** |
+| The same extractor on text nobody wrote for a benchmark | a census of every distinct human turn in a third-party MIT corpus of real sessions — 140 items, labelled blind by three annotators at 139/140 agreement | **precision 0.0000, recall 0.0000** |
+| …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | **9 of 61** — precision 0.15 |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **814 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| The suite | on a fresh checkout, no downloads | **821 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
 | Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **440** negative controls |
 
 The 322 conformance cases replay claude-code-log's MIT fixtures — third-party,
@@ -84,7 +86,7 @@ git -C .conformance/claude-code-log checkout 6ad029e   # the pin in docs/DESIGN.
 ```
 
 `.conformance/` is gitignored; `GITMEMORY_CC_FIXTURES` points at the
-`test/test_data` of a clone somewhere else. **The count above says 814 because
+`test/test_data` of a clone somewhere else. **The count above says 821 because
 that is what a fresh checkout collects.** It said 1127 for two epochs, which was
 true only on a machine that had already cloned the corpus — into a scratch
 directory, so the test written to stop this README quoting an unreachable number
@@ -130,6 +132,36 @@ against a probe's own miss list turns the unspent measurement into more training
 data. Full records: [C](docs/benchmarks/E5-probe-C.md),
 [D](docs/benchmarks/E5-probe-D.md).
 
+**Then it was run on text nobody wrote for a benchmark, and scored zero.**
+Probes are fiction; a person asking for work at 1am does not write like a probe
+author. The secondary set is every distinct human turn in four real projects
+from the same third-party MIT corpus this repository already clones — a census,
+not a sample, 140 items, each labelled by three annotators who worked
+independently and never saw the extractor. It produced 32 `directive` nodes,
+**none of them a directive**, and missed both of the two that were there.
+
+Two things only real text could say. **A standing rule is rare** — 2 turns in
+140, against a third or more in every probe, because an author asked to write
+decisions writes decisions. And **two turns in five in the user role were not
+typed by a user**: `<ide_opened_file>`, `<local-command-stdout>`, slash-command
+wrappers. Nineteen of the thirty false positives are those, and the mechanism is
+one injected sentence — *"This may or may not be related to the current task"* —
+in which `_PROHIBIT` matches **`may not`**. No probe can contain this, because
+every probe item is a sentence somebody wrote on purpose.
+
+The assistant side is larger and worse: 61 distinct blocks called `reversal`, of
+which three adjudicators kept **9**. The substitution frame does most of the
+damage — *"pass a Path instead of a string"* is two-sided and is not a change of
+course.
+
+Nothing was changed in this commit either. The measurement is recorded against
+the code exactly as it stood when the labels were written, because a number
+produced after the fix is a number about the fix. And unlike a probe this set
+cannot be replaced by writing another one — there is one corpus of real
+third-party sessions here, so after the first fix its score is a regression
+floor and nothing more. Full record:
+[the secondary set](docs/benchmarks/E5-secondary-set.md).
+
 ## What is *not* measured, said on the dashboard itself
 
 A memory system that reports only its wins is a marketing surface. These ship
@@ -146,6 +178,11 @@ as rows on the page, not as omissions:
   frugality number assumes both are zero.
 - **Three of the four retriever arms have never run** — only BM25/FTS5 was
   measured. The gate report says so in the arm list.
+- **The decision graph is close to useless on real sessions**, and that is
+  measured rather than suspected. Precision 0.0000 on the user side, 0.15 on the
+  assistant side. Four projects and one developer is not a population, and
+  recall rests on two gold items — but the false-positive count does not, and it
+  is 32 of 32.
 
 ## Getting started
 
@@ -203,7 +240,7 @@ Under construction, epoch by epoch.
 | E2 | Segment store, contiguity proof, `verify`, redaction gate | passed |
 | E3 | Index + retrieval + CLI | passed — [gate report](docs/benchmarks/E3-longmemeval.md) |
 | E4 | Hook shim + watcher + git daemon | in review |
-| E5 | Derivation and decision graph | passed — [gate report](docs/benchmarks/E5-decision-gate.md); three artifacts per generation. Reopened by [probe C](docs/benchmarks/E5-probe-C.md) and held open by [probe D](docs/benchmarks/E5-probe-D.md), which replicates it in an unrelated domain: user-reverses-own-instruction is 0 of 11, twice |
+| E5 | Derivation and decision graph | passed — [gate report](docs/benchmarks/E5-decision-gate.md); three artifacts per generation. Reopened by [probe C](docs/benchmarks/E5-probe-C.md) and held open by [probe D](docs/benchmarks/E5-probe-D.md), which replicates it in an unrelated domain: user-reverses-own-instruction is 0 of 11, twice. Then [the secondary set](docs/benchmarks/E5-secondary-set.md) scored it on real third-party sessions: **precision 0.0000 / recall 0.0000** on 140 human turns, 9 of 61 on the assistant side |
 | E6 | Dashboard | passed — seven views over the index, served read-only on loopback, [review record](docs/reviews/E6-standalone-review.md) |
 | E7 | RC1: security review, private repo | review closed — six surfaces, 68 findings, [round record](docs/reviews/E7-security-round.md); the fixes then reviewed twice over, [pair review](docs/reviews/E7-pair-review.md); every row of the control index run, and the seven it broke on fixed. Remaining: the repository itself |
 

@@ -182,11 +182,15 @@ The findings behind diffs 1 and 2 were taken anyway; the diffs were not.
 
 ## Still owed
 
-1. **A third, unspent probe.** Both current probes have informed revisions and
+1. ~~**A third, unspent probe.** Both current probes have informed revisions and
    are now training data. The reviewer's §4 makes this argument independently
    and it is correct: a `>=` floor on a spent probe pressures overfitting. Its
    proposal — promote the spent probes to `==` unit tests and keep one blind —
-   is the right shape.
+   is the right shape.~~ Done, twice over: probe C (theatrical show control) and
+   probe D (aviation line maintenance), each written blind and scored once, each
+   **14/32** with the same internal split. The reviewer's §4 was right about the
+   risk and wrong about the size of it — the spent probes read 26 and 27, and an
+   unspent one reads 14.
 2. **The hand-labelled secondary set** named in `docs/DESIGN.md`. Still the
    binding measurement gap: every number in this epoch is either a synthetic
    fixture or a probe written by a reviewer.

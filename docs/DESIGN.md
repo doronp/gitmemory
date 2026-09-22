@@ -393,6 +393,16 @@ linter retries as "rejected alternatives."
 - **Pre-registered bar, declared before measuring: precision ≥ 0.85, recall ≥ 0.60.**
 - **Below the bar it does not ship,** and the README states the measured number and says so.
 
+**[E5, the secondary set — the promise above is discharged and it failed.** Not
+30 hand-labelled real-*shaped* sessions: a census of all 140 distinct human
+turns in four *real* third-party sessions, three blind annotators, 139/140
+agreement. The synthetic set is too easy. Precision **0.0000**, recall
+**0.0000**, against 1.0000/1.0000 on the held-out synthetic split; the assistant
+side reads 9 of 61. Two findings no probe could reach: a standing rule is 2
+turns in 140, and 39% of user-role prose is injected by the CLI rather than
+typed — which is where 19 of the 30 false positives come from. Recorded with the
+extractor unchanged. `docs/benchmarks/E5-secondary-set.md`.**]**
+
 Every node carries a `source_ref` to a committed block hash. **No node may exist without one.**
 That rule is what stops a decision diagram from becoming fiction.
 
@@ -420,6 +430,13 @@ believes is in force after the user revoked it.
 
 `docs/benchmarks/E5-probe-C.md` is the measurement. It is unspent and must stay that way: the
 fix is scored by a probe D written by someone who has not read C, not by C.
+
+**[E5, probe D.** Written and scored. It replicates C exactly — **14/32**, 10/10 non-decisions,
+4/11 directives, 0/11 reversals — in aviation line maintenance, by an author who had not seen
+C's theatrical show control. So every figure above is now two measurements in two unrelated
+domains, and the shortfall is the extractor's rather than one probe author's vocabulary. One
+detail C did not surface: two of D's eleven reversals came back labelled `directive`, which is
+the right rule under the wrong kind rather than a miss. `docs/benchmarks/E5-probe-D.md`.**]**
 
 #### The graph layer is graphify, not ours **[E2]**
 
