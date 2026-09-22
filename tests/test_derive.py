@@ -962,7 +962,9 @@ def test_a_terminal_escape_in_a_transcript_does_not_reach_the_artifacts(home, sr
     into the committed artifacts verbatim. `ideas.json` never passed through
     `_label` at all. Both are fixed at the one door they share. [E7]
     """
-    hostile = "We decided \x1b[2K to ‮esrever‬ the order \x00 and drop\x7f the ​cache."
+    hostile = (
+        "We decided \x1b[2K to \u202eesrever\u202c the order \x00 and drop\x7f the \u200bcache."
+    )
     write(src, [user("u1", PROSE[0]), assistant("a1", [text(hostile)]), user("u2", PROSE[2])])
     store.capture(src, "claude-code", "sess", home=home)
     assert derive.build(home).skipped == []
@@ -970,7 +972,7 @@ def test_a_terminal_escape_in_a_transcript_does_not_reach_the_artifacts(home, sr
     strings = _artifact_strings(home)
     assert any("esrever" in blob for blob in strings.values()), "the hostile block was dropped"
     for name, blob in strings.items():
-        for ch in "\x1b‮‬\x00\x7f​":
+        for ch in "\x1b\u202e\u202c\x00\x7f\u200b":
             assert ch not in blob, f"{name} carries U+{ord(ch):04X}"
     # Spelled out, not deleted: a reader can still see what was there.
     assert any("\\u202e" in blob for blob in strings.values()), strings
@@ -3009,3 +3011,36 @@ def test_a_directive_typed_with_extra_spaces_is_still_a_directive(home, src):
     """
     assert _user_says(home, src, "please    don't push to main") == ["directive"]
     assert _user_says(home, src, "and\t\tdon't touch the vendored tree") == ["directive"]
+
+
+def test_a_bullet_does_not_turn_a_restatement_back_into_a_rule(home, src):
+    """Four of the seven guards anchor on `\\A`. `_BACKREF` opens
+    `(?:\\A|[.!?;:,\\n)]|...)` and `_QUESTION` is `\\A\\s*(?:wh-word|aux)\\b...\\?\\s*\\Z`,
+    so two characters of list markup in front of the block — which the client
+    renders and the person never typed — turn the guard off, and the restatement
+    or question it was suppressing comes back as a new rule.
+
+    That is the expensive direction: a false positive, not a miss. A leading
+    *space* does not do it, because both anchors tolerate `\\s*`; this is why the
+    whitespace fix above did not cover it.
+
+    The paired controls matter more than the cases. A rule typed as a bullet is
+    the single most ordinary shape in a chat message, and a fix that stripped
+    the marker and then swallowed the sentence with it would pass every
+    assertion in the first half of this test.
+    """
+    restatement = "Reiterating from the kickoff doc: no direct writes to the replica."
+    question = "Could we make it a rule that no cue writes to two universes at once?"
+    assert _user_says(home, src, restatement) == []
+    assert _user_says(home, src, question) == []
+
+    for marker in ("- ", "* ", "1. ", "> ", "#### ", "| ", '"', "**", "\ufeff", "\u200b", "\xad"):
+        assert _user_says(home, src, marker + restatement) == [], marker
+        assert _user_says(home, src, marker + question) == [], marker
+
+        # The control, on the same marker: stripping it must not cost the rule.
+        assert _user_says(home, src, marker + "Never commit to main.") == ["directive"], marker
+
+    # And the marker on an inner line, which is what `re.M` is for: a heading
+    # followed by the rule is how a person writes a list of them.
+    assert _user_says(home, src, "Ground rules\n\n- Never commit to main.") == ["directive"]

@@ -413,8 +413,8 @@ MUTANTS = [
     (
         "a run of horizontal whitespace stops collapsing",
         "derive.py",
-        '    return _HSPACE.sub(" ", text)',
-        '    return text',
+        '    return _HSPACE.sub(" ", _LINE_MARKUP.sub("", _INVISIBLE.sub("", text)))',
+        '    return _LINE_MARKUP.sub("", _INVISIBLE.sub("", text))',
         "test_a_directive_typed_with_extra_spaces_is_still_a_directive",
     ),
     (
@@ -434,6 +434,53 @@ MUTANTS = [
         '_HSPACE = re.compile(r"[^\\S\\n]+")\n',
         '_HSPACE = re.compile(r"[^\\S\\n\\xa0]+")\n',
         "test_two_spaces_do_not_get_a_report_past_the_persistence_guard",
+    ),
+    # The other half of the same normalisation, and the more valuable half: the
+    # whitespace rows above hold three *misses*, these hold false positives.
+    # Four of the seven guards anchor on `\A`, so a character in front of the
+    # first word turns the guard off and the restatement or question it was
+    # suppressing comes back a rule. [E5 review round]
+    (
+        "a zero-width character in front of a block stops being removed",
+        "derive.py",
+        '_LINE_MARKUP.sub("", _INVISIBLE.sub("", text))',
+        '_LINE_MARKUP.sub("", text)',
+        "test_a_bullet_does_not_turn_a_restatement_back_into_a_rule",
+    ),
+    (
+        "a list marker in front of a block stops being removed",
+        "derive.py",
+        '_LINE_MARKUP.sub("", _INVISIBLE.sub("", text))',
+        '_INVISIBLE.sub("", text)',
+        "test_a_bullet_does_not_turn_a_restatement_back_into_a_rule",
+    ),
+    (
+        # `re.M` is the difference between the first line of a block and every
+        # line of it, and `_BACKREF` admits `\n` as the start of an assertion —
+        # so a heading followed by a bulleted rule needs the inner line too.
+        "markup is stripped from the first line of a block and no other",
+        "derive.py",
+        '[ \\t]*", re.M)',
+        '[ \\t]*")',
+        "test_a_bullet_does_not_turn_a_restatement_back_into_a_rule",
+    ),
+    (
+        # Two class-narrowing rows, on the two classes. Both name the sweep
+        # rather than the unit test: it enumerates the markers one per case, so
+        # a narrowed class fails as "byte order mark changed the verdict on N of
+        # 184 probe items" instead of on whichever entry of a tuple came first.
+        "the invisible class stops covering the byte order mark",
+        "derive.py",
+        "\\u2060\\ufeff]",
+        "\\u2060]",
+        "test_the_verdict_does_not_depend_on_the_formatting_layer",
+    ),
+    (
+        "the markup class stops covering an ordered list",
+        "derive.py",
+        "|\\d{1,3}[.)]|",
+        "|(?!x)x|",
+        "test_the_verdict_does_not_depend_on_the_formatting_layer",
     ),
     # `_safe` is the only thing between a hook payload and a directory name,
     # and it had no row until a bench caller passed a whole dataclass where a
@@ -4245,7 +4292,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "92 mutants",
+        "a full pass is 4" + "97 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4629,9 +4676,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 492 mutants x two suite runs, which
+    The filter exists because a full pass is 497 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 491 or trusting the new one untested.
+    to mean either waiting for the other 496 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

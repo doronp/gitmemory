@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from bench.probes import PROBES, score
+from gitmemory.derive import _decision_kind
 
 # Measured 2026-09-21 on 831ef6e, after guard round 3. Before that round:
 # A 23/32, B 26/32. The dev fixture read 1.0000/1.0000 both times.
@@ -167,6 +168,60 @@ def test_a_ceiling_miss_is_not_counted_as_a_class_miss():
     assert (class_ok, class_n) == (1, 1)
     assert (ceil_ok, ceil_n) == (0, 1)
     assert len(misses) == 1, "a ceiling miss is still reported, just not scored against the class"
+
+
+# --- the formatting layer must not reach the rules --- #
+#
+# A chat client renders a bullet, a blockquote, a heading; a paste out of a
+# browser carries a byte-order mark or a zero-width space; an editor writes
+# CRLF. None of it is something a person typed as part of the sentence, and the
+# rules were all written for prose that is one space wide and starts at `\A`.
+#
+# Four of the seven guards anchor there — `_BACKREF` opens with `(?:\A|...)`,
+# `_QUESTION` is `\A\s*(?:who|what|...)\b[^.!?]*\?\s*\Z` — so a single invisible
+# character or a list marker in front of a block turns the guard off, and the
+# restatement or question it was suppressing then reads as a new rule. A guard
+# that stops firing is a **false positive**, which is the expensive direction.
+#
+# The variations below are the ones a real client actually produces. The claim
+# the sweep holds is not that the extractor is right about these 184 sentences;
+# the floors above hold that. It is the weaker and more durable one: the answer
+# does not depend on the formatting layer. Adding a variation here is cheap, and
+# every one added so far has either found a defect or confirmed there was none.
+VARIATIONS = {
+    "byte order mark": lambda t: "\ufeff" + t,
+    "zero width space": lambda t: "\u200b" + t,
+    "soft hyphen": lambda t: "\xad" + t,
+    "left to right mark": lambda t: "\u200e" + t,
+    "crlf": lambda t: t.replace("\n", "\r\n"),
+    "trailing newline": lambda t: t + "\n",
+    "indent": lambda t: "    " + t.replace("\n", "\n    "),
+    "double space": lambda t: t.replace(" ", "  "),
+    "bullet": lambda t: "- " + t,
+    "star bullet": lambda t: "* " + t,
+    "numbered": lambda t: "1. " + t,
+    "blockquote": lambda t: "> " + t,
+    "heading": lambda t: "## " + t,
+    "table cell": lambda t: "| " + t,
+    "double quote": lambda t: '"' + t,
+    "smart quote": lambda t: "“" + t,
+    "bulleted second line": lambda t: t.replace("\n", "\n- ", 1),
+}
+
+
+@pytest.mark.parametrize("variation", sorted(VARIATIONS))
+def test_the_verdict_does_not_depend_on_the_formatting_layer(variation):
+    apply = VARIATIONS[variation]
+    moved = [
+        (name, text, base, got)
+        for name, cases in PROBES.items()
+        for _g, role, text, _e in cases
+        if (base := _decision_kind(text, role)) != (got := _decision_kind(apply(text), role))
+    ]
+    assert not moved, "\n".join(
+        [f"{variation} changed the verdict on {len(moved)} of 184 probe items:"]
+        + [f"  [{n}] {b} -> {g}: {t!r}" for n, t, b, g in moved[:5]]
+    )
 
 
 def test_every_probe_case_is_labelled_with_one_of_three_verdicts():

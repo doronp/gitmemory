@@ -542,7 +542,7 @@ TERMINAL_EDITS = {
     "ESC": "rel\033[2K\rgitmemory: everything is fine",
     "DEL": "rel\177x",
     "C1 CSI": "rel2K",
-    "bidi override": "rel‮txt.exe",
+    "bidi override": "rel\u202etxt.exe",
     "line separator": "rel gitmemory: everything is fine",
 }
 

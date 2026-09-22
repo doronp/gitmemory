@@ -1331,9 +1331,26 @@ def _without_opinion(text: str) -> str:
 # things that survive a copy out of a browser. [E5 review round, Gemini F1]
 _HSPACE = re.compile(r"[^\S\n]+")
 
+# The zero-width format characters. None of them is whitespace — `\S` matches
+# every one — so the class above does not reach them, and a single one in front
+# of a block moves the text off `\A`, where four of the seven guards are
+# anchored. Soft hyphen and the Mongolian vowel separator are in the range for
+# the same reason the rest are: invisible in the client, fatal to an anchor.
+#
+# Written as escapes and not as the characters themselves, which is not a style
+# preference: a class of invisible characters typed invisibly cannot be read, a
+# reviewer cannot tell which ones are in it, and a diff that drops one is blank.
+_INVISIBLE = re.compile(r"[\xad\u180e\u200b-\u200f\u2060\ufeff]")
+
+# The markup a chat client renders and a rule cannot see: list bullets, the
+# blockquote and heading markers, a table pipe, an opening quote, emphasis. Per
+# line, because `_BACKREF` admits `\n` as the start of an assertion and then
+# expects the cue immediately after it.
+_LINE_MARKUP = re.compile(r"^[ \t]*(?:[-*+>#|]+|\d{1,3}[.)]|[\"'“‘])[ \t]*", re.M)
+
 
 def _flatten(text: str) -> str:
-    """`text` with every run of horizontal whitespace made one space.
+    """`text` as the rules assume it was typed: no formatting layer, one space.
 
     Every rule in this module is written for prose typed one space at a time,
     and three of them turn out to *depend* on that. `_PERSIST` rejects the
@@ -1363,8 +1380,28 @@ def _flatten(text: str) -> str:
     space `_PARAGRAPH` admits between two newlines, and the replace changed no
     answer. It scored SURVIVED against the CRLF test that was written for it,
     which is what a redundant line looks like from the outside.
+
+    **Two more of the same defect, found by asking what else is in front of the
+    first word.** Four of the seven guards anchor on `\\A` or on a class of
+    punctuation, so anything else in that position turns the guard off — and a
+    guard that stops firing is a *false positive*, because the block it was
+    suppressing is a restatement or a question that now reads as a new rule.
+    A zero-width character does it, and so does the bullet in front of "- Per my
+    earlier message, the worker must never write to the replica", which comes
+    back `directive` today. All 32 items of probe A, B, C, D and E were swept
+    under four variations to find these: a leading BOM flips four of them, and
+    CRLF, a trailing newline and an indent flip none.
+
+    ponytail: stripping `-` at the head of a line also strips it from the
+    removed side of a pasted diff, and `_PROHIBIT` reading pasted machine text
+    as a rule is an open item with three blocks left on it. Measured, that costs
+    nothing here — the 140-turn census has 14 blocks with a markup line inside
+    them and its false-positive count does not move — but it is the place this
+    would show up, and the upgrade is to track fenced code rather than to narrow
+    the class. Zero of those 140 blocks *begin* with a marker, so the census is
+    evidence about the inner lines and silent about the leading one.
     """
-    return _HSPACE.sub(" ", text)
+    return _HSPACE.sub(" ", _LINE_MARKUP.sub("", _INVISIBLE.sub("", text)))
 
 
 def _decision_kind(text: str, role: str) -> str | None:

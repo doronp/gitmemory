@@ -205,6 +205,63 @@ def test_the_design_document_cites_nothing_in_tmp():
             assert "/tmp/" not in line, f"{rel}:{n} cites a scratch path: {line.strip()}"
 
 
+def test_no_tracked_file_contains_an_invisible_character():
+    """A character you cannot see is a character nobody can review.
+
+    `derive._INVISIBLE` is a class of zero-width format characters, and the
+    first version of it was written with the characters themselves: the line
+    rendered as `re.compile(r"[]")`, a reviewer could not tell which of the nine
+    were in it, and dropping one would have produced a blank diff. Two test
+    files had the same thing, one of them a test *about* invisible characters
+    that spelled `\\x1b` and `\\x00` as escapes and the bidi overrides beside
+    them as raw codepoints.
+
+    So the rule is the file, not the class: every one of these is written
+    `\\uXXXX` in tracked source, and this test is what makes that true a year
+    from now. It is also the cheap half of a supply-chain check — a bidi
+    override in source is how a line reads as one thing and compiles as
+    another (CVE-2021-42574) — but the reason it is here is legibility.
+
+    Content under test is a different matter: the conformance corpus and
+    anything a hook captured are data, and data is allowed to contain whatever
+    a person typed. Only tracked text files are scanned. [E5 review round]
+    """
+    banned = {
+        0x00AD: "soft hyphen",
+        0x180E: "mongolian vowel separator",
+        0x200B: "zero width space",
+        0x200C: "zero width non-joiner",
+        0x200D: "zero width joiner",
+        0x200E: "left-to-right mark",
+        0x200F: "right-to-left mark",
+        0x202A: "left-to-right embedding",
+        0x202B: "right-to-left embedding",
+        0x202C: "pop directional formatting",
+        0x202D: "left-to-right override",
+        0x202E: "right-to-left override",
+        0x2060: "word joiner",
+        0x2066: "left-to-right isolate",
+        0x2067: "right-to-left isolate",
+        0x2068: "first strong isolate",
+        0x2069: "pop directional isolate",
+        0xFEFF: "zero width no-break space",
+    }
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+    found = []
+    for rel in filter(None, tracked):
+        try:
+            text = _read(rel)
+        except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
+            continue  # a binary or a submodule; nothing to read a codepoint out of
+        for n, line in enumerate(text.splitlines(), 1):
+            found += [
+                f"{rel}:{n} U+{ord(c):04X} {banned[ord(c)]}" for c in line if ord(c) in banned
+            ]
+    assert not found, "write these as escapes:\n" + "\n".join(found)
+
+
 def test_no_environment_default_points_into_a_scratch_directory():
     """The rule above, applied to the code the documents describe.
 
