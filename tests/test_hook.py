@@ -667,6 +667,36 @@ def test_the_shim_is_silent_under_xtrace_and_does_not_echo_the_home_it_was_given
     assert len(list((home / "spool").glob("*.json"))) == 1
 
 
+def test_under_verbose_the_shim_echoes_two_lines_because_the_guard_is_the_second(clean_env):
+    r"""`set +v` narrows the verbose door; *where* it sits is what closes it.
+
+    `xtrace` prints commands as they run, so a guard anywhere before the first
+    command covers everything. `verbose` prints input as the shell *reads* it,
+    so every line above the guard is already on stderr — including the comment
+    explaining the guard. Measured with the guard under its own comment block:
+    1,723 bytes at every compaction, all of it this file's prose. On line 2 it
+    is 90, which is the shebang and the guard line and nothing else.
+
+    Nothing is disclosed either way — verbose echoes source text, so
+    `H="${GITMEMORY_HOME:-$HOME/.gitmemory}"` prints unexpanded, which is why
+    this is Low and not the xtrace finding above. It is the noise the shim's
+    opening paragraph promises not to make, growing by a line every time
+    somebody explains something above the guard, so the count is what is pinned
+    here rather than a byte budget: one more comment line above it is one more
+    line on the agent's stderr. [E7b L2-F6]
+    """
+    env, home = clean_env
+    env["SHELLOPTS"] = "verbose"
+
+    res = subprocess.run(run_shim_cmd(), env=env, input=b"{}", capture_output=True)
+
+    assert res.returncode == 0
+    assert len(list((home / "spool").glob("*.json"))) == 1, "the record is still written"
+    assert res.stderr.count(b"\n") == 2, res.stderr
+    assert res.stderr.startswith(b"#!/bin/sh\n{ set +xv; }"), res.stderr
+    assert b"umask" not in res.stderr, "the guard let the body through"
+
+
 def test_with_no_home_and_no_absolute_override_the_shim_refuses_out_loud(tmp_path):
     """`HOME` unset is a disagreement between the two ends of the seam.
 

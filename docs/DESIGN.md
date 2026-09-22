@@ -130,7 +130,7 @@ rather than made silently:
 
 ### 2.3 Triggers — hook AND watcher
 
-- **Hook (latency, best-effort).** `PreCompact` + `SessionEnd` + `Stop`. 154 lines of POSIX sh,
+- **Hook (latency, best-effort).** `PreCompact` + `SessionEnd` + `Stop`. 175 lines of POSIX sh,
   54 of them not comments. **[E4, review: docs 9 — the estimate was "~20 lines" and it stayed in
   the document while the file grew. What it grew for is in the file: every guard has a comment
   naming the failure it was written against.]**

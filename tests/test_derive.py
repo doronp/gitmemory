@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -814,6 +815,61 @@ def test_the_word_cap_binds_part_way_through_a_document(home, src, monkeypatch):
     assert payload["sentences_seen"] == 4, "the fixture is not four sentences"
     assert payload["sentences_ranked"] == 2, "the cap let through the wrong number"
     assert payload["words_ranked"] == 10
+
+
+# --- E7b L3-F3: the third axis, which is bytes --- #
+
+
+def test_a_block_with_no_ascii_words_is_capped_by_characters(home, src, monkeypatch):
+    r"""The two caps above bound sentences and words. Neither bounds bytes.
+
+    `_WORD_RE` is `[a-z0-9']+`, so a run of control characters or of CJK matches
+    it zero times and `words_ranked` never accrues; a block with no `.`/`!`/`?`
+    is one sentence however long. Both caps are satisfied by a block of any
+    size, and `ideas.json` then carries the whole thing as one idea, verbatim.
+
+    Measured before this cap, one control-character block plus three short prose
+    blocks: 1 MB in derived in 3.2 s and wrote 5,001,638 B into `derived/`; 2 MB
+    → 10,001,638 B; 4 MB → 20,001,638 B at 762 MB peak RSS. A clean 5.0x, and
+    linear — `safe_text` spells `\x01` as five characters and `canonical_json`
+    spells a CJK character as a six-character `\uXXXX`. `derived/` is not in
+    `gitrepo.GITIGNORE` and the daemon commits with `git add --all`, so the
+    amplification lands in history, where deleting the file does not get it
+    back. That is the reason this is a cap and not a `# ponytail: fine`.
+    [E7b L3-F3]
+    """
+    monkeypatch.setattr(derive, "MAX_CHARS", 100)
+    body = "中" * 500  # 500 characters, zero `_WORD_RE` matches, one sentence
+    gen = stored(home, src, [user("u1", body)])
+    payload = derive.ideas(index.parse_generation(gen), count=5)
+    assert payload["sentences_seen"] == 1, "the fixture grew a terminator"
+    assert payload["words_ranked"] == 0, "the fixture reached the word cap after all"
+    assert payload["sentences_ranked"] == 0, "the character cap did not bind"
+    assert payload["chars_ranked"] == 0
+    assert payload["ideas"] == []
+
+
+def test_the_character_cap_binds_part_way_through_a_document(home, src, monkeypatch):
+    monkeypatch.setattr(derive, "MAX_CHARS", 40)
+    body = "alpha beta gamma delta. epsilon zeta eta theta. iota kappa lambda mu."
+    gen = stored(home, src, [user("u1", body)])
+    payload = derive.ideas(index.parse_generation(gen), count=5)
+    assert payload["sentences_seen"] == 3, "the fixture is not three sentences"
+    assert payload["sentences_ranked"] == 1, "the cap let through the wrong number"
+    assert payload["chars_ranked"] == 23
+
+
+def test_the_character_cap_is_slack_where_the_word_cap_already_binds():
+    """A third cap is only sound if it does not quietly become the first.
+
+    Over the 92-transcript conformance corpus the largest generation ranks
+    56,986 characters against 8,220 words — 6.93 characters per ranked word,
+    spaces included. At that ratio `MAX_WORDS` is ~347,000 characters of
+    English, so `MAX_CHARS` has to sit above that or it, and not the word cap,
+    is what truncates a long real session. It binds only where the word counter
+    does not move at all, which is the shape the test above describes.
+    """
+    assert derive.MAX_CHARS > derive.MAX_WORDS * 6.93
 
 
 # --- finding 7 and 2: a failure costs its own generation and nothing else --- #
@@ -3209,3 +3265,51 @@ def test_a_run_of_blank_lines_does_not_make_the_scan_quadratic():
         assert derive._decision_kind(text, "user") is None
         elapsed = time.monotonic() - started
         assert elapsed < 0.5, f"{label}: the blank-line run went quadratic again: {elapsed:.2f}s"
+
+
+# --- E7b L1-F1: the second way to match the same span --- #
+
+
+def test_no_word_in_the_mid_slot_is_also_reachable_through_the_adverb_class():
+    r"""Two ways to match one span, inside a group under `*`, is 2^n paths.
+
+    `_ADV` leads with `\w+ly` and `_MID` used to list `only` and `previously` as
+    literals beside it, so ` only` matched two ways and the engine tried every
+    combination before failing. Measured on this tree before the deletion,
+    `_BACKREF.search(". as" + " only" * n + " x")`: 16.5 ms at n=14, 251 ms at
+    n=18, 1.96 s at n=21 — ×1.95 per *added token*, which is 181 bytes to nine
+    hours. After it, 0.018 ms at n=21 and 1.53 ms on 10 KB.
+
+    This is the structural half of the pin and the timing test below is the
+    other. By-example is not enough on its own: it would pin `only` and say
+    nothing about the next `-ly` word someone adds to the list, which is exactly
+    how the two got there. The invariant is the one the comment above `_MID`
+    states — its members are the words `_ADV` does *not* hold. [E7b L1-F1]
+    """
+    inner = derive._MID.removeprefix("(?: (?:").removesuffix("))*")
+    assert inner.startswith(derive._ADV), "_MID was restructured; this test cannot read it"
+    members = inner[len(derive._ADV) :].lstrip("|").split("|")
+    assert "have" in members and len(members) > 5, members
+    overlap = [w for w in members if re.fullmatch(derive._ADV, w)]
+    assert not overlap, f"{overlap} are matched by _ADV as well — that is 2^n paths through _MID"
+
+
+def test_a_run_of_adverbs_in_the_citation_frame_does_not_go_exponential():
+    """The property the invariant above is a proxy for, pinned directly.
+
+    A second ambiguous pair could arrive the other way round — a word added to
+    `_ADV` that the literal list already holds — and the structural test reads
+    only one of the two lists. This reads neither and times the real entry
+    point, through `_flatten`, which is where a poisoned block actually arrives.
+
+    n=24 because that is the smallest n whose pre-fix cost is unmistakable:
+    extrapolating the measured ×1.95, it is about 30 s through this call, where
+    the fix leaves 0.15 ms. 1.0 s is four orders of magnitude above the current
+    cost and still fails long before anything a person would sit through.
+    """
+    poison = ". as" + " only" * 24 + " x"
+    assert derive._flatten(poison) == poison, "the payload is canonical; _flatten cannot help"
+    started = time.monotonic()
+    assert derive._decision_kind(poison, "user") is None
+    elapsed = time.monotonic() - started
+    assert elapsed < 1.0, f"_MID went exponential again: {elapsed:.2f}s on {len(poison)} bytes"

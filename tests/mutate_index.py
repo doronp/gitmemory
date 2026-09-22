@@ -195,9 +195,21 @@ MUTANTS = [
     (
         "text goes to sqlite3 unsanitised",
         "index.py",
-        '    return value.encode("utf-8", "replace").decode("utf-8")',
+        "    return safe_text(value)",
         "    return value",
         "test_a_lone_surrogate_costs_nothing",
+    ),
+    (
+        # And the narrower one: keep the surrogate replacement that row is
+        # about, drop only the control-character half that `safe_text` adds.
+        # This is `_encodable` exactly as it stood before E7b, so the row the
+        # E3 fix earned stays green and only the E7b test can see the
+        # difference — which is the point of having both. [E7b L3-F2]
+        "the index keeps control characters that recall and derived/ strip",
+        "index.py",
+        "    return safe_text(value)",
+        '    return value.encode("utf-8", "replace").decode("utf-8")',
+        "test_a_control_sequence_in_a_transcript_does_not_reach_the_index_raw",
     ),
     (
         "the path regex is unbounded again",
@@ -4350,7 +4362,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "14 mutants",
+        "a full pass is 5" + "17 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4416,7 +4428,7 @@ MUTANTS = [
     (
         "the shim lets an inherited xtrace print its variables to the agent",
         "hook/gitmemory-hook.sh",
-        "{ set +xv; } 2>/dev/null\n",
+        '{ set +xv; } 2>/dev/null  # line 2 on purpose — see "the tracing guard" below\n',
         "",
         "test_the_shim_is_silent_under_xtrace_and_does_not_echo_the_home_it_was_given",
     ),
@@ -4722,6 +4734,33 @@ MUTANTS = [
         'r"|(?!x)xa case (?:for|against) .{1,60}? (?:and|or) a case (?:for|against)"',
         "test_two_cases_side_by_side_are_a_deliberation",
     ),
+    # --- E7b: the security delta review --- #
+    (
+        # The exponential itself, put back. `only` and `previously` are each
+        # matched by `_ADV`'s `\w+ly` as well as by their own literal, which is
+        # 2^n paths through a group under `*`: 1.96 s on 111 bytes before the
+        # deletion, 0.018 ms after. The structural test kills this without
+        # timing anything, which is why the row is worth having — a mutant that
+        # can only be caught by a stopwatch is a flaky row. [E7b L1-F1]
+        "the adverb slot has two ways to match the same word again",
+        "derive.py",
+        'rf"(?: (?:{_ADV}|have|has|had|already|earlier|before|also|again"',
+        'rf"(?: (?:{_ADV}|have|has|had|already|previously|earlier|before|also|again"',
+        "test_no_word_in_the_mid_slot_is_also_reachable_through_the_adverb_class",
+    ),
+    (
+        # Not deleting the cap — the tests monkeypatch `MAX_CHARS`, so raising
+        # the constant is invisible to them and the mutant would be a false
+        # negative. The check is the part under test, and this is the mistake
+        # someone actually makes: compare the running total instead of the
+        # total the sentence would make it, and the first sentence over the cap
+        # is always let through however long it is. [E7b L3-F3]
+        "the character cap admits the sentence that breaks it",
+        "derive.py",
+        "            if chars_ranked + len(text) > MAX_CHARS:",
+        "            if chars_ranked > MAX_CHARS:",
+        "test_a_block_with_no_ascii_words_is_capped_by_characters",
+    ),
 ]
 
 
@@ -4837,7 +4876,7 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 514 mutants x two suite runs, which
+    The filter exists because a full pass is 517 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
     to mean either waiting for the other 501 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in

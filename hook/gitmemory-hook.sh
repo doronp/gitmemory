@@ -1,4 +1,5 @@
 #!/bin/sh
+{ set +xv; } 2>/dev/null  # line 2 on purpose — see "the tracing guard" below
 # gitmemory hook shim. Writes stdin to the spool and exits 0, always.
 #
 # It constructs no JSON, parses nothing, and spawns nothing. The watcher
@@ -13,17 +14,37 @@
 # exists not to make. The cost is real and is stated where a user meets it:
 # `hook/README.md` says that an installed hook producing no records should be
 # run by hand, because that is the only place the reason appears. [E7 S10]
-# First command in the file, because bash starts tracing before it. `SHELLOPTS`
-# is exported by some setups and `/bin/sh` here is bash, which honours it — the
-# same mechanism the `:-` defaults below exist for, one option over. Measured
-# with `SHELLOPTS=xtrace`: 700 bytes of trace into the agent's stderr on every
-# compaction, including `+ H=<value>` with `$GITMEMORY_HOME` **unfiltered**, so
-# an ESC in it reached the terminal raw. That is the sequence S7 strips from
-# the one message that echoes this variable — stripped there and printed here,
-# three lines earlier, without the message. The brace group is S8's trick and
-# for S8's reason: it takes the trace of its own contents and costs no fork.
-# `+v` as well, because `SHELLOPTS=verbose` is the same door. [E7 pair review]
-{ set +xv; } 2>/dev/null
+
+# The tracing guard, which is line 2 and has to be.
+#
+# `SHELLOPTS` is exported by some setups and `/bin/sh` here is bash, which
+# honours it — the same mechanism the `:-` defaults below exist for, one option
+# over. Measured with `SHELLOPTS=xtrace`: 700 bytes of trace into the agent's
+# stderr on every compaction, including `+ H=<value>` with `$GITMEMORY_HOME`
+# **unfiltered**, so an ESC in it reached the terminal raw. That is the sequence
+# S7 strips from the one message that echoes this variable — stripped there and
+# printed here, three lines earlier, without the message. The brace group is
+# S8's trick and for S8's reason: it takes the trace of its own contents and
+# costs no fork. `+v` as well, because `SHELLOPTS=verbose` is the same door.
+# [E7 pair review]
+#
+# `+v` *narrows* that door rather than closing it, and where the guard sits is
+# what decides by how much: `verbose` echoes input as the shell reads it, so
+# every line above the guard is already on stderr before the guard runs. The
+# guard used to sit here, under this comment, and the comment is what it cost:
+# 1,723 bytes per compaction, measured `sh … PreCompact </dev/null` with
+# `SHELLOPTS=verbose`. On line 2 it is **90** and deleting it costs 9,491 —
+# both re-measured against this file as it now stands, so they are larger than
+# the report's 35 and 8,375 by exactly the paragraph you are reading. Nothing is
+# disclosed either way (verbose echoes source text, so
+# `H="${GITMEMORY_HOME:-$HOME/.gitmemory}"` prints unexpanded), but 1,723 bytes
+# per compaction is exactly the noise this file's opening paragraph promises not
+# to make, and it grows every time someone adds a line of explanation above it.
+# Hence the guard on line 2 and the explanation down here. `SHELLOPTS=noexec` is
+# a door no line in this file can close — `-n` is read before anything executes
+# and POSIX gives `set +n` no effect in a non-interactive shell — so it is
+# written down in `hook/README.md` instead, with the rest of the silent-failure
+# ceiling. [E7b L2-F6, L2-F7]
 umask 077
 # Every parameter is expanded with a `:-` default, so the shim survives being
 # run under `set -u`. It does not set `-u` itself, but `SHELLOPTS=nounset` is

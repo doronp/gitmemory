@@ -41,7 +41,7 @@ from urllib.parse import quote
 
 from . import store
 from .adapters import get as get_adapter
-from .records import Session, canonical_json
+from .records import Session, canonical_json, safe_text
 
 __all__ = [
     "DEFAULT_WEIGHTS",
@@ -731,19 +731,32 @@ def parse_generation(stored: store.Stored) -> Session:
 
 
 def _encodable(value):
-    """Make a value safe for sqlite3, which encodes strict UTF-8.
+    """Make a value safe for sqlite3 *and* for whatever renders it.
 
-    The layers below deliberately do not: `jsonl` decodes with `surrogateescape`
-    and `records` hashes with `surrogatepass`, so a transcript that caught a
-    binary `cat` in its tool output keeps those bytes byte-for-byte. sqlite3
-    raises on a lone surrogate, and it raised from inside the row loop, so one
-    bad byte anywhere cost the whole store its index. Replacing here loses a
-    character from the *derived* copy only — raw still has it, and raw is what
-    the offsets point at. [E3]
+    The layers below deliberately keep bad bytes: `jsonl` decodes with
+    `surrogateescape` and `records` hashes with `surrogatepass`, so a transcript
+    that caught a binary `cat` in its tool output keeps them byte-for-byte.
+    sqlite3 encodes strict UTF-8 and raises on a lone surrogate, and it raised
+    from inside the row loop, so one bad byte anywhere cost the whole store its
+    index. Replacing here loses a character from the *derived* copy only — raw
+    still has it, and raw is what the offsets point at. [E3]
+
+    `safe_text` rather than the bare `.encode("replace")` this was, because the
+    surrogate is not the only thing in a transcript that a renderer obeys rather
+    than prints. `records.safe_text` was written for two surfaces and its
+    docstring names them, the terminal via `recall` and the committed artifacts
+    under `derived/`; this table is a third, and the dashboard reads it. Datasette
+    escapes markup correctly — that was checked and is not the point — but it does
+    not escape `\\x1b[2K\\r`, which erases the line above it. Measured before this
+    change, `blocks.prose` held a raw ESC, a raw NUL and a raw U+202E, and so did
+    2,476 bytes of `blocks.csv?_stream=1`, which is one shell pipe from a
+    terminal. `safe_text` is a strict superset — the same replace-encode, plus
+    `UNSAFE.sub` — so this is the E3 argument applied to the whole class rather
+    than to its first member. [E7b L3-F2]
     """
     if not isinstance(value, str):
         return value
-    return value.encode("utf-8", "replace").decode("utf-8")
+    return safe_text(value)
 
 
 def _insert(db: sqlite3.Connection, table: str, row: dict) -> bytes:

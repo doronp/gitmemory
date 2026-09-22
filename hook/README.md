@@ -59,6 +59,17 @@ measured rather than argued:
   for a program whose first rule is never to disturb the caller. Measured, a 20
   MB payload lands in the spool as a 20 MB record; the watcher reads it, drops
   it if it will not parse, and the sweep captures the session regardless.
+- **`SHELLOPTS=noexec` in the environment turns the shim off entirely**, and
+  nothing says so: measured, 0 bytes of output and 0 spool files, against 1
+  spool file on a clean run. No line in the script can defend against it — `-n`
+  is read before anything executes, and POSIX gives `set +n` no effect in a
+  non-interactive shell — which is why it is written here rather than fixed
+  there. `SHELLOPTS=xtrace` and `SHELLOPTS=verbose` are handled, on line 2;
+  `SHELLOPTS=errexit` and `SHELLOPTS=nounset` were tried and the record is
+  still written. Anything that can set `SHELLOPTS` for your agent can also set
+  `BASH_ENV`, which is arbitrary code execution, so this costs you the memory
+  system and not more than it. The symptom is an empty spool, and the answer is
+  the same one as above: run the shim by hand. [E7b L2-F7]
 
 For Claude Code, in `~/.claude/settings.json` — each event key takes an array of
 matcher groups, and the event name is passed in `args`, because Claude Code

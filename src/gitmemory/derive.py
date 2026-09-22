@@ -60,12 +60,45 @@ DEFAULT_IDEAS = 8
 # an argued one. Raising MAX_SENTENCES raises it superlinearly; read the note
 # on the subclass before touching either number. [E7 index-F8]
 #
-# ponytail: two hard caps, and the shortfall is reported rather than hidden
-# (`sentences_seen` vs `sentences_ranked`, `words_ranked`). Raise them by
-# ranking per compaction span instead of per generation if a real session ever
-# exceeds them — the spans are already in the manifest.
+# Three caps, because there is a fourth cost and it is bytes rather than time.
+# `_WORD_RE` is `[a-z0-9']+`, so a block of CJK, of control characters, or of
+# any script that is not Latin counts **zero words** — `MAX_WORDS` never moves
+# and one sentence with no terminator in it is one sentence, so `MAX_SENTENCES`
+# does not fire either. Both caps are asleep and the text goes through whole.
+#
+# Time is not what that costs; `derived/` is. Measured, one such block plus
+# three short prose blocks: 1 MB in produced 5,000,836 B of `derived/` in 3.30 s
+# at 270 MB peak RSS, 2 MB → 10,000,836 B in 5.27 s, 4 MB → 20,000,836 B in
+# 10.50 s at 656 MB. A clean 5.0x amplification, and linear, because
+# `records.safe_text` spells `\x01` as six characters and `canonical_json`
+# spells a CJK character as a six-character `\uXXXX`. `derived/` is not in
+# `gitrepo.GITIGNORE` and the daemon commits with `git add --all`, so that lands
+# in history, where deleting the file does not get the bytes back. A cap, then,
+# and not a `# ponytail: fine`. After it, the same three inputs: 883 B of
+# `derived/` from all three, flat, in 0.47 / 0.50 / 0.99 s. The three real
+# sentences beside the pathological one still rank — `sentences_seen` 4,
+# `sentences_ranked` 3, `chars_ranked` 81 — which is the cap doing the one
+# thing it should and nothing else. [E7b L3-F3]
+#
+# 400 000 is chosen to be **slack wherever the word cap already binds**, so that
+# it is a backstop and not a second truncation point on ordinary English. Over
+# the 92 parseable transcripts of the conformance corpus the largest generation
+# ranks 56,986 characters against 8,220 words — 6.93 characters per ranked word,
+# spaces included — which puts `MAX_WORDS` at about 347 000 characters of prose.
+# The longest single sentence anywhere in that corpus is 29,821 characters.
+#
+# What none of the three bound is *memory*: all of them are consulted after
+# `to_sentences` has materialised the whole block, and a sentence tuple is a
+# flat ~21x the block's size in CPython `str` headers whatever the caps then
+# reject. Linear, and the block is the bound. [E7b L1-F2]
+#
+# ponytail: three hard caps, and the shortfall is reported rather than hidden
+# (`sentences_seen` vs `sentences_ranked`, `words_ranked`, `chars_ranked`).
+# Raise them by ranking per compaction span instead of per generation if a real
+# session ever exceeds them — the spans are already in the manifest.
 MAX_SENTENCES = 2000
 MAX_WORDS = 50_000
+MAX_CHARS = 400_000
 
 # Sentence split and word split, both deliberately dumb. The alternative is
 # nltk's punkt, which is a download.
@@ -285,6 +318,15 @@ def _all_markup(text: str) -> bool:
     open tag, and the walk never goes back. A block that is tags followed by a
     sentence stops at the sentence and is somebody's — which is the failure this
     is anchored against, not the one where a notice survives.
+
+    `match(text, pos)` and not `search` — that is load-bearing and is the whole
+    reason the walk is linear. `_MARKUP` ends in `.*?</\1>`, so on unclosed tags
+    every `<a_b>` is a start position that scans the rest of the block for a
+    close tag that is not there: measured under `search`, ×3.99 per doubling —
+    5.7 s on `("<a_b>" + "x" * 40) * 8000`. Anchored there is one start position
+    per iteration and a failure ends the walk, and the same inputs measure
+    ×1.98. Reaching for `finditer` here to find markup *anywhere* in a block is
+    the obvious next feature and it reinstates the quadratic. [E7b L1-F3]
     """
     pos = 0
     while m := _MARKUP.match(text, pos):
@@ -414,11 +456,20 @@ def ideas(session: Session, *, count: int = DEFAULT_IDEAS) -> dict:
 
     tok = _Tok()
     paragraphs, owners, texts = [], [], []
-    seen = redacted = words_ranked = 0
+    seen = redacted = words_ranked = chars_ranked = 0
     for _turn, block in _prose(session):
         kept = []
         for text in tok.to_sentences(block.text):
             seen += 1
+            # Before `_leaks`, unlike the two below it. A sentence this cap
+            # rejects is never published, and scanning four megabytes of it for
+            # a secret that cannot escape is the cost the cap exists to refuse —
+            # 16 `finditer` passes over every byte. The visible consequence is
+            # that `sentences_redacted` does not count what was never scanned,
+            # which is the honest reading of it: nothing was redacted, the
+            # sentence was dropped whole. [E7b L3-F3]
+            if chars_ranked + len(text) > MAX_CHARS:
+                continue
             if _leaks(text.encode("utf-8", "surrogatepass")):
                 redacted += 1
                 continue
@@ -428,6 +479,7 @@ def ideas(session: Session, *, count: int = DEFAULT_IDEAS) -> dict:
             if words_ranked + len(words) > MAX_WORDS:
                 continue
             words_ranked += len(words)
+            chars_ranked += len(text)
             kept.append(Sentence(text, tok))
         if not kept:
             continue
@@ -479,6 +531,7 @@ def ideas(session: Session, *, count: int = DEFAULT_IDEAS) -> dict:
         "sentences_ranked": len(owners),
         "sentences_redacted": redacted,
         "words_ranked": words_ranked,
+        "chars_ranked": chars_ranked,
     }
 
 
@@ -582,9 +635,28 @@ _ADV = (
 # this slot is what let "as we discussed" through while catching "as discussed".
 # The members are the words a slot holds that `_ADV` does not: perfect and
 # aspectual auxiliaries, and the temporal and focus adverbs.
+#
+# **"that `_ADV` does not" is load-bearing, and it is the whole of this comment.**
+# `only` and `previously` used to be in the list below as well, and `_ADV` leads
+# with `\w+ly`, which matches both — two ways to match the same span inside a
+# group under `*`, which is 2^n paths through it. Measured on this file before
+# the deletion, `_BACKREF.search(". as" + " only" * n + " x")`: 16.5 ms at n=14,
+# 1.01 s at n=20, 1.96 s at n=21 — ×1.95 per added token across every point, and
+# ~9 hours at 181 bytes. That is not a slow pattern, it is a hang, and nothing
+# on this path can catch it: `build` rebuilds every generation on every run, its
+# per-generation `try/except` sees no exception because a `re` call that returns
+# in nine hours is not one, and there is no timeout. Two hundred bytes of
+# "as only only only …" in a transcript disables `gitmemory derive` for that
+# store permanently.
+#
+# Deleting the two literals changes no accepted language at all — `\w+ly` still
+# matches them, at the same span — so the fix is subtraction, and the test that
+# pins it is structural rather than by-example: no member of this list may be
+# matched by `_ADV`. An example test would pin `only` and miss the next word
+# someone adds. [E7b L1-F1]
 _MID = (
-    rf"(?: (?:{_ADV}|have|has|had|already|previously|earlier|before|also|again"
-    r"|keep|kept|been|all|only|both|indeed))*"
+    rf"(?: (?:{_ADV}|have|has|had|already|earlier|before|also|again"
+    r"|keep|kept|been|all|both|indeed))*"
 )
 
 # Verbs of saying. A class of saying-verbs has a couple of dozen members, not

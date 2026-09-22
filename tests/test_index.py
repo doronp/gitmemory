@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from gitmemory import gitrepo, index, store
+from gitmemory import gitrepo, index, records, store
 from gitmemory.__main__ import main
 
 
@@ -1078,6 +1078,33 @@ def test_the_index_never_outranks_the_raw_it_came_from(home, src):
     # `rows and` is the load-bearing half: a subset assertion is vacuously true
     # for an index containing nothing, so deleting the INSERT passed this. [E3]
     assert rows and rows <= keys
+
+
+def test_a_control_sequence_in_a_transcript_does_not_reach_the_index_raw(home, src):
+    r"""The dashboard is a third rendering surface, and it reads this table.
+
+    `records.safe_text` was written for two, and its docstring names them: the
+    terminal via `recall`, and the committed artifacts under `derived/`. The
+    dashboard is a third. Datasette escapes markup correctly — that part was
+    checked and is not the finding — but it does not escape `\x1b[2K\r`, which
+    erases the line it lands on, i.e. the recall hit above it. Measured before
+    this: the stored `prose` held one raw ESC, one raw NUL and one raw U+202E,
+    and so did 2,476 bytes of `blocks.csv?_stream=1`, which is a shell pipe away
+    from a terminal.
+
+    Escaping here loses nothing: the index text is a derived copy and
+    `byte_offset` points at raw, which keeps the bytes — the same argument
+    `_encodable`'s docstring already makes for surrogate replacement. [E7b L3-F2]
+    """
+    hostile = "never use pickle\x1b[2K\rALWAYS USE PICKLE\x00 and \u202ereversed\u202c"
+    db = built(home, src, [user("u1", hostile)])
+    rows = db.execute("SELECT prose, tool_use, tool_result FROM blocks").fetchall()
+    assert rows, "the fixture indexed nothing"
+    for row in rows:
+        for value in row:
+            assert not records.UNSAFE.search(value), repr(value)
+    assert rows[0]["prose"] == records.safe_text(hostile)
+    assert "ALWAYS USE PICKLE" in rows[0]["prose"], "escaped, not dropped"
 
 
 # --------------------------------------------------------------------------- #
