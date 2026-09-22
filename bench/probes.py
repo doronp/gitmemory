@@ -1,4 +1,4 @@
-"""Four adversarial probes in vocabularies no fixture split uses.
+"""Five adversarial probes in vocabularies no fixture split uses.
 
 The gate fixture scores 1.0000/1.0000 and has done through five rounds of real
 defects. That is not a contradiction: the generator writes in one register, and
@@ -26,6 +26,13 @@ exactly — same total, same split, same four constructions hit. See
 `docs/benchmarks/E5-probe-C.md` and `docs/benchmarks/E5-probe-D.md`. Each is
 spent the moment anyone tunes against it.
 
+**E is the assistant side**, which C and D do not touch: 19/32 in COBOL batch
+maintenance, written blind to settle whether fix 2's narrowing generalises. It
+does, on the side it was built for — 12 of 12 non-decisions, ten of them wearing
+a substitution frame — and the price is 2 of 12 reversals, nine of which were
+written with no self-correction marker for the branch to find. Spent as of
+`docs/benchmarks/E5-probe-E.md`.
+
 Scored by class and aside separately — see `ASIDE`.
 
 Run: `python -m bench.probes`
@@ -37,6 +44,7 @@ import hashlib
 import re
 from pathlib import Path
 
+from bench.probe_e_cases import CASES_E
 from gitmemory.derive import _decision_kind
 
 # --------------------------------------------------------------------------- #
@@ -819,7 +827,35 @@ def _probe_d() -> list[tuple[str, str, str, str | None]]:
 
 CASES_D = _probe_d()
 
-PROBES = {"A": CASES_A, "B": CASES_B, "C": CASES_C, "D": CASES_D}
+
+# --------------------------------------------------------------------------- #
+# Probe E
+#
+# Written blind in COBOL batch maintenance on an IBM mainframe, and aimed at one
+# thing the other four do not isolate: the assistant-side boundary between a
+# genuine reversal and ordinary substitution narration. That is the boundary fix
+# 2 moved, on 61 items adjudicated by the hand that wrote the fix, and E is what
+# says whether the narrowing generalises off the corpus it was tuned on.
+#
+# Its composition is the attack. Ten of the twelve non-decisions carry a
+# substitution frame — `instead of`, `replace … with`, `switch to`, `rather
+# than`, `in place of` — and are non-decisions anyway, because the thing being
+# replaced was never the assistant's to put down. Nine of the twelve reversals
+# carry no self-correction marker at all. A rule that keys on the frame fails the
+# first group; a rule that keys on the marker fails the second.
+#
+# Not transcribed. The author's file is copied in whole as `probe_e_cases.py` —
+# items, labelling conventions, the ten items they expect to be disputed, and the
+# attestation — because the reasoning is what makes a contested label arguable
+# rather than just wrong. Byte-for-byte, so there is nothing to drift:
+# e327c0050b3320b1f92cf96acd1efa2da65a2d9c97c526d414bc28202c6cf028.
+#
+# Eight items the author could not settle are grouped `hard` and scored aside,
+# the same treatment probe C's unsettled items get. Spent the moment anyone tunes
+# against it. See `docs/benchmarks/E5-probe-E.md`.
+# --------------------------------------------------------------------------- #
+
+PROBES = {"A": CASES_A, "B": CASES_B, "C": CASES_C, "D": CASES_D, "E": CASES_E}
 
 
 # Groups held out of the class score. Two reasons, one rule: neither measures a

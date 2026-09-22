@@ -13,7 +13,8 @@ in words the corpus does not contain.
 A and B are spent: each set the brief for a round and then scored its result, so
 they are training data now. C and D are not — each was written blind, frozen,
 and scored once — and 14 is what the extractor is worth on text nobody shaped
-for it, twice, in two unrelated domains.
+for it, twice, in two unrelated domains. E is the third, scored once at 19, and
+it is spent now too: its miss list became the brief the moment it was read.
 
 That is why these assertions are a floor and not an equality: a regression is a
 defect worth a red test. An improvement in A or B is not evidence of anything.
@@ -22,6 +23,9 @@ was never shown C's miss list. Do not tune against them.
 """
 
 from __future__ import annotations
+
+import hashlib
+from pathlib import Path
 
 import pytest
 
@@ -71,7 +75,35 @@ from bench.probes import PROBES, score
 # will be scored once. Until then the claim is precision on real text
 # (0.1475 -> 0.7778) against recall on fiction, and it is stated as a trade
 # rather than as a win.
-FLOOR = {"A": 23, "B": 25, "C": 14, "D": 14}
+#
+# **E is 19, measured 2026-09-22 on 53c6464, and it settles that paragraph.**
+# Written blind in COBOL batch maintenance, aimed at the one boundary fix 2
+# moved. Ten of its twelve non-decisions are substitution narration and **all
+# twelve came back clean** — fix 2's claim is not an overfit to the corpus it
+# was adjudicated on. The price is the other column: 2 of 12 reversals, because
+# nine of the twelve were written with no self-correction marker and the
+# assistant branch recovers a course change only when the author announces one.
+# The trade above is therefore real and now measured on both sides.
+# `docs/benchmarks/E5-probe-E.md` is the record, and E is spent as of that page.
+FLOOR = {"A": 23, "B": 25, "C": 14, "D": 14, "E": 19}
+
+
+def test_probe_e_is_the_authors_file_and_not_a_copy_of_it():
+    """`probe_e_cases.py` is the probe author's file, copied in byte-for-byte.
+
+    Probe D is read out of a frozen markdown table and refuses to run if the
+    digest moves; E gets the same guarantee for the same reason. Thirty-two
+    sentences transcribed by hand are thirty-two chances to soften one, and a
+    probe whose items drifted after it was scored is worth nothing at all. The
+    digest covers the author's prose too — their labelling conventions, the ten
+    items they expect to be disputed, and their attestation — because a
+    contested label is only arguable while the argument for it is still there.
+    """
+    path = Path(__file__).resolve().parent / "probe_e_cases.py"
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    assert digest == "e327c0050b3320b1f92cf96acd1efa2da65a2d9c97c526d414bc28202c6cf028", (
+        f"probe E has been edited since it was scored: {digest}"
+    )
 
 
 @pytest.mark.parametrize("name", sorted(FLOOR))
