@@ -3,7 +3,7 @@
 An adapter is exactly two callables and nothing else:
 
     parse(path: str) -> Session
-    find_session(session_id: str, projects_root: str | None = None) -> str | None
+    find_session(session_id: str, projects_root: str) -> str | None
 
 Adapters may not touch git, the index, or derivation. Claude Code is first;
 Hermes, Kimi and opencode follow the same contract.

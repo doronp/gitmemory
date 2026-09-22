@@ -1786,3 +1786,21 @@ def test_an_elision_marker_is_forgeable_and_native_is_the_answer(tmp_path):
     lines = [dict(user("u1", forged))]
     t = check_adapter(cc, write(tmp_path, "s.jsonl", lines)).turns[0]
     assert t.native["message"]["content"] == forged, "native must hold the literal text"
+
+
+def test_the_adapter_has_no_default_place_to_look_for_transcripts():
+    """`find_session(session_id)` used to mean "search the real `~/.claude`".
+
+    No caller in the tree ever used that default, so it changed nothing today —
+    which is the whole reason it survived. The watcher's stated rule is that
+    watch roots have no default and a misconfigured run is loud rather than
+    guessing; a helper on the same data with a silent default is that rule with
+    one exception nobody chose, waiting for a second caller. Pinned in the
+    signature because the behaviour it removes is unobservable from outside:
+    with the default restored, a test that omits the root reads whatever home
+    it is pointed at and passes. [E7 S11]
+    """
+    import inspect
+
+    p = inspect.signature(cc.find_session).parameters["projects_root"]
+    assert p.default is inspect.Parameter.empty, f"a default is back: {p.default!r}"

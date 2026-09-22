@@ -326,8 +326,11 @@ def test_with_no_variable_set_the_spool_lands_under_the_documented_default(clean
     (record,) = (fallback / ".gitmemory" / "spool").glob("*.json")
     assert record.read_bytes() == b"x"
     # And nowhere else. The fixture's tmp_path is the containment boundary, so a
-    # fallback that escaped it would have to land outside this tree.
-    assert sorted(p.name for p in tmp_path.iterdir()) == ["fallback_home"]
+    # fallback that escaped it would have to land outside this tree. Stated as
+    # "one store, and it is that one" rather than as the directory listing it
+    # was: `conftest`'s autouse isolation also lives under `tmp_path` now, and a
+    # listing would have to be edited every time something else does. [E7 S11]
+    assert [p.parent for p in tmp_path.rglob(".gitmemory")] == [fallback]
 
 
 def test_a_tilde_in_the_variable_is_expanded(tmp_path):

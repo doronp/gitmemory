@@ -644,7 +644,7 @@ def estimate_cost(model: str | None, usage: dict) -> dict | None:
     return {"usd": usd, "estimated": True, "as_of": PRICES_AS_OF, "priced_as": match}
 
 
-def find_session(session_id: str, projects_root: str | None = None) -> str | None:
+def find_session(session_id: str, projects_root: str) -> str | None:
     """Locate a transcript by id without computing the project directory.
 
     Worktrees move the project dir and Claude's encoding of it is undocumented
@@ -656,10 +656,18 @@ def find_session(session_id: str, projects_root: str | None = None) -> str | Non
     widen the search, and every hit is confirmed to resolve inside the root.
     Newest mtime wins when a worktree left duplicates, with the path breaking
     ties so the answer does not depend on set iteration order.
+
+    `projects_root` is required, and used to default to the real
+    `~/.claude/projects`. Nothing in the product passed it that way — every
+    caller in the tree names a root — so the default's only reachable effect
+    was that a future caller, or a test, would silently read the developer's
+    own machine and the watcher's whole "roots have no default" rule would
+    have one exception nobody chose. A parameter whose default is "somebody's
+    real transcripts" has to be spelled out at the call site. [E7 S11]
     """
     if not _SESSION_ID_RE.match(session_id or ""):
         return None
-    root = os.path.realpath(projects_root or os.path.expanduser("~/.claude/projects"))
+    root = os.path.realpath(projects_root)
     name = _glob.escape(session_id) + ".jsonl"
     base = _glob.escape(root)
     hits = set(_glob.glob(os.path.join(base, "*", name)))

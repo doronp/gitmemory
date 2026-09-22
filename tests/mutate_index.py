@@ -902,6 +902,21 @@ MUTANTS = [
         "    _mkdir(spool)\n",
         "test_the_spool_is_owner_only_whatever_it_was",
     ),
+    # --- E7 carry-in S11: the default that read somebody's real home ---
+    (
+        "find_session gets its real-home default back",
+        "src/gitmemory/adapters/claude_code.py",
+        "def find_session(session_id: str, projects_root: str) -> str | None:",
+        "def find_session(session_id: str, projects_root: str | None = None) -> str | None:",
+        "test_the_adapter_has_no_default_place_to_look_for_transcripts",
+    ),
+    (
+        "the suite-wide home isolation is switched off",
+        "tests/conftest.py",
+        '    monkeypatch.setenv("HOME", str(home))',
+        "    pass",
+        "test_no_test_can_see_the_account_that_is_running_it",
+    ),
     # --- the vacuity audit ---
     #
     # This index answers "does the named test catch its mutation?". It cannot
