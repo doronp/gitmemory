@@ -1258,20 +1258,46 @@ def _verify_unattested(home: str) -> list[str]:
             # directory of anything and shows up there as an unrecorded entry.
             dirnames[:] = []
             continue
+        found += _linked(home, dirpath, dirnames)
         # An empty directory attests to nothing and is not evidence of loss.
         for name in sorted(filenames):
             rel = os.path.relpath(os.path.join(dirpath, name), home)
             found.append((rel, f"{rel}: no manifest speaks for these bytes"))
     sess = os.path.join(home, "sessions")
-    for dirpath, _, filenames in os.walk(sess):
+    for dirpath, dirnames, filenames in os.walk(sess):
         rel_dir = os.path.relpath(dirpath, sess)
         at_depth = rel_dir != os.curdir and rel_dir.count(os.sep) == 1
+        found += _linked(home, dirpath, dirnames)
         for name in sorted(filenames):
             if at_depth and _GEN_RE.match(name):
                 continue
             rel = os.path.relpath(os.path.join(dirpath, name), home)
             found.append((rel, f"{rel}: not a manifest"))
     return [msg for rel, msg in found if _abandoned(home, rel)]
+
+
+def _linked(home: str, dirpath: str, dirnames: list[str]) -> list[tuple[str, str]]:
+    """Symlinked subdirectories of `dirpath`, as findings.
+
+    `os.walk` does not follow a symlinked directory and does not list it among
+    `filenames` either, so it was the one entry the sweep above could not see —
+    the last member of the single-entry denylist that docstring rejects.
+    Measured: `raw/<agent>/linked -> /outside` holding `unattested.jsonl`, and
+    `verify` returned `[]`.
+
+    A link is a finding on its own terms rather than a door to walk through.
+    What it names is not in this store: `git add --all` commits the `120000`
+    blob, so a clone has the name and not the bytes, and following it would
+    have `verify` report files that a stranger checking the same commit cannot
+    see. The store never creates one, at any depth. [E7 fs-F7]
+    """
+    out = []
+    for name in sorted(dirnames):
+        full = os.path.join(dirpath, name)
+        if os.path.islink(full):
+            rel = os.path.relpath(full, home)
+            out.append((rel, f"{rel}: a symlink, so what it names is not in this store"))
+    return out
 
 
 def _abandoned(home: str, rel: str) -> bool:
@@ -1291,12 +1317,20 @@ def _abandoned(home: str, rel: str) -> bool:
     exists, so by the time we have it the file is either gone (it was in flight)
     or still on disk (it was abandoned). Paths above the session level have no
     writer to wait for. [E4, review: store 2]
+
+    `lexists`, not `exists`: a dangling symlink is a file the walk found and
+    this check then threw away, because the question `exists` answers is about
+    the target. Measured: a link to a nonexistent path at
+    `raw/<agent>/<session>/dangling` was reported by the walk and dropped here,
+    so `verify` returned `[]`. The same link one level up was reported, because
+    that depth never reaches this function — a finding that appeared or
+    vanished with how deep the attacker put it. [E7 fs-F7]
     """
     parts = rel.split(os.sep)
     if len(parts) < 4:  # <tree>/<agent>/<session>/…
         return True
     with _locked_if_writable(home, parts[1], parts[2]):
-        return os.path.exists(os.path.join(home, rel))
+        return os.path.lexists(os.path.join(home, rel))
 
 
 def _flock_within(fd: int, seconds: float) -> bool:

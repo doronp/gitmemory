@@ -2763,3 +2763,98 @@ def test_a_reader_does_not_create_a_file_through_a_symlinked_lock(tmp_path):
 
     assert store.verify(home) == []
     assert not target.exists(), "a file was created outside the store"
+
+
+def test_a_symlinked_directory_under_raw_is_a_finding(tmp_path):
+    """`os.walk` neither descends a symlinked directory nor lists it as a file.
+
+    So it was the one entry the sweep could not see, on a store where every
+    other depth was covered — the last member of the single-entry denylist
+    `_verify_unattested` was written to abolish. Measured before the fix:
+    `raw/<agent>/linked -> outside` holding a transcript, and `verify` said
+    `[]`. [E7 fs-F7]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    assert store.verify(home) == []
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    transcript(str(outside / "unattested.jsonl"), 3)
+    os.symlink(str(outside), Path(home, "raw", "claude-code", "linked"))
+
+    assert store.verify(home) == [
+        "raw/claude-code/linked: a symlink, so what it names is not in this store"
+    ]
+
+
+def test_a_symlinked_directory_under_sessions_is_a_finding(tmp_path):
+    """The tree that *is* the proof, and the same blind spot.
+
+    Two findings, from the two guards this tree now has: the manifest loop
+    reaches `g00.json` through the link, because `glob` follows one, and
+    refuses it (fs-F5); the walk names the link itself. Neither subsumes the
+    other — a link to a directory holding no manifest produces only the second.
+    [E7 fs-F7]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "g00.json").write_text("{}")
+    os.symlink(str(outside), Path(home, "sessions", "claude-code", "linked"))
+
+    assert store.verify(home) == [
+        "sessions/claude-code/linked/g00.json: leaves the store, "
+        "so it is not this store's manifest",
+        "sessions/claude-code/linked: a symlink, so what it names is not in this store",
+    ]
+
+
+def test_a_symlinked_generation_directory_is_a_finding_in_its_own_right(tmp_path):
+    """Two findings, because two things are wrong and only one of them was said.
+
+    `_inside` already caught the segments — their recorded paths resolve out of
+    the store — so this was not invisible. But the message named the manifest's
+    segment path, which reads as a bad manifest, when what happened is that
+    somebody replaced a directory with a link to bytes that will not be in the
+    commit. [E7 fs-F7]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+
+    gen = Path(home, "raw", "claude-code", "sess", "g00")
+    shutil.move(str(gen), str(tmp_path / "moved"))
+    os.symlink(str(tmp_path / "moved"), gen)
+
+    assert "raw/claude-code/sess/g00: a symlink, so what it names is not in this store" in (
+        store.verify(home)
+    )
+
+
+def test_a_dangling_symlink_is_not_excused_by_being_deep(tmp_path):
+    """`_abandoned` asked `exists`, which is a question about the target.
+
+    A link to nothing is a file the walk found and this check then discarded,
+    so the finding appeared or vanished with how deep it was planted: reported
+    at `raw/dangling`, silent at `raw/<agent>/<session>/dangling`, which is the
+    depth an attacker picks. [E7 fs-F7]
+    """
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+
+    os.symlink(str(tmp_path / "nowhere"), Path(home, "raw", "claude-code", "sess", "dangling"))
+
+    assert store.verify(home) == [
+        "raw/claude-code/sess/dangling: no manifest speaks for these bytes"
+    ]
+

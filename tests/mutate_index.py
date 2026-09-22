@@ -3554,6 +3554,43 @@ MUTANTS = [
         "            fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o600)",
         "test_a_reader_does_not_create_a_file_through_a_symlinked_lock",
     ),
+    # --- E7 fs-F7 ---
+    (
+        "the sweep of raw/ cannot see a symlinked directory",
+        "store.py",
+        "        found += _linked(home, dirpath, dirnames)\n"
+        "        # An empty directory attests to nothing",
+        "        # An empty directory attests to nothing",
+        "test_a_symlinked_directory_under_raw_is_a_finding",
+    ),
+    (
+        "the sweep of sessions/ cannot see a symlinked directory",
+        "store.py",
+        "        found += _linked(home, dirpath, dirnames)\n"
+        "        for name in sorted(filenames):\n"
+        "            if at_depth and _GEN_RE.match(name):",
+        "        for name in sorted(filenames):\n"
+        "            if at_depth and _GEN_RE.match(name):",
+        "test_a_symlinked_directory_under_sessions_is_a_finding",
+    ),
+    (
+        # The over-reporting direction. `_linked` is new machinery that walks
+        # every directory in the store, so the control that matters as much as
+        # "it sees the link" is "it sees nothing else" — the test asserts the
+        # clean store first for exactly this.
+        "a subdirectory is reported whether or not it is a link",
+        "store.py",
+        "        if os.path.islink(full):",
+        "        if os.path.isdir(full):",
+        "test_a_symlinked_directory_under_raw_is_a_finding",
+    ),
+    (
+        "a dangling symlink is excused because its target does not exist",
+        "store.py",
+        "        return os.path.lexists(os.path.join(home, rel))",
+        "        return os.path.exists(os.path.join(home, rel))",
+        "test_a_dangling_symlink_is_not_excused_by_being_deep",
+    ),
 ]
 
 
