@@ -71,8 +71,8 @@ def _blocks(root: Path) -> list[tuple[str, str, str, str]]:
 
     **Deliberately not `derive._prose`.** The population is a property of the
     corpus, not of the code under test: the first fix this set produced was one
-    that makes `_prose` decline 55 of these blocks, and routing the harness
-    through it would have shrunk the denominator from 140 to 85 and reported
+    that makes `_prose` decline 51 of these blocks, and routing the harness
+    through it would have shrunk the denominator from 140 to 89 and reported
     the improvement as a smaller world. A benchmark whose population moves with
     the fix is how a regression gets laundered. Blocks the extractor no longer
     reads score `None` here, which is a result and, for the 135 negatives, the

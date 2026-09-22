@@ -67,14 +67,14 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | What | How it was measured | Result |
 |---|---|---|
 | Retrieval across a compaction boundary | 470 LongMemEval instances, 4 compaction modes, 14 calibration gates | **0.7456** turn recall, against **0.0000** for the live window |
-| Decision extraction | held-out split, gate pre-registered at precision ≥ 0.85 / recall ≥ 0.60 | **1.0000 / 1.0000** — and see below |
+| Decision extraction | held-out split, gate pre-registered at precision ≥ 0.85 / recall ≥ 0.60 | **1.0000 / 0.7428** — it read 1.0000 / 1.0000 for five rounds; fix 2 spent a quarter of the recall and see below |
 | The same extractor, in a vocabulary its corpus does not contain | two adversarial probes hand-written by a reviewer, both since spent | 26/32 and 27/32 — **23/32 and 25/32** once the precision fix below traded five of them away |
 | The same extractor again, on two probes written blind and each scored once | 32 items apiece, in two unrelated domains chosen to share no vocabulary with the corpus or with each other | **14/32** and **14/32** |
 | The same extractor on text nobody wrote for a benchmark | a census of every distinct human turn in a third-party MIT corpus of real sessions — 140 items, labelled blind by three annotators at 139/140 agreement | **precision 0.0000, recall 0.0000** |
 | …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | 9 of 61 — precision 0.15. After the fix: **52 withdrawn, 7 of the 9 left are reversals**, precision **0.78** |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **846 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **461** negative controls |
+| The suite | on a fresh checkout, no downloads | **847 tests**, plus **322 conformance cases** against claude-code-log's corpus, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **462** negative controls |
 
 The 322 conformance cases replay claude-code-log's MIT fixtures — third-party,
 real-shaped, and not one byte of anybody's own history — through this parser.
@@ -86,18 +86,28 @@ git -C .conformance/claude-code-log checkout 6ad029e   # the pin in docs/DESIGN.
 ```
 
 `.conformance/` is gitignored; `GITMEMORY_CC_FIXTURES` points at the
-`test/test_data` of a clone somewhere else. **The count above says 846 because
+`test/test_data` of a clone somewhere else. **The count above says 847 because
 that is what a fresh checkout collects.** It said 1127 for two epochs, which was
 true only on a machine that had already cloned the corpus — into a scratch
 directory, so the test written to stop this README quoting an unreachable number
 was quietly asserting one, right up until a cleanup removed `/tmp`.
 
 **Read the extraction numbers carefully — the gap between them is the finding.**
-1.0000 precision and recall is the score on a held-out split the extractor's
-author could not see, against a bar pre-registered before anything was measured.
-It is not evidence the extractor reads English. The gate has now read 1.0000
-through five rounds of real defects, every one of which it scored identically
-with and without.
+The gate is a score on a held-out split the extractor's author could not see,
+against a bar pre-registered before anything was measured. It is not evidence
+the extractor reads English. It read 1.0000 / 1.0000 through five rounds of real
+defects, every one of which it scored identically with and without — and then
+fix 2, tightening the extractor against the real sessions two rows below, took
+held-out recall to **0.7428** (257 of 346; post-failure reversals 0.5243, other
+reversals 0.4595). That is a priced trade, not a gate failure: 0.7428 still
+clears the 0.60 floor, and precision stayed at 1.0000 on both splits.
+
+What is worth saying plainly is that **nobody noticed for a commit**. No test
+scored `derive.decisions` against the synthetic corpus, so a quarter of the
+recall went missing behind a green suite of 1168. `tests/test_decisions_bench.py`
+now pins the dev split's `(matched, predicted, gold)` — the counts, not the
+ratio, because `matched / predicted` reads 1.0000 while both shrink together.
+The test split stays out of the suite; it is scored by hand, once per round.
 
 Probes C and D are what that gate cannot see. Each was written by an agent that
 read only this README and the design document — never the extractor, never the
@@ -195,7 +205,7 @@ as rows on the page, not as omissions:
 - **Three of the four retriever arms have never run** — only BM25/FTS5 was
   measured. The gate report says so in the arm list.
 - **The decision graph is close to useless on real sessions**, and that is
-  measured rather than suspected. Precision 0.0000 on the user side — 32 nodes,
+  measured rather than suspected. Precision 0.0000 on the user side — 14 nodes,
   none of them a directive — and 0.15 on the assistant side, since lifted to
   0.78 by emitting 52 fewer nodes. Four projects and one developer is not a
   population, and recall rests on two gold items; the false-positive count does

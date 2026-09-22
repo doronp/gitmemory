@@ -7,14 +7,15 @@ developer's published Claude Code sessions, the decision extractor produced 32
 `directive` nodes and **not one of them was a directive**, while missing both of
 the two that were there.
 
-The same extractor reads **1.0000 / 1.0000** on its held-out synthetic split.
+The same extractor read **1.0000 / 1.0000** on its held-out synthetic split.
+After fix 2 it reads **1.0000 / 0.7428** there, and the loss is priced below.
 
 Its larger output on these sessions is the assistant-side `reversal` — 61
 distinct blocks — and **9 of those 61** survived adjudication. Precision 0.15.
 
 | Measurement | Text | Score |
 |---|---|---|
-| Gate, held-out split | synthetic, generated | precision 1.0000, recall 1.0000 |
+| Gate, held-out split | synthetic, generated | 1.0000 / 1.0000 — **1.0000 / 0.7428 after fix 2** |
 | Probe A / B | fiction, spent | 26/32, 27/32 — **23/32, 25/32 after fix 2** |
 | Probe C / D | fiction, blind, unspent | 14/32, 14/32 |
 | **This set** | **real, third-party, census** | **precision 0.0000, recall 0.0000** |
@@ -116,14 +117,21 @@ seen on text somebody actually typed, at a base rate of 2 in 140.
 ## The assistant side, which is larger
 
 The labelled census covers the user role. Running the production path —
-`derive.decisions()` — over the same sessions emits **131 nodes from 1049 prose
-blocks**:
+`derive.decisions()` — over the same sessions emitted **131 nodes from 1049
+prose blocks** when this was written:
 
 | | nodes |
 |---|---|
 | `directive`, user role, machine-injected text | 36 |
 | `directive`, user role, human text | 32 |
 | `reversal`, assistant role | 63 |
+
+Where it stands after the three fixes below: **25 nodes from 862 prose blocks**
+— 16 `directive` in the user role, 9 `reversal` in the assistant role, none of
+them on a block `_injected` declines. The 1049 → 862 is that filter, and the
+share it declines is larger than the annotated rate suggests: **121 of the 219
+user-role text blocks, 55.3%**, against **51 of the 140 distinct ones, 36.4%**,
+because a notice repeats and a sentence does not.
 
 The 63 come from 61 distinct blocks, and they are the single largest output the
 extractor produces on real sessions. Three adjudicators applied the reversal
@@ -164,8 +172,9 @@ draw it. Two went 2–1 to `reversal` and one to `none`; majority stands, and
 ## Root causes, in the order they cost the most
 
 1. **The prose filter admits machine-injected blocks.** `_prose` takes any
-   non-empty `text` block, and the user role is not the user. 39% of what it
-   hands the extractor was written by the CLI. This is structural: no wording
+   non-empty `text` block, and the user role is not the user. 39% of the
+   distinct user turns here were written by the CLI, and 55% of the blocks it
+   hands the extractor, because notices repeat. This is structural: no wording
    change to the rules fixes it, and every downstream artifact — the index, the
    key ideas, the graph — reads the same blocks.
 2. **`_PROHIBIT` treats bare negation as prohibition.** `may not`, `no content`,
@@ -229,7 +238,7 @@ Two things about the harness changed with it, and both were defects in the
 measurement rather than in the product:
 
 - **`bench.secondary._blocks` no longer goes through `derive._prose`.** It did,
-  and this fix would have shrunk the labelled population from 140 to 85 and
+  and this fix would have shrunk the labelled population from 140 to 89 and
   reported that as an improvement. The population is a property of the corpus.
 - **`score()` reads `derive.decisions()`, not `_decision_kind()`.** The fix
   lives in *which blocks are read*, so a harness calling the rule directly on
@@ -372,8 +381,8 @@ question rather than a wording one, and it predates fix 2.
 ## What it does not measure
 
 - **Recall rests on two items.** With two gold directives, recall is 0, 0.5 or
-  1. The precision figure is the solid one: 138 negatives and 32 false
-  positives.
+  1. The precision figure is the solid one: 138 negatives, and 32 false
+  positives when this was written — 12 after the fixes below, on 14 emitted.
 - **The assistant side has no recall number.** Only what the extractor emitted
   was adjudicated, so a reversal it never flagged is invisible here.
 - **Four projects, one developer, one working style.** Real, but not a sample of

@@ -29,6 +29,7 @@ from bench.decisions import (
     run_gate,
     score_predictions,
 )
+from bench.gate import PRECISION_FLOOR, RECALL_FLOOR
 from gitmemory import adapters
 
 # B3: Committed checksums per split over the concatenated transcript_bytes
@@ -463,3 +464,65 @@ def test_corpus_sha256_checksums():
         "Test split checksum mismatch! Recompute it by running hashlib.sha256 "
         "on the concatenated transcript bytes of the generated test split."
     )
+
+
+# --- The gate, watched --- #
+
+# The shipped extractor against the dev split, counted. Not a ratio: `matched`
+# and `predicted` shrink together when the extractor gets shyer, so precision
+# reads 1.0000 all the way down and only `gold` — a constant — exposes the loss.
+# Recomputed deliberately, never to make a red test green. [E5 fix 2, F1]
+DEV_GATE = {
+    "overall": (342, 342, 367),
+    "directives": (180, 180, 180),
+    "post_failure_reversals": (85, 85, 101),
+    "other_reversals": (77, 77, 86),
+}
+
+
+def test_the_shipped_extractor_still_scores_what_the_write_ups_claim():
+    """The dev split, scored end to end through `derive.decisions`.
+
+    This test exists because of what happened without it. Fix 2 narrowed the
+    reversal branch for the secondary set, took held-out recall from 1.0000 to
+    0.7428, and 1168 tests stayed green — nothing anywhere scored the extractor
+    against the corpus its own README quotes, so five published sentences went
+    on claiming a number no longer true.
+
+    Dev, not test. The held-out split is scored by hand once per round and
+    written up; a split scored on every commit is not held out, and this file
+    knows the seed and the generator, which is exactly the knowledge the gate
+    protocol keeps away from the extractor.
+
+    **When this fails, the extractor moved.** That is the whole point, and the
+    fix is not to edit `DEV_GATE` until it passes. Score the held-out split by
+    hand (`python -m bench.fixture <dir> --split test --seed <fresh>` then
+    `python -m bench.gate <dir>`), decide whether the trade is worth it, write
+    it up in `docs/benchmarks/`, correct every figure the README and DESIGN
+    quote — and only then update the numbers here.
+    """
+    from gitmemory import derive
+
+    score = run_gate(derive.decisions, seed=42, split="dev", n=100)
+
+    got = {"overall": (score["matched"], score["predicted"], score["gold"])}
+    got.update(
+        {
+            name: (s["matched"], s["predicted"], s["gold"])
+            for name, s in score["slices"].items()
+        }
+    )
+    assert got == DEV_GATE, (
+        "the extractor's score on the dev split moved — read this test's "
+        "docstring before touching the expected numbers"
+    )
+
+    # The floors, separately, because the counts above could in principle be
+    # re-pinned at something that does not ship.
+    assert score["precision"] >= PRECISION_FLOOR
+    assert score["recall"] >= RECALL_FLOOR
+    assert score["passed"] is True
+
+    # Nothing outside the three slices. A `kind` the breakdown does not know
+    # would otherwise be invisible to the pin above. [E5:R4]
+    assert score["unslotted"] == {"predicted": 0, "gold": 0}

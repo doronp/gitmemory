@@ -397,11 +397,12 @@ linter retries as "rejected alternatives."
 30 hand-labelled real-*shaped* sessions: a census of all 140 distinct human
 turns in four *real* third-party sessions, three blind annotators, 139/140
 agreement. The synthetic set is too easy. Precision **0.0000**, recall
-**0.0000**, against 1.0000/1.0000 on the held-out synthetic split; the assistant
-side reads 9 of 61. Two findings no probe could reach: a standing rule is 2
-turns in 140, and 39% of user-role prose is injected by the CLI rather than
-typed — which is where 19 of the 30 false positives come from. Recorded with the
-extractor unchanged. `docs/benchmarks/E5-secondary-set.md`.**]**
+**0.0000**, against the 1.0000/1.0000 the gate read on the held-out synthetic
+split *at the time* — fix 2 below has since spent a quarter of that recall; the
+assistant side reads 9 of 61. Two findings no probe could reach: a standing rule
+is 2 turns in 140, and 39% of the distinct user turns are written by the CLI
+rather than typed — which is where 19 of the 30 false positives come from.
+Recorded with the extractor unchanged. `docs/benchmarks/E5-secondary-set.md`.**]**
 
 **[E5, fix 1 and fix 2.** Two rounds against that record, each measured and each
 costing something.
@@ -430,7 +431,22 @@ narration 31 times — and two are collateral withdrawals the new evidence list
 does not reach. A and B are spent, so re-pinning them is bookkeeping rather than
 evidence; **what settles fix 2 is a blind probe E, unwritten.** Both rounds are
 written up in `docs/benchmarks/E5-secondary-set.md`, and **the set is a
-regression floor from fix 1 onward, not a generalisation measure.**]**
+regression floor from fix 1 onward, not a generalisation measure.**
+
+*What fix 2 cost the gate, which nothing was watching.* Held-out recall
+(`--split test --seed 31337`) **1.0000 → 0.7428**, 257 of 346: post-failure
+reversals 0.5243, other reversals 0.4595, directives untouched at 1.0000. Dev
+goes 1.0000 → 0.9319. Precision stays 1.0000 on both. The gate still PASSes —
+0.7428 ≥ 0.60 — so this is a priced trade between the synthetic set and the real
+one, and the price is the right way round: the real set is the harder evidence.
+What is not defensible is that **no test scored `derive.decisions` against the
+synthetic corpus**, so the loss rode in behind 1168 green tests and five
+published sentences went on claiming 1.0000/1.0000. The pin added with this
+entry asserts the dev split's `(matched, predicted, gold)` — the counts, because
+`matched / predicted` reads 1.0000 the whole way down as both shrink together,
+which is the same shrinking-denominator shape the secondary set's scorer had
+already been bitten by. The test split stays out of the suite; a split scored on
+every commit is not held out.]**
 
 Every node carries a `source_ref` to a committed block hash. **No node may exist without one.**
 That rule is what stops a decision diagram from becoming fiction.

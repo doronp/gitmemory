@@ -4072,7 +4072,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 4" + "61 mutants",
+        "a full pass is 4" + "62 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4231,6 +4231,21 @@ MUTANTS = [
         "    print(line)",
         "test_a_verdict_reaches_the_log_before_the_next_row_runs",
     ),
+    # --- E5 fix 2 reviewed: the gate itself was unwatched ------------------- #
+    #
+    # The only row whose subject is a *number in a document*. Fix 2 took
+    # held-out recall from 1.0000 to 0.7428 and the suite stayed green, because
+    # nothing scored the shipped extractor against the corpus the README quotes.
+    # The mutant is that loss in its purest disguise: report the gold you
+    # matched instead of the gold there was, and precision and recall both read
+    # 1.0000 forever while `matched` falls. Only a pin on the *counts* sees it.
+    (
+        "the scorer reports the gold it matched, not the gold there was",
+        "bench/gate.py",
+        '        "gold": n_gold,',
+        '        "gold": matched,',
+        "test_the_shipped_extractor_still_scores_what_the_write_ups_claim",
+    ),
 ]
 
 
@@ -4346,9 +4361,9 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 461 mutants x two suite runs, which
+    The filter exists because a full pass is 462 mutants x two suite runs, which
     is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 460 or trusting the new one untested.
+    to mean either waiting for the other 461 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this

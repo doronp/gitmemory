@@ -61,7 +61,7 @@ def test_the_extractor_scores_zero_on_real_text():
     """**Precision 0.0000, recall 0.0000 on 140 real human turns**, and it read
     0.0000/0.0000 before the first fix too.
 
-    The same extractor reads 1.0000/1.0000 on the held-out synthetic split and
+    The same extractor reads 1.0000/0.7428 on the held-out synthetic split and
     23/32 and 25/32 on the two spent probes. This is the number that says what
     those are worth. It is pinned exactly, including the false-positive count,
     because "it got better" and "it got worse" are both things a reader of this
