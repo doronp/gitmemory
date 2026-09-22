@@ -179,7 +179,7 @@ Under construction, epoch by epoch.
 | E4 | Hook shim + watcher + git daemon | in review |
 | E5 | Derivation and decision graph | passed — [gate report](docs/benchmarks/E5-decision-gate.md); three artifacts per generation. Reopened by [probe C](docs/benchmarks/E5-probe-C.md): user-reverses-own-instruction is 0 of 11 |
 | E6 | Dashboard | passed — seven views over the index, served read-only on loopback, [review record](docs/reviews/E6-standalone-review.md) |
-| E7 | RC1: security review, private repo | in progress — six surfaces reviewed and closed, 68 findings, [round record](docs/reviews/E7-security-round.md) |
+| E7 | RC1: security review, private repo | in progress — six surfaces reviewed and closed, 68 findings, [round record](docs/reviews/E7-security-round.md); the fixes then reviewed twice over, [pair review](docs/reviews/E7-pair-review.md) |
 
 ## How this is built
 

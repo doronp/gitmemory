@@ -12,6 +12,10 @@ seventh report does not exist as a document: that agent's findings, plus every
 finding the others raised about code that was not theirs, were adjudicated
 together in the carry-ins.
 
+The pair review came after, and is a different exercise: the six reports read
+the code, the pair review read the *fixes*. Two runs of an independent reviewer,
+each in its own worktree, neither shown the other's report.
+
 | Report | Surface |
 |---|---|
 | [parsing](E7-security-parsing.md) | `jsonl.py`, `records.py`, the Claude Code adapter — every byte chosen by someone else |
@@ -20,6 +24,7 @@ together in the carry-ins.
 | [index](E7-security-index.md) | `index.py`, `derive.py`, `graph.py` — SQL construction, resource exhaustion, the artifact write door |
 | [dashboard](E7-security-dashboard.md) | `serve`: the one command that opens a socket |
 | [carry-ins](E7-carry-ins.md) | the seventh agent, and every cross-surface finding |
+| [pair review](E7-pair-review.md) | the round's fixes, given to an independent reviewer twice |
 
 ## The standing rule
 
@@ -43,6 +48,9 @@ This was not ceremony. It changed the outcome repeatedly, in both directions:
   opened. It has to be *named by a manifest*. The test had to be written to the
   narrower shape.
 - **dashboard F7** was declined on a measurement, not an argument.
+- The [pair review](E7-pair-review.md) put **four of twelve** items in the code
+  and refuted four more, one of them disproved by the reviewer's own
+  reproduction script.
 
 ## The count
 
@@ -60,8 +68,10 @@ Per report: parsing 15, carry-ins 14, secrets 11, fs 10, index 10, dashboard 8.
 
 ## What it cost, and what pins it
 
-The suite went **960 → 1121 tests** and the negative-control index went
-**265 → 423 rows**: 161 tests and 158 controls, for 56 fixes.
+At the round's close the suite had gone **960 → 1121 tests** and the
+negative-control index **265 → 423 rows**: 161 tests and 158 controls, for 56
+fixes. The [pair review](E7-pair-review.md) then added 5 and 7, for four more
+fixes — **1126 and 430** today.
 
 One of each is this page's own doing: writing the paragraph above meant reading
 `main`'s docstring in the harness, which justified its name filter with "146
@@ -87,6 +97,11 @@ rather than its exit code:
 - It **wedged** for 33 minutes on a test that proved "this does not block" by
   blocking. Two repairs: a `setitimer` deadline with its own positive control,
   and a `WEDGED` verdict that names which of the two runs hung.
+
+It also *found* one, by costing three hours of full CPU: under that load
+`verify` gave up on a session lock and reported 71 live segments as litter,
+which is the one finding in this round no reviewer made. A saturated machine is
+a test condition, and this suite only gets one when the harness runs.
 
 A meta-test named for the first of those passed throughout, because it asserted
 on an exit-code pair the harness never produces. A check that passes for a

@@ -40,7 +40,7 @@ section).
 | F3 | MEDIUM | One non-regular file in the spool wedges the watcher, silently | **fixed** — `4fc291d`, `O_NONBLOCK` + `O_NOFOLLOW` + `S_ISREG` |
 | F4 | MEDIUM | Orphan adoption launders an unattested file into the proof | **fixed** — `e3c3a68`, the proof names what it only found |
 | F5 | LOW-MEDIUM | Nothing below the home is re-validated on the way back in | **fixed** — `46595ed`; two of the four variants already closed |
-| F6 | LOW | `verify` has a third answer: it hangs | **fixed** — `07603ec`, a bounded wait |
+| F6 | LOW | `verify` has a third answer: it hangs | **fixed twice** — `07603ec` bounded the wait, `a591644` stopped the bound from lying |
 | F7 | LOW | A symlinked directory hides unattested files from the sweep | **fixed** — `d40d039`, plus a second hole not in the report |
 | F8 | LOW | `git` is resolved through the inherited `PATH` | **documented** — `21873b8`, on the reviewer's own argument |
 | F9 | **INFO** | `init`'s `makedirs` leaves intermediates at the ambient umask | **fixed, upgraded** — `21873b8`; INFO is right only at umask 022 |
@@ -262,12 +262,35 @@ The wait itself stays, because it is the point: a reader that gave up instantly
 would report a live capture's `.incoming` file as litter — the false positive
 this lock was added to stop, which the reviewer measured at 79 of 82 concurrent
 runs. `LOCK_WAIT = 5.0` against a hold of one tail copy, one fsync and one
-manifest write is roughly 50× headroom, and a holder that outlasts it gets the
-treatment a read-only store already gets: the check runs unlocked, which can be
-wrong, where before there was no answer at all.
+manifest write is roughly 50× headroom.
 
 Polled rather than `SIGALRM`: `setitimer` is main-thread-only and this runs
 under the daemon's threads too.
+
+**The bound as first shipped was wrong, and the sentence admitting it was in
+its own docstring.** A holder that outlasted the wait got "the treatment a
+read-only store already gets: the check runs unlocked, which can be wrong,
+where before there was no answer at all" — that is, the false positive the lock
+exists to stop, now gated behind five seconds instead of never. Trading a hang
+for a silent wrong answer in the command whose whole job is to be believed is
+not a fix, and the suite said so during the pair review: under the saturation of
+a full mutation pass, `verify` reported **71 of a healthy store's live segments
+as litter**.
+
+`_locked_if_writable` now yields whether the wait ran out, which is not the
+same question as whether the lock is held — a read-only store yields `False`
+with no lock, because a store nobody can write to is one where no capture can
+be in flight. On a timeout `_verify_one` declines the unrecorded-file sweep and
+says which session it declined:
+
+```
+sessions/<agent>/<id>/g00.json: not swept for unrecorded files — another
+process held the session lock for more than 5s
+```
+
+A degraded answer that is legible as one. README's "no third answer" is better
+served by this than by the bound alone: `verify` still returns a list of
+problems, and a sweep it could not run is one of them. [`a591644`]
 
 This also closed an fs-F5 gap. The lock file had a *second* open, in `verify`,
 and it did not have `O_NOFOLLOW` — so the file-creation-through-a-symlink
@@ -275,7 +298,9 @@ primitive closed in `_lockfile` was still reachable one command over. Here the
 right answer is to degrade, since `_locked_if_writable` already runs without a
 lock it cannot take, so the test asserts what is **not** created.
 
-**3/3 controls.**
+**5/5 controls** — the two added with the second fix sit at opposite ends of
+the same wire: one deletes the `if timed_out:` branch so a reader that gave up
+sweeps anyway, the other leaves the branch and never arms it.
 
 ## F7 — the depth an attacker picks
 
