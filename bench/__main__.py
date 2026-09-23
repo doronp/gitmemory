@@ -62,6 +62,8 @@ def _table(header: list[str], rows: list[list[str]]) -> None:
 def _metric_cells(m: dict[str, float]) -> list[str]:
     return [
         f"{m['turn_recall']:.4f}",
+        f"{m['turn_hit']:.4f}",
+        f"{m['turn_recall_all']:.4f}",
         f"{m['turn_mrr']:.4f}",
         f"{m['session_recall']:.4f}",
         f"{m['session_mrr']:.4f}",
@@ -163,7 +165,19 @@ def main(argv: list[str] | None = None) -> int:
 
     print("Calibration passed.")
     print()
-    cols = ["Turn recall", "Turn MRR", "Session recall", "Session MRR", "Unmatched/query"]
+    # `Hit@k` and `All@k` bracket `Turn recall` deliberately: the fractional
+    # mean in the middle is ours, the two either side are what other systems
+    # publish, and printing them adjacent is what stops a reader comparing a
+    # fractional recall against someone else's hit rate.
+    cols = [
+        "Turn recall",
+        f"Hit@{results['k']}",
+        f"All@{results['k']}",
+        "Turn MRR",
+        "Session recall",
+        "Session MRR",
+        "Unmatched/query",
+    ]
 
     print("## Overall")
     print()

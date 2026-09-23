@@ -61,6 +61,17 @@ class ArmMetrics:
     session_recall: float  # fraction of answer sessions retrieved within k
     session_mrr: float
     unmatched: int  # offsets that landed in no turn at all
+    # Two thresholded readings of the same `found_turns` set, because a mean of
+    # fractional recalls is not what other systems publish and cannot be
+    # compared against them. `turn_hit` is Hit@k — did *any* evidence turn come
+    # back — which is the lenient metric a QA pipeline actually needs, since one
+    # good turn can answer the question. `turn_recall_all` is the strict one:
+    # every evidence turn or nothing. A multi-hop instance that needs all three
+    # turns scores 1.0 on the first and 0.0 on the second for the same
+    # retrieval, and the gap between them is the multi-hop story. Both are
+    # derived from the set the loop already builds; neither costs a pass.
+    turn_hit: float  # 1.0 if at least one evidence turn was retrieved within k
+    turn_recall_all: float  # 1.0 only if every evidence turn was retrieved within k
 
 
 def normal_cdf(x: float) -> float:
@@ -202,6 +213,8 @@ def _measure(
         session_recall=len(found_sessions) / len(answer_sessions) if answer_sessions else 0.0,
         session_mrr=session_mrr,
         unmatched=unmatched,
+        turn_hit=1.0 if found_turns else 0.0,
+        turn_recall_all=1.0 if evidence and found_turns >= evidence else 0.0,
     )
 
 
@@ -438,4 +451,6 @@ def _summarise(ms: list[ArmMetrics]) -> dict[str, float]:
         "session_recall": statistics.mean(m.session_recall for m in ms),
         "session_mrr": statistics.mean(m.session_mrr for m in ms),
         "unmatched_per_query": statistics.mean(m.unmatched for m in ms),
+        "turn_hit": statistics.mean(m.turn_hit for m in ms),
+        "turn_recall_all": statistics.mean(m.turn_recall_all for m in ms),
     }

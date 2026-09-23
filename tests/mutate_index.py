@@ -829,6 +829,24 @@ MUTANTS = [
         'json.dumps(gold, indent=1, sort_keys=True) + "\\n")',
         "test_the_gold_labels_carry_no_hint_of_how_the_corpus_was_made",
     ),
+    # Two thresholds, two rows. `turn_hit` collapsing into `turn_recall_all` is
+    # the mutant that makes the lenient metric strict and the whole panel agree
+    # with itself for the wrong reason; the empty-evidence one is `set() >=
+    # set()`, which scores a perfect `all` for an instance with nothing to find.
+    (
+        "the hit threshold is the strict one",
+        "bench/score.py",
+        "turn_hit=1.0 if found_turns else 0.0",
+        "turn_hit=1.0 if found_turns >= evidence else 0.0",
+        "bench/test_bench.py::test_hit_and_all_are_the_two_thresholds_recall_averages_over",
+    ),
+    (
+        "an instance with no evidence scores a perfect all@k",
+        "bench/score.py",
+        "turn_recall_all=1.0 if evidence and found_turns >= evidence else 0.0",
+        "turn_recall_all=1.0 if found_turns >= evidence else 0.0",
+        "bench/test_bench.py::test_hit_and_all_are_the_two_thresholds_recall_averages_over",
+    ),
     (
         "a zero-variance difference gets a fabricated p of 0",
         "bench/score.py",
@@ -4467,7 +4485,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "75 mutants",
+        "a full pass is 5" + "77 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5381,7 +5399,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 575 mutants × two suite runs —
+    The filter exists because a full pass is 577 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

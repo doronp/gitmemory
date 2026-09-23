@@ -17,6 +17,7 @@ Retrieval difficulty is what the real corpus is for: `pytest -m corpus`.
 from __future__ import annotations
 
 import importlib.util
+import dataclasses
 import json
 import math
 import os
@@ -395,6 +396,39 @@ def test_recall_counts_every_evidence_turn_not_just_the_first(tmp_path):
     assert allof.turn_recall == 1.0
 
 
+def test_hit_and_all_are_the_two_thresholds_recall_averages_over(tmp_path):
+    """One of three is a hit and is not an `all`, and nothing is neither.
+
+    `turn_recall` is a mean of fractions, which is not the metric anyone else
+    publishes: a paper reporting Recall@10 on this benchmark almost always
+    means "did any evidence turn come back". Both thresholds are printed beside
+    the fraction so a reader comparing against another system compares the same
+    quantity — and so the multi-hop gap between them is visible, which a single
+    averaged number hides.
+    """
+    inst = make_instance(0, evidence_turns=3)
+    transcript = synth.to_transcript(inst, seed=13, compaction=None)
+    parsed = parse_bytes(transcript.bytes_data, tmp_path)
+    evidence = set(transcript.evidence_byte_offsets)
+    sessions = set(inst.answer_session_ids)
+
+    one = measure(sorted(evidence)[:1], parsed, evidence, sessions)
+    assert (one.turn_hit, one.turn_recall_all) == (1.0, 0.0)
+
+    allof = measure(sorted(evidence), parsed, evidence, sessions)
+    assert (allof.turn_hit, allof.turn_recall_all) == (1.0, 1.0)
+
+    # An offset past the end of the transcript retrieves nothing at all.
+    none = measure([10**9], parsed, evidence, sessions)
+    assert (none.turn_hit, none.turn_recall_all) == (0.0, 0.0)
+
+    # No evidence to find is not a perfect score. `turn_recall` already reads
+    # 0.0 for an empty ground truth rather than dividing by zero, and `all`
+    # has the same trap the other way round: `set() >= set()` is True.
+    empty = measure(sorted(evidence), parsed, set(), sessions)
+    assert (empty.turn_hit, empty.turn_recall_all, empty.turn_recall) == (0.0, 0.0, 0.0)
+
+
 def test_an_unmatched_offset_consumes_its_rank_and_is_counted(tmp_path):
     """Past the end and in the gap between two turns: both are misses, both count."""
     inst = make_instance(0)
@@ -536,7 +570,9 @@ def test_the_gate_fails_when_the_oracle_arm_is_not_exact(monkeypatch):
         m = real(offsets, starts, turns, evidence, sessions)
         # Only the oracle passes exactly the ground truth, so this hits it alone.
         if list(offsets) == sorted(evidence)[: len(offsets)] and offsets:
-            return score.ArmMetrics(0.5, m.turn_mrr, m.session_recall, m.session_mrr, m.unmatched)
+            # `replace` rather than a positional rebuild: this blunts one field
+            # and must keep carrying whatever else `ArmMetrics` grows.
+            return dataclasses.replace(m, turn_recall=0.5)
         return m
 
     monkeypatch.setattr(score, "_measure", blunted)
