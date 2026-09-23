@@ -57,8 +57,8 @@ attested segment. [E7 fs-F10]
 An `agent` with no adapter is *not* refused. You get a warning naming the
 adapters that exist, and the watch runs anyway: an adapter supplies compaction
 boundaries, while discovery and byte-copying need none. Capturing the bytes
-without boundaries beats capturing nothing, and it means `agent = "hermes"`
-works the day before the hermes adapter lands.
+without boundaries beats capturing nothing, and it means `agent = "kimi-code"`
+works the day before that adapter lands.
 
 `$GITMEMORY_HOME` itself must not be inside a git work tree. The store owns its
 own repository, and a store nested in a checkout gets its history rewritten by

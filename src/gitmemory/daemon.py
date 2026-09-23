@@ -191,8 +191,8 @@ def load_watches(home: str, log=None) -> list[Watch]:
             # `pattern` and the store copies bytes, neither of which needs one.
             # So refusing the watch trades a store with no boundaries for no
             # store at all, against this module's own rule that bytes outrank
-            # boundaries — and it would refuse `agent = "hermes"` written the
-            # day before the hermes adapter lands, which is a configuration we
+            # boundaries — and it would refuse `agent = "kimi-code"` written
+            # the day before that adapter lands, which is a configuration we
             # have told people to expect to work. Loud and degraded beats silent
             # and degraded; it does not beat capturing nothing.
             # [E4, review: CLI 5]
@@ -595,9 +595,9 @@ def discover(watches: list[Watch]) -> list[tuple[Watch, str]]:
     # order it was filled in was the order of the config file. So
     #
     #     [[watch]] agent = "claude-code"  roots = ["~/agents"]
-    #     [[watch]] agent = "hermes"       roots = ["~/agents/hermes"]
+    #     [[watch]] agent = "kimi-code"    roots = ["~/agents/kimi"]
     #
-    # filed every hermes transcript under `claude-code`, which is the wrong
+    # filed every Kimi transcript under `claude-code`, which is the wrong
     # adapter, which is no compaction boundaries — and `capture_one` degrades to
     # bytes without them in silence, so the store looked healthy and `verify`
     # agreed. Swapping the two tables fixed it, which is not a property a config

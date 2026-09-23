@@ -687,8 +687,15 @@ Public + synthetic only. **Never this machine's history.**
   closed rather than silently scoring against the wrong corpus.
   Mutation: replay through a synthetic Claude-Code-shaped transcript
   generator so the *input* is our real format, then inject synthetic compaction boundaries at
-  controlled positions to measure **recall across the compaction wall** — which nobody else measures.
-- **Not LoCoMo** — CC-BY-NC-4.0, 99 documented ground-truth errors, unmaintained since 2024-08.
+  controlled positions to measure **recall across the compaction wall**. That last clause used to
+  end "which nobody else measures", which is a universal negative over a literature nobody here
+  searched exhaustively. **Unknown**, restated as what we can support: we have not found a public
+  memory benchmark that varies the position of a context cut and scores recall across it, and we
+  would rather be shown one than keep claiming there is none.
+- **Not LoCoMo** — CC-BY-NC-4.0, unmaintained since 2024-08, and widely reported to carry
+  ground-truth errors. An earlier revision put the count at 99; that number has no source recorded
+  here and is not repeated until one is. The licence alone decides the question, and a human ruling
+  on CC BY-NC 4.0 is required before any LoCoMo number is published at all.
 - **`thedotmack/membench` (MIT) ablation design**, borrowed: 4 arms (candidate / none / shuffled /
   reference), item-paired, Bonferroni-corrected, calibration gate. The `none` arm is a floor **by
   construction** (it returns nothing), so the comparison against it is one-sample, not paired.

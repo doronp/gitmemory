@@ -956,15 +956,15 @@ def test_an_agent_with_no_adapter_still_captures_its_bytes(tmp_path):
     An adapter supplies *boundaries*. Discovery globs `pattern` and the store
     copies bytes, and neither needs one — so refusing the watch would trade a
     store with no boundaries for no store at all, against this module's rule
-    that bytes outrank boundaries. It would also refuse `agent = "hermes"`
-    written the day before the hermes adapter lands. [E4, review: CLI 5]
+    that bytes outrank boundaries. It would also refuse `agent = "kimi-code"`
+    written the day before that adapter lands. [E4, review: CLI 5]
     """
     home = str(tmp_path / "home")
     root = tmp_path / "proj"
     _write(str(root / "a.jsonl"), TURN)
-    _config(home, [root], agent="hermes")
+    _config(home, [root], agent="kimi-code")
     watches = daemon.load_watches(home)
-    assert [w.agent for w in watches] == ["hermes"]
+    assert [w.agent for w in watches] == ["kimi-code"]
     assert daemon.tick(home, watches, interval=0).appended == len(TURN)
     assert store.verify(home) == []
 
@@ -1585,17 +1585,17 @@ def test_the_most_specific_watch_claims_a_transcript(tmp_path):
     [E4, review: daemon 6]
     """
     outer = tmp_path / "agents"
-    inner = outer / "hermes"
+    inner = outer / "kimi"
     src = _write(str(inner / "s.jsonl"), TURN)
 
     found = daemon.discover(
         [
             daemon.Watch(agent="claude-code", roots=(str(outer),)),
-            daemon.Watch(agent="hermes", roots=(str(inner),)),
+            daemon.Watch(agent="kimi-code", roots=(str(inner),)),
         ]
     )
 
-    assert [(w.agent, p) for w, p in found] == [("hermes", os.path.realpath(src))]
+    assert [(w.agent, p) for w, p in found] == [("kimi-code", os.path.realpath(src))]
 
 
 def test_a_git_init_failure_does_not_cost_the_pass_its_bytes(tmp_path, monkeypatch):
