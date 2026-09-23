@@ -8,8 +8,11 @@ and do not support.
     bench/fetch_longmemeval.sh          # 277 MB, SHA-256 pinned, opt-in
     python -m bench --dataset "$GITMEMORY_LONGMEMEVAL"
 
-Runtime 2m02s on one laptop core. Nothing is cached between runs; the index is
-built from the transcript bytes for every instance and every mode.
+Runtime 8m37s on one laptop core, measured from the end of the dataset load to
+the report. The previous run of this page, with `dense` and `rerank` absent for
+want of their dependencies, took 2m02s over the other five arms; the embedding
+and cross-encoder passes are the rest. Nothing is cached between runs; the index
+is built from the transcript bytes for every instance and every mode.
 
 ## What the arms are
 
@@ -20,12 +23,13 @@ built from the transcript bytes for every instance and every mode.
 | `shuffled` | the same retriever, asked a *different* instance's question |
 | `reference` | the oracle: reads the ground-truth offsets, bypasses retrieval |
 | `live_context` | the same retriever, window restricted to offsets at or after the last compaction boundary — what the agent can still see unaided |
+| `dense` | model2vec static embeddings over the same units |
+| `rerank` | flashrank cross-encoder over the BM25 candidates |
 
-`dense` (model2vec) and `rerank` (flashrank) did not run: their dependencies are
-not installed here, which the report says on its own front page. **So this run
-does not show that BM25 beats embeddings.** It shows BM25 beats nothing, beats a
-foreign query, and beats the live window. Those are three different claims and
-only the third is the product's.
+The last two used to be absent — their dependencies were not installed — and the
+page said so and added that it therefore did not show BM25 beating embeddings.
+They run now, and **BM25 does not beat embeddings.** That is the headline finding
+of this run and it is below, not buried.
 
 ## The headline
 
@@ -33,15 +37,29 @@ Under `after_evidence` — the only arrangement where the compaction boundary
 actually falls between the evidence and the end of the transcript, so a live
 context window has genuinely lost it:
 
-| Arm | Turn recall | Turn MRR |
-|---|---|---|
-| `candidate` | **0.7456** | **0.6209** |
-| `live_context` | 0.0000 | 0.0000 |
+| Arm | Turn recall | Hit@10 | All@10 | Turn MRR |
+|---|---|---|---|---|
+| `candidate` | **0.7456** | 0.8362 | 0.6617 | **0.6209** |
+| `live_context` | 0.0000 | 0.0000 | 0.0000 | 0.0000 |
+| `dense` | 0.8215 | 0.9149 | 0.7170 | 0.6627 |
+| `rerank` | 0.8295 | 0.9064 | 0.7617 | 0.7012 |
 
 That zero is the point. The evidence is behind the boundary, so the window
-cannot reach it at any k, and the index reaches it three times in four.
+cannot reach it at any k, and the index reaches it three times in four. Hit@10
+and All@10 bracket the fraction in the middle: the index puts *something* the
+grader wants in the top ten for 84% of questions, and *everything* it wants for
+66%.
 
-## Four things this run does not let you say
+And the two arms this page could not run before both beat it, by the same
+paired sign-flip test the calibration gates use: `dense` by 0.0759 turn recall
+(p = 3.2e-06, n = 470) and `rerank` by 0.0838 (p = 2.4e-11). Neither p is at the
+`2.225e-308` floor, so unlike the gate rows above these two are numbers rather
+than "smaller than a double can say". The product claim survives the result — it
+is about the boundary, and all three arms are behind it — but the retriever
+claim does not: on this corpus lexical search is the worst of the three arms
+that search at all.
+
+## Five things this run does not let you say
 
 **1. The oracle does not score 1.0 on sessions, and that is the dataset.**
 `reference` turn recall is exactly 1.0 — the apparatus check requires it — but
@@ -81,6 +99,16 @@ underflows to exactly 0.0 around z = 38 and 470 paired instances reach it. The
 value printed is `sys.float_info.min`. Read it as "smaller than a double can
 say", not as a number.
 
+**5. `rerank` is not a third retriever — it is `candidate` with a second look.**
+`rerank_factory` calls the BM25 index for the top `FIRST_STAGE_DEPTH = 50` and
+lets flashrank reorder those 50 into ten. So its 0.8295 is not evidence that
+cross-encoders retrieve better than BM25; it is evidence that BM25's recall@50
+is well above its recall@10 and a cross-encoder can pull the difference
+forward. `dense` is an independent retriever and its 0.8215 does compare
+directly. Note also which arm ships: `dense` and `rerank` are behind the
+`hybrid` extra, so the retriever a default install gets is the one that came
+last of the three.
+
 ## And one about the corpus itself
 
 The transcripts are LongMemEval sessions rendered into Claude Code JSONL by
@@ -94,9 +122,7 @@ if it did.
 
 # LongMemEval benchmark
 
-k = 10 · seed = 42 · instances = 470 · arms = candidate, none, shuffled, reference, live_context
-- arm not available — dense: no numpy, model2vec (pip install 'gitmemory[hybrid]')
-- arm not available — rerank: no flashrank (pip install 'gitmemory[hybrid]')
+k = 10 · seed = 42 · instances = 470 · arms = candidate, none, shuffled, reference, live_context, dense, rerank
 
 ## Calibration
 
@@ -121,151 +147,207 @@ Calibration passed.
 
 ## Overall
 
-| Compaction | Arm | Turn recall | Turn MRR | Session recall | Session MRR | Unmatched/query |
-|---|---|---|---|---|---|---|
-| none | candidate | 0.7456 | 0.6209 | 0.9061 | 0.8863 | 0.00 |
-| none | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| none | shuffled | 0.0350 | 0.0160 | 0.2313 | 0.1235 | 0.00 |
-| none | reference | 1.0000 | 1.0000 | 0.9687 | 1.0000 | 0.00 |
-| none | live_context | 0.7456 | 0.6209 | 0.9061 | 0.8863 | 0.00 |
-| before_evidence | candidate | 0.7456 | 0.6209 | 0.9061 | 0.8863 | 0.00 |
-| before_evidence | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| before_evidence | shuffled | 0.0350 | 0.0160 | 0.2419 | 0.1252 | 0.00 |
-| before_evidence | reference | 1.0000 | 1.0000 | 0.9687 | 1.0000 | 0.00 |
-| before_evidence | live_context | 0.7893 | 0.6623 | 0.9083 | 0.9048 | 0.00 |
-| after_evidence | candidate | 0.7456 | 0.6209 | 0.9061 | 0.8863 | 0.00 |
-| after_evidence | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| after_evidence | shuffled | 0.0350 | 0.0160 | 0.2419 | 0.1252 | 0.00 |
-| after_evidence | reference | 1.0000 | 1.0000 | 0.9687 | 1.0000 | 0.00 |
-| after_evidence | live_context | 0.0000 | 0.0000 | 0.5745 | 0.7659 | 0.00 |
-| every_n | candidate | 0.7513 | 0.6264 | 0.9037 | 0.8845 | 0.00 |
-| every_n | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| every_n | shuffled | 0.0339 | 0.0170 | 0.2303 | 0.1253 | 0.00 |
-| every_n | reference | 1.0000 | 1.0000 | 0.9687 | 1.0000 | 0.00 |
-| every_n | live_context | 0.0043 | 0.0053 | 0.0267 | 0.0447 | 0.00 |
+| Compaction | Arm | Turn recall | Hit@10 | All@10 | Turn MRR | Session recall | Session MRR | Unmatched/query |
+|---|---|---|---|---|---|---|---|---|
+| none | candidate | 0.7456 | 0.8362 | 0.6617 | 0.6209 | 0.9061 | 0.8863 | 0.00 |
+| none | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| none | shuffled | 0.0350 | 0.0596 | 0.0149 | 0.0160 | 0.2313 | 0.1235 | 0.00 |
+| none | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9687 | 1.0000 | 0.00 |
+| none | live_context | 0.7456 | 0.8362 | 0.6617 | 0.6209 | 0.9061 | 0.8863 | 0.00 |
+| none | dense | 0.8215 | 0.9149 | 0.7170 | 0.6627 | 0.9295 | 0.9001 | 0.00 |
+| none | rerank | 0.8292 | 0.9043 | 0.7617 | 0.7005 | 0.9429 | 0.9289 | 0.00 |
+| before_evidence | candidate | 0.7456 | 0.8362 | 0.6617 | 0.6209 | 0.9061 | 0.8863 | 0.00 |
+| before_evidence | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| before_evidence | shuffled | 0.0350 | 0.0596 | 0.0149 | 0.0160 | 0.2419 | 0.1252 | 0.00 |
+| before_evidence | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9687 | 1.0000 | 0.00 |
+| before_evidence | live_context | 0.7893 | 0.8723 | 0.7149 | 0.6623 | 0.9083 | 0.9048 | 0.00 |
+| before_evidence | dense | 0.8215 | 0.9149 | 0.7170 | 0.6627 | 0.9316 | 0.9033 | 0.00 |
+| before_evidence | rerank | 0.8295 | 0.9064 | 0.7617 | 0.7012 | 0.9429 | 0.9289 | 0.00 |
+| after_evidence | candidate | 0.7456 | 0.8362 | 0.6617 | 0.6209 | 0.9061 | 0.8863 | 0.00 |
+| after_evidence | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| after_evidence | shuffled | 0.0350 | 0.0596 | 0.0149 | 0.0160 | 0.2419 | 0.1252 | 0.00 |
+| after_evidence | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9687 | 1.0000 | 0.00 |
+| after_evidence | live_context | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.5745 | 0.7659 | 0.00 |
+| after_evidence | dense | 0.8215 | 0.9149 | 0.7170 | 0.6627 | 0.9316 | 0.9033 | 0.00 |
+| after_evidence | rerank | 0.8295 | 0.9064 | 0.7617 | 0.7012 | 0.9429 | 0.9289 | 0.00 |
+| every_n | candidate | 0.7513 | 0.8383 | 0.6723 | 0.6264 | 0.9037 | 0.8845 | 0.00 |
+| every_n | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| every_n | shuffled | 0.0339 | 0.0596 | 0.0128 | 0.0170 | 0.2303 | 0.1253 | 0.00 |
+| every_n | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9687 | 1.0000 | 0.00 |
+| every_n | live_context | 0.0043 | 0.0064 | 0.0021 | 0.0053 | 0.0267 | 0.0447 | 0.00 |
+| every_n | dense | 0.8215 | 0.9149 | 0.7170 | 0.6627 | 0.9274 | 0.8990 | 0.00 |
+| every_n | rerank | 0.8288 | 0.9064 | 0.7596 | 0.7017 | 0.9439 | 0.9289 | 0.00 |
 
 ## By question type
 
-| Compaction | Question type | Arm | Turn recall | Turn MRR | Session recall | Session MRR | Unmatched/query |
-|---|---|---|---|---|---|---|---|
-| none | knowledge-update | candidate | 0.8750 | 0.7153 | 0.9792 | 0.9676 | 0.00 |
-| none | knowledge-update | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| none | knowledge-update | shuffled | 0.0347 | 0.0272 | 0.3056 | 0.2035 | 0.00 |
-| none | knowledge-update | reference | 1.0000 | 1.0000 | 0.9861 | 1.0000 | 0.00 |
-| none | knowledge-update | live_context | 0.8750 | 0.7153 | 0.9792 | 0.9676 | 0.00 |
-| none | multi-session | candidate | 0.5935 | 0.4989 | 0.8482 | 0.8759 | 0.00 |
-| none | multi-session | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| none | multi-session | shuffled | 0.0299 | 0.0205 | 0.2427 | 0.1744 | 0.00 |
-| none | multi-session | reference | 1.0000 | 1.0000 | 0.9744 | 1.0000 | 0.00 |
-| none | multi-session | live_context | 0.5935 | 0.4989 | 0.8482 | 0.8759 | 0.00 |
-| none | single-session-assistant | candidate | 0.8929 | 0.7898 | 1.0000 | 1.0000 | 0.00 |
-| none | single-session-assistant | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| none | single-session-assistant | shuffled | 0.0536 | 0.0063 | 0.1071 | 0.0208 | 0.00 |
-| none | single-session-assistant | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| none | single-session-assistant | live_context | 0.8929 | 0.7898 | 1.0000 | 1.0000 | 0.00 |
-| none | single-session-preference | candidate | 0.4278 | 0.2142 | 0.7667 | 0.4645 | 0.00 |
-| none | single-session-preference | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| none | single-session-preference | shuffled | 0.0500 | 0.0178 | 0.1333 | 0.0523 | 0.00 |
-| none | single-session-preference | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| none | single-session-preference | live_context | 0.4278 | 0.2142 | 0.7667 | 0.4645 | 0.00 |
-| none | single-session-user | candidate | 0.9375 | 0.7714 | 1.0000 | 0.9645 | 0.00 |
-| none | single-session-user | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| none | single-session-user | shuffled | 0.0156 | 0.0052 | 0.2500 | 0.0622 | 0.00 |
-| none | single-session-user | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| none | single-session-user | live_context | 0.9375 | 0.7714 | 1.0000 | 0.9645 | 0.00 |
-| none | temporal-reasoning | candidate | 0.7307 | 0.6294 | 0.8640 | 0.8601 | 0.00 |
-| none | temporal-reasoning | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| none | temporal-reasoning | shuffled | 0.0381 | 0.0146 | 0.2467 | 0.1226 | 0.00 |
-| none | temporal-reasoning | reference | 1.0000 | 1.0000 | 0.9164 | 1.0000 | 0.00 |
-| none | temporal-reasoning | live_context | 0.7307 | 0.6294 | 0.8640 | 0.8601 | 0.00 |
-| before_evidence | knowledge-update | candidate | 0.8750 | 0.7153 | 0.9792 | 0.9676 | 0.00 |
-| before_evidence | knowledge-update | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| before_evidence | knowledge-update | shuffled | 0.0347 | 0.0272 | 0.3056 | 0.2039 | 0.00 |
-| before_evidence | knowledge-update | reference | 1.0000 | 1.0000 | 0.9861 | 1.0000 | 0.00 |
-| before_evidence | knowledge-update | live_context | 0.9097 | 0.7493 | 0.9722 | 0.9606 | 0.00 |
-| before_evidence | multi-session | candidate | 0.5935 | 0.4989 | 0.8482 | 0.8759 | 0.00 |
-| before_evidence | multi-session | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| before_evidence | multi-session | shuffled | 0.0299 | 0.0205 | 0.2427 | 0.1744 | 0.00 |
-| before_evidence | multi-session | reference | 1.0000 | 1.0000 | 0.9744 | 1.0000 | 0.00 |
-| before_evidence | multi-session | live_context | 0.6293 | 0.5290 | 0.8512 | 0.8988 | 0.00 |
-| before_evidence | single-session-assistant | candidate | 0.8929 | 0.7898 | 1.0000 | 1.0000 | 0.00 |
-| before_evidence | single-session-assistant | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| before_evidence | single-session-assistant | shuffled | 0.0536 | 0.0061 | 0.1607 | 0.0308 | 0.00 |
-| before_evidence | single-session-assistant | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| before_evidence | single-session-assistant | live_context | 0.9286 | 0.8845 | 0.9821 | 0.9821 | 0.00 |
-| before_evidence | single-session-preference | candidate | 0.4278 | 0.2142 | 0.7667 | 0.4645 | 0.00 |
-| before_evidence | single-session-preference | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| before_evidence | single-session-preference | shuffled | 0.0500 | 0.0178 | 0.1333 | 0.0523 | 0.00 |
-| before_evidence | single-session-preference | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| before_evidence | single-session-preference | live_context | 0.5778 | 0.3459 | 0.8667 | 0.6243 | 0.00 |
-| before_evidence | single-session-user | candidate | 0.9375 | 0.7714 | 1.0000 | 0.9645 | 0.00 |
-| before_evidence | single-session-user | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| before_evidence | single-session-user | shuffled | 0.0156 | 0.0052 | 0.2812 | 0.0667 | 0.00 |
-| before_evidence | single-session-user | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| before_evidence | single-session-user | live_context | 0.9531 | 0.7974 | 1.0000 | 0.9749 | 0.00 |
-| before_evidence | temporal-reasoning | candidate | 0.7307 | 0.6294 | 0.8640 | 0.8601 | 0.00 |
-| before_evidence | temporal-reasoning | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| before_evidence | temporal-reasoning | shuffled | 0.0381 | 0.0146 | 0.2467 | 0.1222 | 0.00 |
-| before_evidence | temporal-reasoning | reference | 1.0000 | 1.0000 | 0.9164 | 1.0000 | 0.00 |
-| before_evidence | temporal-reasoning | live_context | 0.7793 | 0.6486 | 0.8576 | 0.8756 | 0.00 |
-| after_evidence | knowledge-update | candidate | 0.8750 | 0.7153 | 0.9792 | 0.9676 | 0.00 |
-| after_evidence | knowledge-update | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| after_evidence | knowledge-update | shuffled | 0.0347 | 0.0272 | 0.3056 | 0.2039 | 0.00 |
-| after_evidence | knowledge-update | reference | 1.0000 | 1.0000 | 0.9861 | 1.0000 | 0.00 |
-| after_evidence | knowledge-update | live_context | 0.0000 | 0.0000 | 0.4861 | 0.9187 | 0.00 |
-| after_evidence | multi-session | candidate | 0.5935 | 0.4989 | 0.8482 | 0.8759 | 0.00 |
-| after_evidence | multi-session | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| after_evidence | multi-session | shuffled | 0.0299 | 0.0205 | 0.2427 | 0.1744 | 0.00 |
-| after_evidence | multi-session | reference | 1.0000 | 1.0000 | 0.9744 | 1.0000 | 0.00 |
-| after_evidence | multi-session | live_context | 0.0000 | 0.0000 | 0.3653 | 0.7145 | 0.00 |
-| after_evidence | single-session-assistant | candidate | 0.8929 | 0.7898 | 1.0000 | 1.0000 | 0.00 |
-| after_evidence | single-session-assistant | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| after_evidence | single-session-assistant | shuffled | 0.0536 | 0.0061 | 0.1607 | 0.0308 | 0.00 |
-| after_evidence | single-session-assistant | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| after_evidence | single-session-assistant | live_context | 0.0000 | 0.0000 | 0.8750 | 0.7278 | 0.00 |
-| after_evidence | single-session-preference | candidate | 0.4278 | 0.2142 | 0.7667 | 0.4645 | 0.00 |
-| after_evidence | single-session-preference | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| after_evidence | single-session-preference | shuffled | 0.0500 | 0.0178 | 0.1333 | 0.0523 | 0.00 |
-| after_evidence | single-session-preference | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| after_evidence | single-session-preference | live_context | 0.0000 | 0.0000 | 0.8000 | 0.5136 | 0.00 |
-| after_evidence | single-session-user | candidate | 0.9375 | 0.7714 | 1.0000 | 0.9645 | 0.00 |
-| after_evidence | single-session-user | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| after_evidence | single-session-user | shuffled | 0.0156 | 0.0052 | 0.2812 | 0.0667 | 0.00 |
-| after_evidence | single-session-user | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| after_evidence | single-session-user | live_context | 0.0000 | 0.0000 | 0.9062 | 0.8095 | 0.00 |
-| after_evidence | temporal-reasoning | candidate | 0.7307 | 0.6294 | 0.8640 | 0.8601 | 0.00 |
-| after_evidence | temporal-reasoning | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| after_evidence | temporal-reasoning | shuffled | 0.0381 | 0.0146 | 0.2467 | 0.1222 | 0.00 |
-| after_evidence | temporal-reasoning | reference | 1.0000 | 1.0000 | 0.9164 | 1.0000 | 0.00 |
-| after_evidence | temporal-reasoning | live_context | 0.0000 | 0.0000 | 0.4711 | 0.7825 | 0.00 |
-| every_n | knowledge-update | candidate | 0.8819 | 0.7156 | 0.9861 | 0.9676 | 0.00 |
-| every_n | knowledge-update | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| every_n | knowledge-update | shuffled | 0.0417 | 0.0301 | 0.3056 | 0.1941 | 0.00 |
-| every_n | knowledge-update | reference | 1.0000 | 1.0000 | 0.9861 | 1.0000 | 0.00 |
-| every_n | knowledge-update | live_context | 0.0069 | 0.0139 | 0.0486 | 0.0972 | 0.00 |
-| every_n | multi-session | candidate | 0.6018 | 0.5130 | 0.8471 | 0.8773 | 0.00 |
-| every_n | multi-session | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| every_n | multi-session | shuffled | 0.0299 | 0.0224 | 0.2348 | 0.1796 | 0.00 |
-| every_n | multi-session | reference | 1.0000 | 1.0000 | 0.9744 | 1.0000 | 0.00 |
-| every_n | multi-session | live_context | 0.0041 | 0.0083 | 0.0131 | 0.0331 | 0.00 |
-| every_n | single-session-assistant | candidate | 0.9107 | 0.7937 | 1.0000 | 1.0000 | 0.00 |
-| every_n | single-session-assistant | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| every_n | single-session-assistant | shuffled | 0.0179 | 0.0022 | 0.0536 | 0.0134 | 0.00 |
-| every_n | single-session-assistant | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| every_n | single-session-assistant | live_context | 0.0000 | 0.0000 | 0.0179 | 0.0179 | 0.00 |
-| every_n | single-session-preference | candidate | 0.4278 | 0.2110 | 0.7333 | 0.4568 | 0.00 |
-| every_n | single-session-preference | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| every_n | single-session-preference | shuffled | 0.0500 | 0.0178 | 0.1333 | 0.0519 | 0.00 |
-| every_n | single-session-preference | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| every_n | single-session-preference | live_context | 0.0000 | 0.0000 | 0.0667 | 0.0667 | 0.00 |
-| every_n | single-session-user | candidate | 0.9375 | 0.7721 | 1.0000 | 0.9531 | 0.00 |
-| every_n | single-session-user | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| every_n | single-session-user | shuffled | 0.0312 | 0.0068 | 0.2969 | 0.0754 | 0.00 |
-| every_n | single-session-user | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
-| every_n | single-session-user | live_context | 0.0156 | 0.0078 | 0.0469 | 0.0469 | 0.00 |
-| every_n | temporal-reasoning | candidate | 0.7320 | 0.6349 | 0.8601 | 0.8599 | 0.00 |
-| every_n | temporal-reasoning | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
-| every_n | temporal-reasoning | shuffled | 0.0381 | 0.0159 | 0.2507 | 0.1265 | 0.00 |
-| every_n | temporal-reasoning | reference | 1.0000 | 1.0000 | 0.9164 | 1.0000 | 0.00 |
-| every_n | temporal-reasoning | live_context | 0.0000 | 0.0000 | 0.0114 | 0.0315 | 0.00 |
+| Compaction | Question type | Arm | Turn recall | Hit@10 | All@10 | Turn MRR | Session recall | Session MRR | Unmatched/query |
+|---|---|---|---|---|---|---|---|---|---|
+| none | knowledge-update | candidate | 0.8750 | 0.9306 | 0.8194 | 0.7153 | 0.9792 | 0.9676 | 0.00 |
+| none | knowledge-update | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| none | knowledge-update | shuffled | 0.0347 | 0.0694 | 0.0000 | 0.0272 | 0.3056 | 0.2035 | 0.00 |
+| none | knowledge-update | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9861 | 1.0000 | 0.00 |
+| none | knowledge-update | live_context | 0.8750 | 0.9306 | 0.8194 | 0.7153 | 0.9792 | 0.9676 | 0.00 |
+| none | knowledge-update | dense | 0.9028 | 0.9444 | 0.8611 | 0.7235 | 0.9792 | 0.9861 | 0.00 |
+| none | knowledge-update | rerank | 0.9606 | 1.0000 | 0.9167 | 0.7847 | 0.9861 | 0.9931 | 0.00 |
+| none | multi-session | candidate | 0.5935 | 0.8017 | 0.3967 | 0.4989 | 0.8482 | 0.8759 | 0.00 |
+| none | multi-session | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| none | multi-session | shuffled | 0.0299 | 0.0661 | 0.0083 | 0.0205 | 0.2427 | 0.1744 | 0.00 |
+| none | multi-session | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9744 | 1.0000 | 0.00 |
+| none | multi-session | live_context | 0.5935 | 0.8017 | 0.3967 | 0.4989 | 0.8482 | 0.8759 | 0.00 |
+| none | multi-session | dense | 0.7762 | 0.9752 | 0.5455 | 0.7209 | 0.9293 | 0.9455 | 0.00 |
+| none | multi-session | rerank | 0.7522 | 0.9339 | 0.5950 | 0.7004 | 0.9183 | 0.9427 | 0.00 |
+| none | single-session-assistant | candidate | 0.8929 | 0.8929 | 0.8929 | 0.7898 | 1.0000 | 1.0000 | 0.00 |
+| none | single-session-assistant | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| none | single-session-assistant | shuffled | 0.0536 | 0.0536 | 0.0536 | 0.0063 | 0.1071 | 0.0208 | 0.00 |
+| none | single-session-assistant | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| none | single-session-assistant | live_context | 0.8929 | 0.8929 | 0.8929 | 0.7898 | 1.0000 | 1.0000 | 0.00 |
+| none | single-session-assistant | dense | 0.8929 | 0.8929 | 0.8929 | 0.5506 | 0.9821 | 0.9487 | 0.00 |
+| none | single-session-assistant | rerank | 0.9107 | 0.9107 | 0.9107 | 0.6514 | 1.0000 | 1.0000 | 0.00 |
+| none | single-session-preference | candidate | 0.4278 | 0.5000 | 0.3333 | 0.2142 | 0.7667 | 0.4645 | 0.00 |
+| none | single-session-preference | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| none | single-session-preference | shuffled | 0.0500 | 0.0667 | 0.0333 | 0.0178 | 0.1333 | 0.0523 | 0.00 |
+| none | single-session-preference | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| none | single-session-preference | live_context | 0.4278 | 0.5000 | 0.3333 | 0.2142 | 0.7667 | 0.4645 | 0.00 |
+| none | single-session-preference | dense | 0.5056 | 0.6000 | 0.4000 | 0.3365 | 0.8333 | 0.5401 | 0.00 |
+| none | single-session-preference | rerank | 0.5611 | 0.6000 | 0.5000 | 0.4059 | 0.9000 | 0.6131 | 0.00 |
+| none | single-session-user | candidate | 0.9375 | 0.9375 | 0.9375 | 0.7714 | 1.0000 | 0.9645 | 0.00 |
+| none | single-session-user | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| none | single-session-user | shuffled | 0.0156 | 0.0156 | 0.0156 | 0.0052 | 0.2500 | 0.0622 | 0.00 |
+| none | single-session-user | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| none | single-session-user | live_context | 0.9375 | 0.9375 | 0.9375 | 0.7714 | 1.0000 | 0.9645 | 0.00 |
+| none | single-session-user | dense | 0.9297 | 0.9375 | 0.9219 | 0.7464 | 0.9844 | 0.9232 | 0.00 |
+| none | single-session-user | rerank | 0.9531 | 0.9531 | 0.9531 | 0.8356 | 1.0000 | 0.9870 | 0.00 |
+| none | temporal-reasoning | candidate | 0.7307 | 0.8189 | 0.6614 | 0.6294 | 0.8640 | 0.8601 | 0.00 |
+| none | temporal-reasoning | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| none | temporal-reasoning | shuffled | 0.0381 | 0.0709 | 0.0079 | 0.0146 | 0.2467 | 0.1226 | 0.00 |
+| none | temporal-reasoning | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9164 | 1.0000 | 0.00 |
+| none | temporal-reasoning | live_context | 0.7307 | 0.8189 | 0.6614 | 0.6294 | 0.8640 | 0.8601 | 0.00 |
+| none | temporal-reasoning | dense | 0.8073 | 0.9134 | 0.6929 | 0.6571 | 0.8734 | 0.8600 | 0.00 |
+| none | temporal-reasoning | rerank | 0.7929 | 0.8661 | 0.7323 | 0.6761 | 0.8979 | 0.8933 | 0.00 |
+| before_evidence | knowledge-update | candidate | 0.8750 | 0.9306 | 0.8194 | 0.7153 | 0.9792 | 0.9676 | 0.00 |
+| before_evidence | knowledge-update | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| before_evidence | knowledge-update | shuffled | 0.0347 | 0.0694 | 0.0000 | 0.0272 | 0.3056 | 0.2039 | 0.00 |
+| before_evidence | knowledge-update | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9861 | 1.0000 | 0.00 |
+| before_evidence | knowledge-update | live_context | 0.9097 | 0.9583 | 0.8611 | 0.7493 | 0.9722 | 0.9606 | 0.00 |
+| before_evidence | knowledge-update | dense | 0.9028 | 0.9444 | 0.8611 | 0.7235 | 0.9792 | 0.9861 | 0.00 |
+| before_evidence | knowledge-update | rerank | 0.9606 | 1.0000 | 0.9167 | 0.7847 | 0.9861 | 0.9931 | 0.00 |
+| before_evidence | multi-session | candidate | 0.5935 | 0.8017 | 0.3967 | 0.4989 | 0.8482 | 0.8759 | 0.00 |
+| before_evidence | multi-session | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| before_evidence | multi-session | shuffled | 0.0299 | 0.0661 | 0.0083 | 0.0205 | 0.2427 | 0.1744 | 0.00 |
+| before_evidence | multi-session | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9744 | 1.0000 | 0.00 |
+| before_evidence | multi-session | live_context | 0.6293 | 0.8099 | 0.4628 | 0.5290 | 0.8512 | 0.8988 | 0.00 |
+| before_evidence | multi-session | dense | 0.7762 | 0.9752 | 0.5455 | 0.7209 | 0.9293 | 0.9455 | 0.00 |
+| before_evidence | multi-session | rerank | 0.7522 | 0.9339 | 0.5950 | 0.7004 | 0.9183 | 0.9427 | 0.00 |
+| before_evidence | single-session-assistant | candidate | 0.8929 | 0.8929 | 0.8929 | 0.7898 | 1.0000 | 1.0000 | 0.00 |
+| before_evidence | single-session-assistant | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| before_evidence | single-session-assistant | shuffled | 0.0536 | 0.0536 | 0.0536 | 0.0061 | 0.1607 | 0.0308 | 0.00 |
+| before_evidence | single-session-assistant | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| before_evidence | single-session-assistant | live_context | 0.9286 | 0.9286 | 0.9286 | 0.8845 | 0.9821 | 0.9821 | 0.00 |
+| before_evidence | single-session-assistant | dense | 0.8929 | 0.8929 | 0.8929 | 0.5506 | 0.9821 | 0.9576 | 0.00 |
+| before_evidence | single-session-assistant | rerank | 0.9107 | 0.9107 | 0.9107 | 0.6514 | 1.0000 | 1.0000 | 0.00 |
+| before_evidence | single-session-preference | candidate | 0.4278 | 0.5000 | 0.3333 | 0.2142 | 0.7667 | 0.4645 | 0.00 |
+| before_evidence | single-session-preference | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| before_evidence | single-session-preference | shuffled | 0.0500 | 0.0667 | 0.0333 | 0.0178 | 0.1333 | 0.0523 | 0.00 |
+| before_evidence | single-session-preference | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| before_evidence | single-session-preference | live_context | 0.5778 | 0.6333 | 0.5000 | 0.3459 | 0.8667 | 0.6243 | 0.00 |
+| before_evidence | single-session-preference | dense | 0.5056 | 0.6000 | 0.4000 | 0.3365 | 0.8333 | 0.5401 | 0.00 |
+| before_evidence | single-session-preference | rerank | 0.5722 | 0.6333 | 0.5000 | 0.4170 | 0.9000 | 0.6131 | 0.00 |
+| before_evidence | single-session-user | candidate | 0.9375 | 0.9375 | 0.9375 | 0.7714 | 1.0000 | 0.9645 | 0.00 |
+| before_evidence | single-session-user | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| before_evidence | single-session-user | shuffled | 0.0156 | 0.0156 | 0.0156 | 0.0052 | 0.2812 | 0.0667 | 0.00 |
+| before_evidence | single-session-user | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| before_evidence | single-session-user | live_context | 0.9531 | 0.9531 | 0.9531 | 0.7974 | 1.0000 | 0.9749 | 0.00 |
+| before_evidence | single-session-user | dense | 0.9297 | 0.9375 | 0.9219 | 0.7464 | 1.0000 | 0.9388 | 0.00 |
+| before_evidence | single-session-user | rerank | 0.9531 | 0.9531 | 0.9531 | 0.8356 | 1.0000 | 0.9870 | 0.00 |
+| before_evidence | temporal-reasoning | candidate | 0.7307 | 0.8189 | 0.6614 | 0.6294 | 0.8640 | 0.8601 | 0.00 |
+| before_evidence | temporal-reasoning | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| before_evidence | temporal-reasoning | shuffled | 0.0381 | 0.0709 | 0.0079 | 0.0146 | 0.2467 | 0.1222 | 0.00 |
+| before_evidence | temporal-reasoning | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9164 | 1.0000 | 0.00 |
+| before_evidence | temporal-reasoning | live_context | 0.7793 | 0.8740 | 0.7087 | 0.6486 | 0.8576 | 0.8756 | 0.00 |
+| before_evidence | temporal-reasoning | dense | 0.8073 | 0.9134 | 0.6929 | 0.6571 | 0.8734 | 0.8600 | 0.00 |
+| before_evidence | temporal-reasoning | rerank | 0.7913 | 0.8661 | 0.7323 | 0.6761 | 0.8979 | 0.8933 | 0.00 |
+| after_evidence | knowledge-update | candidate | 0.8750 | 0.9306 | 0.8194 | 0.7153 | 0.9792 | 0.9676 | 0.00 |
+| after_evidence | knowledge-update | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| after_evidence | knowledge-update | shuffled | 0.0347 | 0.0694 | 0.0000 | 0.0272 | 0.3056 | 0.2039 | 0.00 |
+| after_evidence | knowledge-update | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9861 | 1.0000 | 0.00 |
+| after_evidence | knowledge-update | live_context | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.4861 | 0.9187 | 0.00 |
+| after_evidence | knowledge-update | dense | 0.9028 | 0.9444 | 0.8611 | 0.7235 | 0.9792 | 0.9861 | 0.00 |
+| after_evidence | knowledge-update | rerank | 0.9606 | 1.0000 | 0.9167 | 0.7847 | 0.9861 | 0.9931 | 0.00 |
+| after_evidence | multi-session | candidate | 0.5935 | 0.8017 | 0.3967 | 0.4989 | 0.8482 | 0.8759 | 0.00 |
+| after_evidence | multi-session | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| after_evidence | multi-session | shuffled | 0.0299 | 0.0661 | 0.0083 | 0.0205 | 0.2427 | 0.1744 | 0.00 |
+| after_evidence | multi-session | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9744 | 1.0000 | 0.00 |
+| after_evidence | multi-session | live_context | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.3653 | 0.7145 | 0.00 |
+| after_evidence | multi-session | dense | 0.7762 | 0.9752 | 0.5455 | 0.7209 | 0.9293 | 0.9455 | 0.00 |
+| after_evidence | multi-session | rerank | 0.7522 | 0.9339 | 0.5950 | 0.7004 | 0.9183 | 0.9427 | 0.00 |
+| after_evidence | single-session-assistant | candidate | 0.8929 | 0.8929 | 0.8929 | 0.7898 | 1.0000 | 1.0000 | 0.00 |
+| after_evidence | single-session-assistant | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| after_evidence | single-session-assistant | shuffled | 0.0536 | 0.0536 | 0.0536 | 0.0061 | 0.1607 | 0.0308 | 0.00 |
+| after_evidence | single-session-assistant | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| after_evidence | single-session-assistant | live_context | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.8750 | 0.7278 | 0.00 |
+| after_evidence | single-session-assistant | dense | 0.8929 | 0.8929 | 0.8929 | 0.5506 | 0.9821 | 0.9576 | 0.00 |
+| after_evidence | single-session-assistant | rerank | 0.9107 | 0.9107 | 0.9107 | 0.6514 | 1.0000 | 1.0000 | 0.00 |
+| after_evidence | single-session-preference | candidate | 0.4278 | 0.5000 | 0.3333 | 0.2142 | 0.7667 | 0.4645 | 0.00 |
+| after_evidence | single-session-preference | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| after_evidence | single-session-preference | shuffled | 0.0500 | 0.0667 | 0.0333 | 0.0178 | 0.1333 | 0.0523 | 0.00 |
+| after_evidence | single-session-preference | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| after_evidence | single-session-preference | live_context | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.8000 | 0.5136 | 0.00 |
+| after_evidence | single-session-preference | dense | 0.5056 | 0.6000 | 0.4000 | 0.3365 | 0.8333 | 0.5401 | 0.00 |
+| after_evidence | single-session-preference | rerank | 0.5722 | 0.6333 | 0.5000 | 0.4170 | 0.9000 | 0.6131 | 0.00 |
+| after_evidence | single-session-user | candidate | 0.9375 | 0.9375 | 0.9375 | 0.7714 | 1.0000 | 0.9645 | 0.00 |
+| after_evidence | single-session-user | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| after_evidence | single-session-user | shuffled | 0.0156 | 0.0156 | 0.0156 | 0.0052 | 0.2812 | 0.0667 | 0.00 |
+| after_evidence | single-session-user | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| after_evidence | single-session-user | live_context | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.9062 | 0.8095 | 0.00 |
+| after_evidence | single-session-user | dense | 0.9297 | 0.9375 | 0.9219 | 0.7464 | 1.0000 | 0.9388 | 0.00 |
+| after_evidence | single-session-user | rerank | 0.9531 | 0.9531 | 0.9531 | 0.8356 | 1.0000 | 0.9870 | 0.00 |
+| after_evidence | temporal-reasoning | candidate | 0.7307 | 0.8189 | 0.6614 | 0.6294 | 0.8640 | 0.8601 | 0.00 |
+| after_evidence | temporal-reasoning | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| after_evidence | temporal-reasoning | shuffled | 0.0381 | 0.0709 | 0.0079 | 0.0146 | 0.2467 | 0.1222 | 0.00 |
+| after_evidence | temporal-reasoning | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9164 | 1.0000 | 0.00 |
+| after_evidence | temporal-reasoning | live_context | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.4711 | 0.7825 | 0.00 |
+| after_evidence | temporal-reasoning | dense | 0.8073 | 0.9134 | 0.6929 | 0.6571 | 0.8734 | 0.8600 | 0.00 |
+| after_evidence | temporal-reasoning | rerank | 0.7913 | 0.8661 | 0.7323 | 0.6761 | 0.8979 | 0.8933 | 0.00 |
+| every_n | knowledge-update | candidate | 0.8819 | 0.9306 | 0.8333 | 0.7156 | 0.9861 | 0.9676 | 0.00 |
+| every_n | knowledge-update | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| every_n | knowledge-update | shuffled | 0.0417 | 0.0833 | 0.0000 | 0.0301 | 0.3056 | 0.1941 | 0.00 |
+| every_n | knowledge-update | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9861 | 1.0000 | 0.00 |
+| every_n | knowledge-update | live_context | 0.0069 | 0.0139 | 0.0000 | 0.0139 | 0.0486 | 0.0972 | 0.00 |
+| every_n | knowledge-update | dense | 0.9028 | 0.9444 | 0.8611 | 0.7235 | 0.9792 | 0.9861 | 0.00 |
+| every_n | knowledge-update | rerank | 0.9606 | 1.0000 | 0.9167 | 0.7847 | 0.9861 | 0.9931 | 0.00 |
+| every_n | multi-session | candidate | 0.6018 | 0.8017 | 0.4132 | 0.5130 | 0.8471 | 0.8773 | 0.00 |
+| every_n | multi-session | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| every_n | multi-session | shuffled | 0.0299 | 0.0661 | 0.0083 | 0.0224 | 0.2348 | 0.1796 | 0.00 |
+| every_n | multi-session | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9744 | 1.0000 | 0.00 |
+| every_n | multi-session | live_context | 0.0041 | 0.0083 | 0.0000 | 0.0083 | 0.0131 | 0.0331 | 0.00 |
+| every_n | multi-session | dense | 0.7762 | 0.9752 | 0.5455 | 0.7209 | 0.9293 | 0.9455 | 0.00 |
+| every_n | multi-session | rerank | 0.7481 | 0.9339 | 0.5868 | 0.7004 | 0.9183 | 0.9427 | 0.00 |
+| every_n | single-session-assistant | candidate | 0.9107 | 0.9107 | 0.9107 | 0.7937 | 1.0000 | 1.0000 | 0.00 |
+| every_n | single-session-assistant | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| every_n | single-session-assistant | shuffled | 0.0179 | 0.0179 | 0.0179 | 0.0022 | 0.0536 | 0.0134 | 0.00 |
+| every_n | single-session-assistant | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| every_n | single-session-assistant | live_context | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0179 | 0.0179 | 0.00 |
+| every_n | single-session-assistant | dense | 0.8929 | 0.8929 | 0.8929 | 0.5506 | 0.9643 | 0.9397 | 0.00 |
+| every_n | single-session-assistant | rerank | 0.9107 | 0.9107 | 0.9107 | 0.6514 | 1.0000 | 1.0000 | 0.00 |
+| every_n | single-session-preference | candidate | 0.4278 | 0.5000 | 0.3333 | 0.2110 | 0.7333 | 0.4568 | 0.00 |
+| every_n | single-session-preference | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| every_n | single-session-preference | shuffled | 0.0500 | 0.0667 | 0.0333 | 0.0178 | 0.1333 | 0.0519 | 0.00 |
+| every_n | single-session-preference | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| every_n | single-session-preference | live_context | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0667 | 0.0667 | 0.00 |
+| every_n | single-session-preference | dense | 0.5056 | 0.6000 | 0.4000 | 0.3365 | 0.8333 | 0.5401 | 0.00 |
+| every_n | single-session-preference | rerank | 0.5722 | 0.6333 | 0.5000 | 0.4170 | 0.9000 | 0.6131 | 0.00 |
+| every_n | single-session-user | candidate | 0.9375 | 0.9375 | 0.9375 | 0.7721 | 1.0000 | 0.9531 | 0.00 |
+| every_n | single-session-user | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| every_n | single-session-user | shuffled | 0.0312 | 0.0312 | 0.0312 | 0.0068 | 0.2969 | 0.0754 | 0.00 |
+| every_n | single-session-user | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.00 |
+| every_n | single-session-user | live_context | 0.0156 | 0.0156 | 0.0156 | 0.0078 | 0.0469 | 0.0469 | 0.00 |
+| every_n | single-session-user | dense | 0.9297 | 0.9375 | 0.9219 | 0.7464 | 0.9844 | 0.9232 | 0.00 |
+| every_n | single-session-user | rerank | 0.9531 | 0.9531 | 0.9531 | 0.8356 | 1.0000 | 0.9870 | 0.00 |
+| every_n | temporal-reasoning | candidate | 0.7320 | 0.8189 | 0.6693 | 0.6349 | 0.8601 | 0.8599 | 0.00 |
+| every_n | temporal-reasoning | none | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.00 |
+| every_n | temporal-reasoning | shuffled | 0.0381 | 0.0709 | 0.0079 | 0.0159 | 0.2507 | 0.1265 | 0.00 |
+| every_n | temporal-reasoning | reference | 1.0000 | 1.0000 | 1.0000 | 1.0000 | 0.9164 | 1.0000 | 0.00 |
+| every_n | temporal-reasoning | live_context | 0.0000 | 0.0000 | 0.0000 | 0.0000 | 0.0114 | 0.0315 | 0.00 |
+| every_n | temporal-reasoning | dense | 0.8073 | 0.9134 | 0.6929 | 0.6571 | 0.8734 | 0.8600 | 0.00 |
+| every_n | temporal-reasoning | rerank | 0.7929 | 0.8661 | 0.7323 | 0.6776 | 0.9018 | 0.8933 | 0.00 |
 
