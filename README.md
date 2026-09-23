@@ -14,7 +14,7 @@
 
 ## The number this is built on
 
-A coding agent's transcript is an append-only byte stream that nothing durably
+An agent's transcript is an append-only byte stream that nothing durably
 keeps. Compaction discards it. So the case that matters is the one where the
 evidence is *behind* the compaction boundary — where the live context window
 has genuinely lost it.
@@ -271,6 +271,35 @@ An adapter is two symbols — `AGENT` and `parse(path) -> Session` — plus
 `tests/conformance.py::check_adapter`. An agent that fails **P4 only** can be
 captured today with no adapter at all. An agent that fails **P2 or P3** needs a
 materializer, which is a new ingestion path into the store and is not built.
+
+### The class P1–P4 actually describes
+
+The scope sentence every measurement here supports is not "for coding agents"
+and not "for any agent". It is: **for any agent whose transcript is a local
+append-only file, on a machine whose owner is the data controller.**
+
+Nothing in the numbers is coding-specific, and that is checkable rather than
+asserted: the headline result is 470 LongMemEval instances, a conversational
+QA benchmark with no code in it, and the decision extractor's honest zero was
+scored on human turns, not on diffs. The parser is per-line JSON; what the
+lines are *about* never reaches it.
+
+So the class is wider than the roadmap below, which is a roadmap of coding
+agents only because that is where the survey looked — twenty-nine products,
+all of them coding agents. Four adjacent classes look like they satisfy P1–P4,
+and **none of them has been read at source, so each is a candidate and not a
+claim**: on-prem enterprise agent runtimes that log to disk by policy; local
+agent frameworks and SDKs that write a JSONL event log per run; ops and
+robotics event logs, where append-only is the norm rather than the exception;
+and support or ticketing harnesses that keep a per-conversation file. Each
+needs the same four-property read the coding agents got before it belongs in a
+table.
+
+The one property that will bite outside the coding field is P3's *self-
+delimiting per line*, not P1 or P2: an event log is usually append-only and
+usually local, and is just as usually a rotating multi-file stream. That is a
+store seam — the same one [issue #8](https://github.com/doronp/gitmemory/issues/8)
+opens for Cline's single global `hooks.jsonl` — rather than a parser.
 
 ### The roadmap, and the field it is a roadmap of
 
