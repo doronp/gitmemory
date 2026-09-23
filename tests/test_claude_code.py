@@ -1187,15 +1187,26 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
     the old fixture against `_glob_hits` — so eight cases asserted `None`
     against an empty directory and held for the wrong reason. The count read
     "five … six" until it was measured rather than reasoned out: the glob
-    metacharacter ids look reachable and are not, because `_glob_hits` escapes
-    the id before globbing, so `*` searches for a file named `*.jsonl`. It is now
+    metacharacter ids look reachable and are not, because `_glob_hits` escaped
+    the id before globbing, so `*` searched for a file named `*.jsonl`. It is now
     the same shape as pi's: each id gets a file at the exact path the globbed
     filename shape would resolve to, created through the unnormalised path so
     the literal intermediate directories the glob has to walk exist too, and
     the projects root is nested four deep so even `../../../../` lands inside
     `tmp_path`. Then reachability is *measured* rather than assumed — if the
-    unguarded glob finds nothing, this fails as a bad fixture instead of
+    unguarded search finds nothing, this fails as a bad fixture instead of
     passing as a good guard. [E4, vacuity pass 2: L3; review: tests]
+
+    Four of the eleven are unreachable now, and the vacuity floor asserts that
+    rather than skipping it. When `_glob_hits` stopped building a pattern and
+    started comparing against real directory entries, every id holding a
+    separator became *unspellable*: a filename cannot contain `/`, so there is
+    no tree in which `../secrets.jsonl` is an entry, and the traversal those
+    four ids were written for cannot be expressed at all. The charset guard is
+    still what this test names, and it is still the thing being deleted in the
+    mutation row — but for those four it is now the second lock rather than the
+    only one, and saying so is better than a floor that quietly passes.
+    [review: paths F2]
     """
     projects = tmp_path / "a" / "b" / "c" / "projects"
     root = projects / "-Users-x-work"
@@ -1211,7 +1222,11 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("{}\n")
 
-    assert _would_glob(projects, hostile), f"vacuous fixture: nothing to find for {hostile!r}"
+    reachable = _would_glob(projects, hostile)
+    if "/" in hostile:
+        assert not reachable, f"a filename cannot hold a separator, yet: {reachable}"
+    else:
+        assert reachable, f"vacuous fixture: nothing to find for {hostile!r}"
 
     found = cc.find_session(hostile, str(projects))
     assert found is None, f"escaped or widened the search: {found}"
@@ -1305,6 +1320,89 @@ def test_find_session_ignores_a_symlink_pointing_out_of_the_root(tmp_path):
     link.unlink()
     link.write_text("{}\n")
     assert cc.find_session("abc-123", str(tmp_path / "projects")) == str(link)
+
+
+def test_a_self_linking_directory_does_not_multiply_the_search(scandir_budget, tmp_path):
+    """Two symlinks and a directory are a fork bomb for `glob`'s `**`.
+
+    `**` descends into symlinked directories, so a directory holding `k` links
+    back to itself is re-entered `k` times per level until the kernel's `ELOOP`
+    stops it at ~31 — `k ** 31` paths, each materialised as a list before
+    anything is matched. Measured against the replaced implementation on
+    exactly the tree below: 76,849 `scandir` calls in five seconds and still
+    running, versus six and 0.1 ms for the walk. Nobody needs a large corpus
+    for this; anybody who can create a directory under the root can hang every
+    caller and then exhaust its memory.
+
+    The budget is what makes this a regression test rather than a smoke test:
+    the old code fails it in the first millisecond, not after a timeout.
+
+    The two links point at `.` rather than at an ancestor because a loop of
+    length one is the smallest one and `**` treats it identically — there is no
+    minimum cycle length to hide behind. [review: paths F2]
+    """
+    projects = tmp_path / "projects"
+    proj = projects / "-Users-x-work"
+    proj.mkdir(parents=True)
+    (proj / "abc-123.jsonl").write_text("{}\n")
+    os.symlink(".", proj / "a")
+    os.symlink(".", proj / "b")
+
+    calls = scandir_budget(16)
+    assert cc.find_session("abc-123", str(projects)) == str(proj / "abc-123.jsonl")
+    assert calls[0] <= 16, calls[0]
+
+
+def test_a_self_linking_subagent_directory_does_not_multiply_the_rollup(scandir_budget, tmp_path):
+    """The same bomb, one caller over, where it was a billing bug first.
+
+    `session_files` globbed `<stem>/**/*.jsonl` and deduped the results by
+    realpath, which fixed the 17 copies of one `agent-1.jsonl` that
+    `rollup_usage` was billing 17 times — but deduping an enumeration does not
+    stop the enumeration. This branches, so it is the cost bug the dedup could
+    not reach.
+
+    The dedup is still load-bearing and is still pinned, further down: what it
+    catches now is a *leaf* symlink, which the walk lists as a file.
+    [E7 parsing-F13, review: paths F2]
+    """
+    main = tmp_path / "x.jsonl"
+    main.write_text(json.dumps(user("u1", "main")) + "\n")
+    subs = tmp_path / "x" / "subagents"
+    subs.mkdir(parents=True)
+    (subs / "agent-1.jsonl").write_text(json.dumps(user("a1", "sub")) + "\n")
+    os.symlink(".", subs / "a")
+    os.symlink(".", subs / "b")
+
+    calls = scandir_budget(16)
+    files = cc.session_files(str(main))
+    assert [os.path.basename(f) for f in files] == ["x.jsonl", "agent-1.jsonl"]
+    assert calls[0] <= 16, calls[0]
+
+
+def test_a_transcript_dropped_straight_into_the_root_is_not_found(tmp_path):
+    """One directory level is required, and it was required by the pattern.
+
+    `base/*/**/name` spent its `*` on the project directory, so a file sitting
+    in the projects root itself never matched. That is right — Claude Code
+    writes `<root>/<encoded-cwd>/<id>.jsonl` and nothing else, so an id-named
+    file directly in the root was put there by something that is not Claude
+    Code — but with the pattern gone it is a bare `d != root` that reads like a
+    micro-optimisation and deletes cleanly. Pins the behaviour to the rewrite
+    rather than to the syntax that used to imply it.
+
+    The positive control is the same file one level down. [review: paths F2]
+    """
+    projects = tmp_path / "projects"
+    projects.mkdir()
+    loose = projects / "abc-123.jsonl"
+    loose.write_text("{}\n")
+    assert cc.find_session("abc-123", str(projects)) is None
+
+    proj = projects / "-Users-x-work"
+    proj.mkdir()
+    loose.rename(proj / "abc-123.jsonl")
+    assert cc.find_session("abc-123", str(projects)) == str(proj / "abc-123.jsonl")
 
 
 def test_find_session_ignores_a_directory_with_a_transcripts_name(tmp_path):
@@ -1990,26 +2088,36 @@ def test_an_invalid_byte_and_its_escape_are_one_record_and_two_files(tmp_path):
     ).hexdigest(), "the byte layer must still tell them apart"
 
 
-def test_a_symlink_loop_bills_a_subagent_file_once(tmp_path):
+def test_a_second_name_for_one_subagent_file_bills_it_once(tmp_path):
     """`rollup_usage` parses every path `session_files` returns.
 
-    `**` walks into symlinked directories, so a `subagents/` directory holding
-    a link back to its own parent turns one file into one path per level until
-    the kernel's symlink limit stops it. Measured before the dedup: a single
-    `agent-1.jsonl` came back 17 times, which is the same tokens billed 17
-    times. Bounded by the kernel rather than by us — which is what made a line
-    of code worth it. [E7 parsing-F13]
+    Originally a symlinked *directory*: `**` walked into one, so a `subagents/`
+    holding a link back to its own parent turned one file into one path per
+    level until the kernel stopped it, and a single `agent-1.jsonl` came back
+    17 times — the same tokens billed 17 times. The walk that replaced the glob
+    does not follow those, and the cost half of that bug is pinned by
+    `test_a_self_linking_subagent_directory_does_not_multiply_the_rollup`.
+
+    What is left for the realpath dedup is the case the walk still yields
+    twice, and it is the likelier one: a leaf symlink is listed as a file, so a
+    second name beside the target is two paths onto one transcript. Without
+    this the dedup is unpinned and deleting it leaves the suite green.
+
+    Hard links are deliberately not tested, because they are deliberately not
+    handled: two links to one inode are two real paths, each resolving to
+    itself, so no realpath check can see them. Noted at the call site.
+    [E7 parsing-F13, review: paths F2/F6]
     """
     main = tmp_path / "x.jsonl"
     main.write_text(json.dumps(user("u1", "main")) + "\n")
     subs = tmp_path / "x" / "subagents"
     subs.mkdir(parents=True)
     (subs / "agent-1.jsonl").write_text(json.dumps(user("a1", "sub")) + "\n")
-    os.symlink(tmp_path / "x", subs / "loop")
+    os.symlink(subs / "agent-1.jsonl", subs / "agent-1-copy.jsonl")
 
     files = cc.session_files(str(main))
     assert len(files) == 2, f"one main + one subagent, got {len(files)}"
-    assert [os.path.basename(f) for f in files] == ["x.jsonl", "agent-1.jsonl"]
+    assert [os.path.basename(f) for f in files] == ["x.jsonl", "agent-1-copy.jsonl"]
 
 
 def test_a_sidechain_flag_is_a_boolean_not_a_truthy_string(tmp_path):

@@ -90,12 +90,26 @@ MAX_TERMS = 64
 _PATH = re.compile(
     r"(?:[A-Za-z]:[\\/]|~[\\/]|\.{1,2}[\\/]|[\\/])?(?:[\w.@%+-]{1,255}+[\\/])+[\w.@%+-]{1,255}+"
 )
-# Tool-argument keys that name a file. Counted across the two conformance
-# corpora: claude-code-log's 162 fixtures carry `file_path` 15x, `filePath` 6x
-# and `path` 5x; pi's and oh-my-pi's four carry `path` 826x. The two notebook
-# spellings appear in neither and are here from Claude Code's NotebookEdit
-# parameters, not from a line we have seen. An unknown key contributes nothing,
-# so the cost of a wrong guess is a path not indexed, never a wrong path.
+# Tool-argument keys that name a file. Counted the way `_paths` reads them —
+# one tally per block whose argument object carries the key with a non-empty
+# string — across the two conformance corpora: claude-code-log's 162 fixtures
+# carry `file_path` 551x and `path` 50x, and pi's and oh-my-pi's four carry
+# `path` 894x. Nothing carries either notebook spelling; those are here from
+# Claude Code's NotebookEdit parameters, not from a line we have seen. An
+# unknown key contributes nothing, so the cost of a wrong guess is a path not
+# indexed, never a wrong path.
+#
+# `filePath` is the one to be careful about: it is all over the claude-code-log
+# corpus — 477 raw occurrences in 36 fixtures — and is an *argument* key in
+# none of them. Every one is under `toolUseResult` (248) or `toolUseResult.file`
+# (229), which is the tool's answer, not the model's call, and is not what
+# `_paths` reads. It stays in the tuple at the same price as the notebook
+# spellings; the count that used to sit here, 6, was reading the corpus rather
+# than the parse.
+#
+# Those numbers were 15/6/5/826 and all four were wrong, off by up to 37x in
+# both directions, and the pi one contradicted the 894 that `_paths` asserts
+# seven hundred lines below. Re-measured, from the parse. [review: docs]
 #
 # This used to read "Claude Code, Hermes and opencode", naming two agents that
 # `adapters/__init__.py` retracts by name in the same tree — a spelling claim
@@ -870,8 +884,18 @@ def _paths(block) -> str:
     # the ordinary malformed output the line above exists for — would win the
     # fallback and then fail the `isinstance` below, masking an `arguments`
     # that was right there. Fall through on *shape*, not on truthiness.
+    #
+    # `not args` is the one truthiness test that belongs, and it is not the `or`
+    # this comment rejects: `{}` is the right *shape* and still carries nothing,
+    # so a record with both keys — `input` empty, `arguments` populated — read
+    # the empty one and indexed no path at all. A tool with genuinely no
+    # arguments falls through to an absent `arguments` and the `isinstance`
+    # below skips it, so the extra hop costs nothing. The shipped corpora have
+    # four empty `input` dicts and none of them also carries `arguments`, which
+    # is why nothing caught this: it is a defence against the next adapter that
+    # writes both, not a fix for a line we have. [review: defensive]
     args = native.get("input")
-    if not isinstance(args, dict):
+    if not isinstance(args, dict) or not args:
         args = native.get("arguments")
     if isinstance(args, dict):
         for key in _PATH_KEYS:

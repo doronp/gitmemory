@@ -52,7 +52,6 @@ and unparseable input is *counted* in `Session.skipped`, never swallowed.
 
 from __future__ import annotations
 
-import glob as _glob
 import os
 import re
 
@@ -76,6 +75,7 @@ from .claude_code import (
     _safe_type,
     _scrub,
     _str_or_none,
+    _walk_jsonl,
 )
 
 AGENT = "pi"
@@ -522,15 +522,21 @@ def _glob_hits(session_id: str, root: str) -> set[str]:
     it drifts *green*: the fixture stops planting anything the glob can reach,
     every hostile id returns `None` for the wrong reason, and the test that
     exists to prove the charset guard works proves nothing. [review: tests]
+
+    Two filename shapes, and — since `claude_code._walk_jsonl` replaced the
+    `**` pattern that could be turned into a fork bomb with two symlinks — one
+    traversal rather than two. Both shapes are now `str` comparisons against a
+    real directory entry: the bare stem, or anything ending in `_<id>.jsonl`,
+    which is `*_<id>.jsonl` with `*` meaning what glob meant by it. Neither can
+    be widened by a metacharacter, so nothing needs escaping. `_names_session`
+    still re-checks the second shape; matching it here is not believing it.
     """
-    base = _glob.escape(root)
-    esc = _glob.escape(session_id)
-    hits: set[str] = set()
-    for name in (f"{esc}.jsonl", f"*_{esc}.jsonl"):
-        # Two *filename* shapes, one depth pattern. `**` matches zero or more
-        # directories, so this already covers `base/*/name`. [pair review]
-        hits |= set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
-    return hits
+    bare = f"{session_id}.jsonl"
+    return {
+        os.path.join(d, n)
+        for d, n in _walk_jsonl(root)
+        if d != root and (n == bare or n.endswith(f"_{bare}"))
+    }
 
 
 # `fileTimestamp`, exactly: `new Date().toISOString()` (`session-manager.ts:1062`

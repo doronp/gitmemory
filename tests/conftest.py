@@ -1,4 +1,4 @@
-"""One autouse fixture: no test can reach the developer's own home.
+"""Two fixtures: one keeps tests out of the developer's home, one budgets I/O.
 
 A test suite for a program that reads transcripts and writes a store has two
 ways to escape `tmp_path`, and both are a default rather than a bug in any one
@@ -21,6 +21,8 @@ point somewhere else, and somewhere else has to exist.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 
@@ -31,3 +33,37 @@ def _no_real_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("GITMEMORY_HOME", raising=False)
     return home
+
+
+@pytest.fixture
+def scandir_budget(monkeypatch):
+    """Fail on the `limit + 1`-th directory read, and count them.
+
+    A cost bug needs a cost assertion, and wall-clock is not one: it is flaky
+    on a loaded machine, and it reports "slow" for a tree that is merely large.
+    Directory reads are what a traversal actually spends and what a symlink
+    loop multiplies, so budget those instead. The failure lands on the read
+    that busts the budget rather than after a timeout, which is what makes the
+    symlink-bomb tests finish in milliseconds against the bombed code.
+
+    Here rather than in one test module because two adapters share the walk
+    being budgeted, and a test importing another test module to borrow a helper
+    is the shape that makes `-k` selections mysterious.
+
+    Returns a callable: `calls = scandir_budget(16)`, then `calls[0]` after.
+    """
+
+    def budget(limit: int) -> list[int]:
+        calls = [0]
+        real = os.scandir
+
+        def counted(path="."):
+            calls[0] += 1
+            if calls[0] > limit:
+                raise AssertionError(f"more than {limit} directory reads; {path!r} was last")
+            return real(path)
+
+        monkeypatch.setattr(os, "scandir", counted)
+        return calls
+
+    return budget

@@ -394,6 +394,50 @@ def test_a_malformed_input_does_not_hide_the_arguments_beside_it(home, src):
     assert row["paths"] == "CHANGELOG.md"
 
 
+def test_an_empty_input_does_not_hide_the_arguments_beside_it(home, src):
+    """The shape test above is necessary and was not sufficient.
+
+    `{}` passes `isinstance(args, dict)`, so an empty `input` won the
+    fall-through, and the populated `arguments` next to it went unread — the
+    same path lost, one value over from the case the test above pins. The
+    fixture is deliberately a bare filename: with a separator the path regex
+    would recover it from the block text and the bug would be invisible here.
+
+    Synthetic, like its neighbour, and for a sharper reason: the shipped
+    corpora hold four empty `input` dicts and not one of them also carries
+    `arguments`, so no corpus run can reach this. [review: defensive]
+    """
+    write(
+        src,
+        [
+            {"type": "session", "id": "s1", "timestamp": "t", "cwd": "/w"},
+            {
+                "type": "message",
+                "id": "e1",
+                "parentId": None,
+                "timestamp": "t",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "t1",
+                            "name": "read",
+                            "input": {},
+                            "arguments": {"path": "AGENTS.md"},
+                        }
+                    ],
+                },
+            },
+        ],
+    )
+    store.capture(src, "pi", "sess", home=home)
+    index.build(home)
+    db = index.open_db(index.db_path(home))
+    row = db.execute("SELECT paths FROM blocks WHERE kind = 'tool_use'").fetchone()
+    assert row["paths"] == "AGENTS.md"
+
+
 # --------------------------------------------------------------------------- #
 # a query is data, not a second query language
 # --------------------------------------------------------------------------- #

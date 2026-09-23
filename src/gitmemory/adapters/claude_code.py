@@ -18,10 +18,10 @@ empty string, which makes them collide across unrelated sessions.
 
 from __future__ import annotations
 
-import glob as _glob
 import math
 import os
 import re
+from collections.abc import Iterator
 
 from ..jsonl import LineTooLong, LineTruncated, iter_records
 from ..records import Block, Event, Session, Turn, canonical_json, sha256_text
@@ -547,16 +547,32 @@ def session_files(path: str) -> list[str]:
     """
     main = os.path.abspath(path)
     stem = os.path.splitext(main)[0]
-    subs = sorted(_glob.glob(os.path.join(_glob.escape(stem), "**", "*.jsonl"), recursive=True))
+    subs = sorted(os.path.join(d, n) for d, n in _walk_jsonl(stem))
 
-    # Deduped by realpath, because `**` walks into symlinked directories and a
-    # directory that links back to its own ancestor turns one subagent file
-    # into one path per level until the kernel's symlink limit stops it.
-    # Measured: a single `agent-1.jsonl` under a self-linking `subagents/`
-    # yielded 16 extra paths — and `rollup_usage` parses every path this
-    # returns, so that is the same tokens billed 17 times. Bounded by the
-    # kernel, not by us, which is the part that made it worth a line of code.
-    # [E7 parsing-F13]
+    # The loop this used to walk into is gone: `_walk_jsonl` does not follow
+    # symlinked directories, so a `subagents/` holding a link back to its own
+    # ancestor is now one file rather than one path per level up to the
+    # kernel's limit. That was a billing bug before it was a cost one —
+    # `rollup_usage` parses every path this returns, and the measured 17 copies
+    # of one `agent-1.jsonl` were the same tokens billed 17 times. [E7
+    # parsing-F13, review: paths F2]
+    #
+    # The realpath dedup stays, for the case the walk still yields twice: a
+    # *leaf* symlink is listed as a file, so `copy.jsonl -> agent-1.jsonl`
+    # beside its target is two paths onto one transcript and two copies of its
+    # tokens. One line, and the alternative is billing them twice.
+    #
+    # It does not catch hard links, and no realpath-based check can: two links
+    # to one inode are two real paths, each resolving to itself. Measured —
+    # same `st_ino`, same `st_nlink` of 2, different `realpath`. Deduping those
+    # needs `(st_dev, st_ino)`, which would also collapse a *deliberate* second
+    # copy of a transcript, so it is not obviously the right trade and is not
+    # made here. Hard-linking your own subagent transcripts is not a shape any
+    # agent writes. [review: paths F6]
+    #
+    # What this gives up is a subagent directory that is *itself* a symlink,
+    # which Claude Code does not write — it creates `<stem>/subagents/` beside
+    # the transcript — so the only way to have one is to have made it yourself.
     seen = {os.path.realpath(main)}
     out = [main]
     for s in subs:
@@ -672,6 +688,41 @@ def estimate_cost(model: str | None, usage: dict) -> dict | None:
     return {"usd": usd, "estimated": True, "as_of": PRICES_AS_OF, "priced_as": match}
 
 
+def _walk_jsonl(root: str) -> Iterator[tuple[str, str]]:
+    """`(dirpath, filename)` for every `*.jsonl` under `root`. One traversal.
+
+    `followlinks=False` is the whole point, and it is `os.walk`'s default — the
+    replaced `glob(..., recursive=True)` had no equivalent. `**` descends into
+    symlinked directories, so a directory holding links back to itself is a
+    fork bomb made of two symlinks: the engine re-enters it once per link per
+    level until the kernel's `ELOOP` stops it at ~31, which is `k**31` paths
+    for branching factor `k`. Measured on a directory containing one file and
+    two links to itself: `glob` had made 76,849 `scandir` calls and had not
+    returned after five seconds; this walk finishes the same directory in
+    0.1 ms and six. An attacker who can write a directory under the root — a
+    shared checkout, a synced folder, an agent that was asked to make one — can
+    therefore hang any caller of `find_session` and grow it out of memory,
+    because `**` materialises each level before matching. [review: paths F2]
+
+    Nothing is lost by not following them. The only symlinked directory whose
+    contents `find_session` would have accepted is one resolving back inside
+    the root, and everything inside the root is walked by its real path anyway;
+    a link pointing outward produces hits that `_contained` rejects. A
+    *leaf* symlink is still returned — `os.walk` lists it as a file — which is
+    what `test_find_session_ignores_a_symlink_pointing_out_of_the_root` pins.
+
+    This also makes pi's traversal a third of what it was: two filename shapes
+    used to mean two full walks of the same tree, and now the shapes are just
+    two comparisons per file. The remaining cost is linear in the real tree and
+    unbounded only by how much is under the root, which is the user's own
+    directory rather than an attacker's multiplier. [review: paths F3]
+    """
+    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+        for name in filenames:
+            if name.endswith(".jsonl"):
+                yield dirpath, name
+
+
 def _glob_hits(session_id: str, root: str) -> set[str]:
     """Every path the filename shape reaches under `root`. No validation.
 
@@ -682,19 +733,23 @@ def _glob_hits(session_id: str, root: str) -> set[str]:
     wrong reason, and the test that exists to prove the charset guard works
     proves nothing instead. Mirrors `pi._glob_hits`. [review: tests]
 
-    One pattern, not two: `**` matches *zero* or more directories, so
-    `base/*/**/name` already returns everything `base/*/name` does — symlinked
-    project directories included, since `*` and `**` treat those the same way.
-    The second glob was a second full traversal for a strictly smaller set.
-    [pair review]
+    Named for the `glob` it no longer uses. The pattern was `base/*/**/name`,
+    and the two halves of that survive as the two conditions below: at least
+    one directory level (`dirpath != root`, so a file dropped straight into the
+    root is not a transcript), then any depth under it.
+
+    There is nothing left to escape, and that is the second reason to be rid of
+    the pattern. An id reaching this point has passed `_SESSION_ID_RE` and
+    holds no metacharacter, so `_glob.escape` was defence against a charset
+    guard that might one day widen; an `==` against a real directory entry
+    cannot widen at all.
 
     Unlike pi's, the shape is the bare stem only. There is no `*_<id>.jsonl`
     here, so the suffix-collision `pi._names_session` exists for cannot arise:
     a hit's stem *is* the id.
     """
-    name = _glob.escape(session_id) + ".jsonl"
-    base = _glob.escape(root)
-    return set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
+    name = session_id + ".jsonl"
+    return {os.path.join(d, n) for d, n in _walk_jsonl(root) if n == name and d != root}
 
 
 def _contained(hit: str, root: str) -> bool:

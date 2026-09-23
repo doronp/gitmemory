@@ -33,12 +33,12 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import pathlib
 import stat
 import subprocess
 import time
 import tomllib
 from dataclasses import dataclass, field
-from glob import glob
 
 from . import gitrepo, store
 from .adapters import ADAPTERS
@@ -57,7 +57,7 @@ STALE_TMP = 3600.0  # a `.tmp-` this old is a killed hook, not a live one
 
 # A module constant, not `Watch.pattern`: on a `slots=True` dataclass the class
 # attribute is the slot's `member_descriptor`, so reading the default off the
-# class hands `glob` a descriptor and every discovery raises. [E4]
+# class hands the matcher a descriptor and every discovery raises. [E4]
 PATTERN = "**/*.jsonl"
 
 # Hook events that mean "capture now" rather than "something is alive". Only
@@ -248,8 +248,9 @@ def load_watches(home: str, log=None) -> list[Watch]:
                 # phantom sessions and six commits in thirty seconds — roughly
                 # 17,000 a day, growing in disk for as long as the watcher runs,
                 # with `verify` reporting clean throughout. The default
-                # `~/.gitmemory` is safe only by the accident that `glob` skips
-                # dotted components. [E4, review: CLI 3]
+                # `~/.gitmemory` is safe only because `_hits` skips dotted
+                # components, which is why that skip is preserved rather than
+                # inherited. [E4, review: CLI 3]
                 say(f"{where}: root {r} contains the store itself; skipped")
                 continue
             kept.append(resolved)
@@ -515,13 +516,48 @@ def _unlink(path: str) -> None:
         os.unlink(path)
 
 
+def _hits(root: str, pattern: str) -> list[str]:
+    """`pattern` under `root`, sorted, without descending a symlinked directory.
+
+    This was `glob.glob(os.path.join(root, pattern), recursive=True)`, and the
+    docstring above it said symlinked directories are not followed. They are.
+    Measured on 3.13.12: a `**` glob returned a file reachable only through a
+    symlinked directory; the same pattern under `pathlib` returned nothing.
+
+    Following them is not an escape — `_covers` is the floor and it holds — but
+    it is a cost with no ceiling. Each self-link multiplies the candidate set
+    per level and `**` descends until `ELOOP`, which the kernel only raises
+    after 31 components: one directory holding one file and two `-> .` links
+    billed 76,849 directory reads in five seconds and was still going, against
+    six for a traversal that refuses the link. A watch root is a directory the
+    owner named, not one they audited; a single stray self-link inside it turns
+    every poll into that.
+
+    `Path.glob` refuses since 3.13 (`recurse_symlinks=False` is the default)
+    but it also returns dotted components, which `glob.glob` skips
+    (`include_hidden=False`) — and `_roots` leans on that skip: the default
+    store lives at `~/.gitmemory` and a watch root of `~` is allowed, so a
+    daemon that saw dotted paths would read its own segments back as new
+    sessions. Filtering them restores the old result set exactly; verified on a
+    tree carrying a hidden directory, a hidden file, a symlinked directory and
+    a plain one.
+
+    A pattern that is absolute or climbs would raise here rather than silently
+    widening; `_pattern` rejects both before a `Watch` is ever built.
+    """
+    return sorted(
+        str(p)
+        for p in pathlib.Path(root).glob(pattern)
+        if not any(part.startswith(".") for part in p.relative_to(root).parts)
+    )
+
+
 def discover(watches: list[Watch]) -> list[tuple[Watch, str]]:
     """Every transcript under every watch root, deduplicated by device and inode.
 
-    `recursive=True` so `**` means what it looks like. Symlinked directories are
-    not followed by `glob`, which is the conservative answer: a symlink into
-    somewhere the owner did not configure is exactly the escape this module is
-    careful about elsewhere.
+    Matching is `_hits`, which is a walk that will not descend a symlinked
+    directory: a symlink into somewhere the owner did not configure is exactly
+    the escape this module is careful about elsewhere.
 
     Deduplicated by real path at first, which is the same mistake `_same_dir`
     was written for: `realpath` resolves symlinks but does not correct case, so
@@ -536,7 +572,7 @@ def discover(watches: list[Watch]) -> list[tuple[Watch, str]]:
     Inode identity buys the deduplication at the cost of a discontinuity, which
     a reviewer found and which is worth naming rather than fixing. Two *hard
     links* to one transcript are one inode, so exactly one of the two names is
-    kept — whichever `sorted(glob(...))` reaches first, which is deterministic
+    kept — whichever `_hits` reaches first, which is deterministic
     for a fixed set of names but changes if a name is added or removed. Break
     the link (`cp` over one of them) and the survivor's session carries on while
     the other becomes a new session that starts at offset zero and re-captures
@@ -571,13 +607,14 @@ def discover(watches: list[Watch]) -> list[tuple[Watch, str]]:
     pairs = [(watch, root) for watch in watches for root in watch.roots]
     pairs.sort(key=lambda wr: wr[1].count(os.sep), reverse=True)
     for watch, root in pairs:
-        for path in sorted(glob(os.path.join(root, watch.pattern), recursive=True)):
+        for path in _hits(root, watch.pattern):
             real = os.path.realpath(path)
             key = _file_key(real)
             if key is None or key in seen or not os.path.isfile(real):
                 continue
-            # A glob can climb out through a symlinked leaf even though it will
-            # not descend one.
+            # `_hits` refuses to descend a symlinked directory, but a symlinked
+            # *file* it matched inside the root is still a name for bytes that
+            # can live anywhere, and the `realpath` above just followed it.
             if _covers([watch], real) is None:
                 continue
             seen.add(key)

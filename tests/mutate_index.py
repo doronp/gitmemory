@@ -1055,6 +1055,20 @@ MUTANTS = [
         "test_a_root_that_cannot_be_resolved_skips_only_itself",
     ),
     (
+        "discovery descends symlinked directories again",
+        "daemon.py",
+        "        for p in pathlib.Path(root).glob(pattern)",
+        "        for p in pathlib.Path(root).glob(pattern, recurse_symlinks=True)",
+        "test_a_symlinked_directory_under_the_root_is_not_descended",
+    ),
+    (
+        "discovery reads dotted components, so the store is its own corpus",
+        "daemon.py",
+        "        if not any(part.startswith(\".\") for part in p.relative_to(root).parts)",
+        "        if True",
+        "test_a_dotted_component_is_not_discovered",
+    ),
+    (
         "a doorbell no watch covers is silent again",
         "daemon.py",
         "        if result.spool_dropped != last_dropped:",
@@ -4043,11 +4057,11 @@ MUTANTS = [
     ),
     # --- E7 parsing-F13 + F14 + F15 ---
     (
-        "a symlink loop bills one subagent file once per level",
+        "a second name for one subagent file bills it twice",
         "src/gitmemory/adapters/claude_code.py",
         "        if real in seen:",
         "        if False:",
-        "test_a_symlink_loop_bills_a_subagent_file_once",
+        "test_a_second_name_for_one_subagent_file_bills_it_once",
     ),
     (
         "the sidechain flag is truthiness again, so \"false\" is true",
@@ -4370,7 +4384,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "53 mutants",
+        "a full pass is 5" + "59 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4929,11 +4943,41 @@ MUTANTS = [
         "    return os.path.realpath(hit).startswith(root + os.sep)",
         "tests/test_claude_code.py::test_a_root_of_slash_does_not_reject_every_path",
     ),
+    # --- review: paths F2/F3, the symlink fork bomb ---
     (
-        "only the timestamp-prefixed filename shape is globbed",
+        "the walk follows symlinked directories again",
+        "src/gitmemory/adapters/claude_code.py",
+        "    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):",
+        "    for dirpath, _dirnames, filenames in os.walk(root, followlinks=True):",
+        "tests/test_claude_code.py::test_a_self_linking_directory_does_not_multiply_the_search",
+    ),
+    # One row for one flag, though two tests bust their budget on it —
+    # `..._does_not_multiply_the_rollup` is the same walk reached from
+    # `session_files`, and an anchor may appear only once. The second test
+    # earns its place as a test rather than as a mutant: the call paths differ
+    # in who supplies the input, and only `find_session`'s comes from a hook
+    # payload.
+    (
+        "a file dropped straight into the projects root is a transcript",
+        "src/gitmemory/adapters/claude_code.py",
+        "if n == name and d != root}",
+        "if n == name}",
+        "tests/test_claude_code.py::test_a_transcript_dropped_straight_into_the_root_is_not_found",
+    ),
+    (
+        # pi's twin of the depth guard. Its own row because the expression is
+        # not the same one — pi's carries the two filename shapes with it.
+        "a pi file dropped straight into the sessions root is a transcript",
         "src/gitmemory/adapters/pi.py",
-        '    for name in (f"{esc}.jsonl", f"*_{esc}.jsonl"):',
-        '    for name in (f"*_{esc}.jsonl",):',
+        '        if d != root and (n == bare or n.endswith(f"_{bare}"))',
+        '        if n == bare or n.endswith(f"_{bare}")',
+        "tests/test_pi.py::test_a_file_in_the_sessions_root_is_not_a_transcript",
+    ),
+    (
+        "only the timestamp-prefixed filename shape is matched",
+        "src/gitmemory/adapters/pi.py",
+        '        if d != root and (n == bare or n.endswith(f"_{bare}"))',
+        '        if d != root and n.endswith(f"_{bare}")',
         "test_find_session_matches_the_bare_name",
     ),
     (
@@ -5027,10 +5071,17 @@ MUTANTS = [
     (
         "a malformed input masks the arguments beside it",
         "src/gitmemory/index.py",
-        '    args = native.get("input")\n    if not isinstance(args, dict):\n'
+        '    args = native.get("input")\n    if not isinstance(args, dict) or not args:\n'
         '        args = native.get("arguments")',
         '    args = native.get("input") or native.get("arguments")',
         "test_a_malformed_input_does_not_hide_the_arguments_beside_it",
+    ),
+    (
+        "an empty input masks the arguments beside it",
+        "src/gitmemory/index.py",
+        "    if not isinstance(args, dict) or not args:",
+        "    if not isinstance(args, dict):",
+        "test_an_empty_input_does_not_hide_the_arguments_beside_it",
     ),
     (
         "equal mtimes are broken by whatever the set yields first",
@@ -5201,9 +5252,9 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 553 mutants × two suite runs —
+    The filter exists because a full pass is 559 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
-    for the other 552 or trusting the new one untested.
+    for the other 558 or trusting the new one untested.
 
     Cost: **measured**, three rows timed end to end at 3.7 s, 17.1 s and
     17.2 s, on a machine with the `.conformance/` clones — so against the

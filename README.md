@@ -73,13 +73,13 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | The same extractor on text nobody wrote for a benchmark | a census of every distinct human turn in a third-party MIT corpus of real sessions — 140 items, labelled blind by three annotators at 139/140 agreement | **precision 0.0000, recall 0.0000**. Seven fixes later, 0.1250 / 0.5000 — one true positive, and the set is a regression floor from the first fix onward |
 | …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | 9 of 61 — precision 0.15. After the two fixes: **54 withdrawn, all 7 left are reversals** — and read the caveat below before quoting that |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **964 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **553** negative controls |
+| The suite | on a fresh checkout, no downloads | **973 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **559** negative controls |
 
 Those two numbers do not add up, and should not: switching the corpus on
-collects 1289, not 1292. Three of the conformance cases fill parametrisations
+collects 1298, not 1301. Three of the conformance cases fill parametrisations
 that collect as one empty placeholder each while the corpus is absent, so they
-replace three of the 964 rather than joining them. The row used to read "plus",
+replace three of the 973 rather than joining them. The row used to read "plus",
 which quietly asserted the sum.
 
 The 328 conformance cases replay three MIT corpora — claude-code-log's fixtures

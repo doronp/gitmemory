@@ -192,8 +192,9 @@ def test_a_root_that_would_make_the_store_watch_itself_is_dropped(tmp_path):
     The reverse — a root *inside* the store — was not what review measured and
     is checked here because it was reproduced while fixing the first: a watch on
     `<home>/raw` globs the segment files directly. One symmetric test, because
-    one symmetric rule covers both. The default `~/.gitmemory` escapes only by
-    the accident that `glob` skips dotted components.
+    one symmetric rule covers both. The default `~/.gitmemory` escapes only
+    because `_hits` skips dotted components — pinned separately by
+    `test_a_dotted_component_is_not_discovered`.
     """
     home = str(tmp_path / "home")
     os.makedirs(os.path.join(home, "raw"))
@@ -369,12 +370,77 @@ def test_a_transcript_under_two_roots_is_captured_once(tmp_path):
 
 
 def test_a_symlinked_leaf_pointing_outside_the_root_is_not_discovered(tmp_path):
-    """`glob` will not descend a symlinked directory but it will match a symlinked file."""
+    """`_hits` will not descend a symlinked directory but it will match a symlinked file."""
     root = tmp_path / "proj"
     root.mkdir()
     outside = _write(str(tmp_path / "outside" / "private.jsonl"), TURN)
     (root / "innocent.jsonl").symlink_to(outside)
     assert daemon.discover([daemon.Watch(agent="a", roots=(str(root),))]) == []
+
+
+def test_a_symlinked_directory_under_the_root_is_not_descended(tmp_path):
+    """The other half of the sentence above, which used to be false.
+
+    `discover`'s docstring claimed `glob` does not follow symlinked directories.
+    It does — measured on 3.13.12. Asserted against `_hits` rather than against
+    `discover`, because `discover` cannot tell the difference: `_covers` throws
+    the escaped file away either way, so a test on the returned list passes
+    before the fix and after it. What the following costs is walking, and
+    walking is what `_hits` decides. `test_a_self_linking_root_does_not_
+    multiply_discovery` prices it. [review: paths F2]
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    _write(str(root / "mine.jsonl"), TURN)
+    _write(str(tmp_path / "outside" / "private.jsonl"), TURN)
+    (root / "innocent").symlink_to(tmp_path / "outside")
+    assert daemon._hits(str(root), daemon.PATTERN) == [str(root / "mine.jsonl")]
+
+
+def test_a_self_linking_root_does_not_multiply_discovery(scandir_budget, tmp_path):
+    """A watch root is a directory the owner named, not one they audited.
+
+    `**` re-enters a self-linking directory once per link per level until the
+    kernel's `ELOOP` at ~31 components, and materialises every candidate before
+    matching: `k` links is `k ** 31` paths. One directory, one transcript, two
+    `-> .` links billed 76,849 `scandir` calls in five seconds against the
+    replaced implementation and had not finished; the walk costs six. Every
+    poll paid it, so a single stray link inside a root the owner does not
+    control is a hang plus a memory exhaust, five seconds apart.
+
+    The budget is what makes this a regression test and not a smoke test — the
+    old code blows it in the first millisecond rather than after a timeout.
+    [review: paths F2]
+    """
+    root = tmp_path / "proj"
+    root.mkdir()
+    _write(str(root / "a.jsonl"), TURN)
+    os.symlink(".", root / "x")
+    os.symlink(".", root / "y")
+
+    calls = scandir_budget(16)
+    found = daemon.discover([daemon.Watch(agent="a", roots=(str(root),))])
+    assert [os.path.basename(p) for _, p in found] == ["a.jsonl"]
+    assert calls[0] <= 16, calls[0]
+
+
+def test_a_dotted_component_is_not_discovered(tmp_path):
+    """The skip that keeps the default store out of a watch on the home directory.
+
+    `glob.glob` skips dotted components (`include_hidden=False`); `Path.glob`
+    does not. So replacing one with the other had to carry the skip back by
+    hand, and this is the test that says why it is a rule rather than an
+    inherited quirk: the default store is `~/.gitmemory`, `roots = ["~"]` is a
+    legal watch, and a daemon that saw dotted paths would read its own segments
+    back as fresh sessions at full poll rate. `_roots` rejects a root that
+    *contains* the store, but only the store it was told about.
+    """
+    root = tmp_path / "proj"
+    _write(str(root / "a.jsonl"), TURN)
+    _write(str(root / ".gitmemory" / "raw" / "seg.jsonl"), TURN)
+    _write(str(root / "sub" / ".hidden.jsonl"), TURN)
+    found = daemon.discover([daemon.Watch(agent="a", roots=(str(root),))])
+    assert [os.path.basename(p) for _, p in found] == ["a.jsonl"]
 
 
 # --- capture ----------------------------------------------------------------

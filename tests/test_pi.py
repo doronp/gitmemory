@@ -800,10 +800,16 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
     turned only three of eleven cases red. Both looked like coverage. So
     reachability is measured rather than assumed: the unguarded globs are run
     against the fixture, and if they find nothing the test fails as a bad
-    fixture instead of passing as a good guard. All eleven now reach their
-    plant; ten of them land inside the root, so the charset rule is the only
-    thing refusing them, and `../../../../etc/passwd` resolves out of the root,
-    where containment is.
+    fixture instead of passing as a good guard.
+
+    Seven of the eleven reach their plant, and the vacuity floor asserts the
+    other four do *not* rather than skipping them. When `_glob_hits` stopped
+    building patterns and started comparing against real directory entries,
+    every id holding a separator became unspellable: no filename contains `/`,
+    so there is no tree in which `../secrets.jsonl` is an entry. Of the seven
+    that are reachable, all land inside the root, so the charset rule is the
+    only thing refusing them; for the four that are not, it is now the second
+    lock rather than the only one. [review: paths F2]
     """
     sessions = tmp_path / "a" / "b" / "c" / "sessions"
     root = sessions / "--w--"
@@ -822,7 +828,11 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("")
 
-    assert _would_glob(sessions, hostile), f"vacuous fixture: nothing to find for {hostile!r}"
+    reachable = _would_glob(sessions, hostile)
+    if "/" in hostile:
+        assert not reachable, f"a filename cannot hold a separator, yet: {reachable}"
+    else:
+        assert reachable, f"vacuous fixture: nothing to find for {hostile!r}"
 
     found = pi.find_session(hostile, str(sessions))
     assert found is None, f"escaped or widened the search: {found}"
@@ -946,6 +956,55 @@ def test_find_session_ignores_a_symlink_pointing_out_of_the_root(tmp_path):
     link.unlink()
     link.write_text("")
     assert pi.find_session("s1", str(sessions)) == str(link)
+
+
+def test_both_filename_shapes_cost_one_traversal(scandir_budget, tmp_path):
+    """pi paid for its second shape in whole tree walks, and no longer does.
+
+    Two glob patterns meant two full recursive walks of the same directory for
+    a strictly smaller second result set — the bare shape is rarer than the
+    prefixed one and the corpus has none of it. Now the shapes are two string
+    comparisons per file inside one walk, so the second one is free.
+
+    Measured as directory reads rather than seconds, for the reason the
+    `scandir_budget` fixture gives. The budget is deliberately tight enough that
+    walking this four-directory tree twice fails it: the point is the factor,
+    not the absolute number. The self-links make it the pi twin of
+    `test_a_self_linking_directory_does_not_multiply_the_search` at the same
+    time — `**` would still be running. [review: paths F2/F3]
+    """
+    sessions = tmp_path / "sessions"
+    root = sessions / "--w--"
+    (root / "nested").mkdir(parents=True)
+    hit = root / "2026-01-01T09-00-00-000Z_s1.jsonl"
+    hit.write_text("")
+    os.symlink(".", root / "a")
+    os.symlink(".", root / "b")
+
+    calls = scandir_budget(6)
+    assert pi.find_session("s1", str(sessions)) == str(hit)
+    assert calls[0] <= 6, calls[0]
+
+
+def test_a_file_in_the_sessions_root_is_not_a_transcript(tmp_path):
+    """The twin of the claude-code case: one directory level is required.
+
+    pi writes `<root>/<encoded-cwd>/<stamp>_<id>.jsonl`, and the pattern this
+    replaced spent its `*` on that middle component. Both filename shapes are
+    checked here so the guard cannot be half-deleted. [review: paths F2]
+    """
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    for name in ("s1.jsonl", "2026-01-01T09-00-00-000Z_s1.jsonl"):
+        loose = sessions / name
+        loose.write_text("")
+        assert pi.find_session("s1", str(sessions)) is None, name
+        loose.unlink()
+
+    root = sessions / "--w--"
+    root.mkdir()
+    (root / "s1.jsonl").write_text("")
+    assert pi.find_session("s1", str(sessions)) == str(root / "s1.jsonl")
 
 
 def test_find_session_matches_the_bare_name(tmp_path):
