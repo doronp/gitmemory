@@ -68,8 +68,16 @@ code, not merely the copyright line.** Verbatim upstream texts:
 <https://github.com/earendil-works/pi>
 
 - `packages/coding-agent/src/core/session-manager.ts` is the source of truth
-  for the entry union as pi ships it, including `ContextEditEntry` — the
-  rewrite path that makes the format *not* strictly append-only. Read to write
+  for the entry union as pi ships it, including `ContextEditEntry`, which
+  supersedes an earlier entry's contribution to model context by *appending* a
+  record that names it — `/** Append-only change to one earlier entry's
+  contribution to model context. */` (`session-manager.ts:174` @`a8ed4977`,
+  with `:167` saying the same of the content it may replace). An earlier
+  revision of this file called it "the rewrite
+  path that makes the format *not* strictly append-only", which is the opposite
+  of what pi's own comment says and would have been grounds for the P2/P3
+  scope claim to be read as broken for pi. The rewrite paths are oh-my-pi's
+  title slot and `#rewriteRequired`, credited below. Read to write
   `adapters/pi.py`; no code copied. Every claim the adapter's docstring makes
   about the format cites a file and line at the pinned rev, so a reader can
   check it rather than trust it. The `src/session/` paths an earlier revision

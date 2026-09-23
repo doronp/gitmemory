@@ -360,16 +360,30 @@ def test_every_mutation_row_names_a_test_that_exists():
     So every `test_`-shaped identifier in the expression has to exist, and the
     parameter halves are left alone — pytest matches those as substrings.
 
-    A field may instead be a node id, `tests/test_pi.py::name`, for the three
-    names defined in both adapter test modules; `-k` would score those on the
-    union of the two files. The path half is a filename, not an identifier, so
-    it is checked as a file and dropped before the identifier scan — without
-    that, `test_pi` reads as a test that does not exist.
+    A field may instead be a node id, `tests/test_pi.py::name`, for a name
+    defined in more than one test module; `-k` would score those on the union
+    of the files. The path half is a filename, not an identifier, so it is
+    checked as a file and dropped before the identifier scan — without that,
+    `test_pi` reads as a test that does not exist.
+
+    Three separate claims, and the first version of this only checked the
+    weakest of them. `defined` was a flat set, so a node id proved its name
+    existed *somewhere* rather than in the file it names: `tests/test_pi.py::`
+    plus a name that only `test_claude_code.py` defines passed here and then
+    collected nothing, which is the `NO TEST` verdict this test is named for,
+    reached through the feature added to prevent it. And a bare name that two
+    modules define was never flagged at all — the ambiguity node ids exist for
+    was only ever fixed by hand, one row at a time, for as many rows as
+    somebody had noticed. Five names qualify today; the prose said three.
+    [review: tests]
     """
-    defined = set()
+    defined: dict[str, set[str]] = {}
     for d in ("tests", "bench"):
         for p in sorted((ROOT / d).glob("test_*.py")):
-            defined.update(re.findall(r"^def (test_\w+)\(", p.read_text(), re.M))
+            rel = str(p.relative_to(ROOT))
+            for found in re.findall(r"^def (test_\w+)\(", p.read_text(), re.M):
+                defined.setdefault(found, set()).add(rel)
+
     missing_file = [
         f"{name}: {expr.split('::')[0]}"
         for name, _, _, _, expr in MUTANTS
@@ -385,6 +399,31 @@ def test_every_mutation_row_names_a_test_that_exists():
         if ident not in defined
     )
     assert not bad, "rows naming a test that does not exist:\n  " + "\n  ".join(bad)
+
+    # A node id has to name the test in the file it names, not merely somewhere.
+    elsewhere = sorted(
+        f"{name}: {expr} (defined in {', '.join(sorted(defined[ident]))})"
+        for name, _, _, _, expr in MUTANTS
+        if "::" in expr
+        for ident in [expr.split("::")[-1]]
+        if ident in defined and expr.split("::")[0] not in defined[ident]
+    )
+    assert not elsewhere, "node ids naming a file the test is not in:\n  " + "\n  ".join(elsewhere)
+
+    # And a bare name that two modules define is the ambiguity node ids exist
+    # for: `-k` scores it on the union, so a mutant in one adapter reads CAUGHT
+    # because the *other* adapter's test of the same name failed.
+    ambiguous = sorted(
+        f"{name}: {ident} (defined in {', '.join(sorted(defined[ident]))})"
+        for name, _, _, _, expr in MUTANTS
+        if "::" not in expr
+        for ident in re.findall(r"\btest_\w+", expr)
+        if len(defined.get(ident, ())) > 1
+    )
+    assert not ambiguous, (
+        "bare names defined in more than one test file — use a node id:\n  "
+        + "\n  ".join(ambiguous)
+    )
     # A row whose expression has no `test_…` in it at all selects by parameter
     # alone, which is how a typo becomes a row that silently runs the suite.
     nameless = [n for n, _, _, _, expr in MUTANTS if not re.search(r"\btest_\w+", expr)]
@@ -405,6 +444,15 @@ def test_every_mutation_row_selects_with_an_expression_pytest_can_parse():
     a second-hand grammar is what goes stale when `-k` grows a token. Private
     import on purpose and not guarded: if it moves, this test says so, where a
     skip would leave the check quietly switched off.
+
+    Two shapes, two checks. A node id is not a `-k` expression and the harness
+    does not pass it as one — `_select` gives it as a positional argument — so
+    running it through `Expression.compile` asked the wrong question of every
+    row that has one. It happened to answer *yes*, because `tests/test_pi.py`
+    lexes as the identifier `tests`, and so the check was vacuously green on
+    exactly the rows added to fix an earlier defect. A slash in the wrong place
+    or a missing `::` would have passed here and failed at collection.
+    [review: tests]
     """
     from _pytest.mark.expression import Expression
 
@@ -420,8 +468,22 @@ def test_every_mutation_row_selects_with_an_expression_pytest_can_parse():
     assert parses("test_a_manifest_the_gate_cannot_read and dict")
     assert not parses("test_a_manifest_the_gate_cannot_read and segments as a dict")
 
-    bad = [f"{name}: -k {expr}" for name, _, _, _, expr in MUTANTS if not parses(expr)]
+    bad = [
+        f"{name}: -k {expr}"
+        for name, _, _, _, expr in MUTANTS
+        if "::" not in expr and not parses(expr)
+    ]
     assert not bad, "rows whose -k pytest cannot parse:\n  " + "\n  ".join(bad)
+
+    # A node id is `path::name`, one separator, and the name half is a bare
+    # identifier — `path::name and other` is neither a node id nor a `-k`.
+    malformed = [
+        f"{name}: {expr}"
+        for name, _, _, _, expr in MUTANTS
+        if "::" in expr
+        and not re.fullmatch(r"[\w./-]+\.py::[A-Za-z_]\w*(\[[^\[\]]*\])?", expr)
+    ]
+    assert not malformed, "rows whose node id is not one:\n  " + "\n  ".join(malformed)
 
 
 def test_every_mutation_row_has_a_distinct_name():

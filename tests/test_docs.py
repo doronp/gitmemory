@@ -72,9 +72,14 @@ def test_the_readme_test_count_is_the_test_count():
     The README states the number a fresh checkout gets, and names the corpus
     separately with the command to fetch it — the treatment the LongMemEval
     download already had.
+
+    Anchored on the bold table cell, not on the first `N tests` in the file:
+    the paragraph below that row recounts the drift in prose — "It said 1127
+    for two epochs" — and a looser pattern is one edit away from pinning the
+    README against its own account of the last time this was wrong. [review]
     """
-    claimed = re.search(r"(\d[\d,]*) tests", _read("README.md"))
-    assert claimed, "the README no longer states a test count"
+    claimed = re.search(r"\*\*([\d,]+) tests\*\*", _read("README.md"))
+    assert claimed, "the README no longer states a test count in bold"
 
     offline = _collect(**NO_CORPUS)
     assert int(claimed.group(1).replace(",", "")) == offline, (

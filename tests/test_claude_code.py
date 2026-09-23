@@ -1150,6 +1150,16 @@ def test_canonical_output_is_identical_in_a_fresh_interpreter():
 # --- find_session takes an untrusted id from a hook payload ----------------
 
 
+def _would_glob(projects: pathlib.Path, session_id: str) -> set[str]:
+    """What `find_session`'s glob reaches, with its guards removed — the control.
+
+    `cc._glob_hits` is that half of the implementation, called rather than
+    restated, so the control cannot drift away from the pattern it is a control
+    for. See the twin in `test_pi.py` for why a copy here would drift *green*.
+    """
+    return cc._glob_hits(session_id, os.path.realpath(projects))
+
+
 @pytest.mark.parametrize(
     "hostile",
     [
@@ -1173,28 +1183,55 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
     search to whatever matched — both reachable by anything that can write a
     hook payload.
 
-    Every hostile id gets a file it *would* resolve to. Without them the fixture
-    had only `real.jsonl`, so `found is None` held for the wrong reason: there
-    was nothing on disk for `.hidden` or a 200-character id to find, and
-    deleting the charset guard outright left all eleven cases green. A guard
-    whose removal changes no answer is pinned by nothing. [E4, vacuity pass 2: L3]
+    This planted by hand for five of the eleven ids, so six cases asserted
+    `None` against an empty directory and held for the wrong reason. It is now
+    the same shape as pi's: each id gets a file at the exact path the globbed
+    filename shape would resolve to, created through the unnormalised path so
+    the literal intermediate directories the glob has to walk exist too, and
+    the projects root is nested four deep so even `../../../../` lands inside
+    `tmp_path`. Then reachability is *measured* rather than assumed — if the
+    unguarded glob finds nothing, this fails as a bad fixture instead of
+    passing as a good guard. [E4, vacuity pass 2: L3; review: tests]
+    """
+    projects = tmp_path / "a" / "b" / "c" / "projects"
+    root = projects / "-Users-x-work"
+    root.mkdir(parents=True)
+    # A decoy with an ordinary name: what a widened `*` would sweep up.
+    (root / "real.jsonl").write_text("{}\n")
+    target = root / f"{hostile}.jsonl"
+    # `pathlib`'s `/` resets to an absolute right operand, which would plant
+    # outside `tmp_path` silently. None of the eleven is absolute today.
+    assert str(target.resolve()).startswith(str(tmp_path.resolve()) + os.sep), (
+        f"plant escaped tmp_path: {target}"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("{}\n")
+
+    assert _would_glob(projects, hostile), f"vacuous fixture: nothing to find for {hostile!r}"
+
+    found = cc.find_session(hostile, str(projects))
+    assert found is None, f"escaped or widened the search: {found}"
+
+
+def test_the_longest_accepted_session_id_is_exactly_128_characters(tmp_path):
+    """`{0,127}` plus the leading character class is 128, and only 128 proves it.
+
+    The case above passes 200, which is refused by a bound of 128, 129, 150 or
+    199 alike — it pins *that there is a limit*, not where. An off-by-one is the
+    likeliest way this constant ever changes, and it is the one shape 200 cannot
+    see. Both sides asserted, because a bound that refuses everything also
+    refuses 200. [review: tests]
     """
     projects = tmp_path / "projects"
     root = projects / "-Users-x-work"
     root.mkdir(parents=True)
-    (root / "real.jsonl").write_text("{}\n")
-    # A dotfile the glob will happily match once the leading-alphanumeric rule
-    # is gone, and an over-length name the {0,127} bound is the only thing
-    # refusing. Both are inside the root, so the containment check passes them.
-    (root / ".hidden.jsonl").write_text("{}\n")
-    (root / ("x" * 200 + ".jsonl")).write_text("{}\n")
-    # `projects/*/../secrets.jsonl` realpaths back inside the root, so traversal
-    # is not caught by the containment check either — only by the charset.
-    (projects / "secrets.jsonl").write_text("{}\n")
-    (tmp_path / "secrets.jsonl").write_text("{}\n")
+    ok, over = "x" * 128, "x" * 129
+    for name in (ok, over):
+        (root / f"{name}.jsonl").write_text("{}\n")
+        assert _would_glob(projects, name), f"vacuous fixture: nothing to find for len {len(name)}"
 
-    found = cc.find_session(hostile, str(projects))
-    assert found is None, f"escaped or widened the search: {found}"
+    assert cc.find_session(ok, str(projects)) == str(root / f"{ok}.jsonl")
+    assert cc.find_session(over, str(projects)) is None
 
 
 _TIE_SCRIPT = """
@@ -1245,13 +1282,46 @@ def test_find_session_breaks_mtime_ties_deterministically(tmp_path):
 
 
 def test_find_session_ignores_a_symlink_pointing_out_of_the_root(tmp_path):
+    """The containment filter is the only thing between a planted link and this
+    machine's own history, which is the one thing this project must never read.
+
+    Ends with a positive control on the same path, the way the pi twin does:
+    `is None` is otherwise equally consistent with the lookup being broken for
+    every file, which is a green test for a deleted feature. [review: tests]
+    """
     root = tmp_path / "projects" / "-Users-x-work"
     root.mkdir(parents=True)
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     (outside / "abc-123.jsonl").write_text("{}\n")
-    (root / "abc-123.jsonl").symlink_to(outside / "abc-123.jsonl")
+    link = root / "abc-123.jsonl"
+    link.symlink_to(outside / "abc-123.jsonl")
     assert cc.find_session("abc-123", str(tmp_path / "projects")) is None
+
+    link.unlink()
+    link.write_text("{}\n")
+    assert cc.find_session("abc-123", str(tmp_path / "projects")) == str(link)
+
+
+def test_find_session_ignores_a_directory_with_a_transcripts_name(tmp_path):
+    """A directory or FIFO named `<id>.jsonl` is not a transcript.
+
+    Both satisfy the glob and the containment proof; handing one back gives the
+    reader something that raises on open, or worse, blocks forever on it.
+
+    The twin of `test_pi.py`'s case of the same name. This adapter's `isfile`
+    had no test and no negative control at all — deleting it left the whole
+    suite green — while pi's had both, which is how a filter present in two
+    files came to be pinned in one. [review: tests, correctness]
+    """
+    projects = tmp_path / "projects"
+    root = projects / "-Users-x-work"
+    root.mkdir(parents=True)
+    (root / "abc-123.jsonl").mkdir()
+    assert cc.find_session("abc-123", str(projects)) is None
+
+    os.mkfifo(root / "def-456.jsonl")
+    assert cc.find_session("def-456", str(projects)) is None
 
 
 # --- E7 parsing-F1: a turn id the input could choose ---
@@ -1694,12 +1764,23 @@ def test_the_other_identifiers_are_bounded_too_including_the_usage_keys(tmp_path
     verbatim.
 
     Longest real values over the 162-fixture corpus: model 26, requestId 28,
-    timestamp 27, usage key 27. The bound is 128. [E7 parsing-F11]
+    timestamp 27, usage key 27, uuid 36. The bound is 128. [E7 parsing-F11]
+
+    The uuid family — `uuid`, `parentUuid`, `sourceToolAssistantUUID`,
+    `agentId` — read through `_str_or_none` for four epochs, which checks the
+    type and not the length, while the comment over `_MAX_ID` already listed
+    them as bounded. `uuid` is the turn's identity when it is present, so it is
+    hashed and written per turn: exactly the shape the bound exists for, and
+    the only member of the family that skipped it. pi bounded all of them from
+    the start. [review: robustness]
     """
     lines = [
         {
             "type": "assistant",
-            "uuid": "a1",
+            "uuid": "U" * 200_000,
+            "parentUuid": "P" * 200_000,
+            "sourceToolAssistantUUID": "S" * 200_000,
+            "agentId": "G" * 200_000,
             "sessionId": "s1",
             "requestId": "R" * 200_000,
             "timestamp": "T" * 200_000,
@@ -1717,6 +1798,10 @@ def test_the_other_identifiers_are_bounded_too_including_the_usage_keys(tmp_path
     assert len(t.ts) == cc._MAX_ID
     assert sorted(len(k) for k in t.usage) == [12, cc._MAX_ID]
     assert t.usage["input_tokens"] == 5, "bounding the keys must not lose the real one"
+    assert len(t.uuid) == cc._MAX_ID
+    assert len(t.parent_uuid) == cc._MAX_ID
+    assert len(t.anchor_uuid) == cc._MAX_ID
+    assert len(t.agent_id) == cc._MAX_ID
 
 
 def test_two_long_model_names_stay_two_models(tmp_path):

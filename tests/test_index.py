@@ -350,6 +350,50 @@ def test_a_pi_tool_call_indexes_the_path_it_names(home, src):
     assert row["paths"] == "AGENTS.md"
 
 
+def test_a_malformed_input_does_not_hide_the_arguments_beside_it(home, src):
+    """`input or arguments` falls through on *truthiness*, and it should not.
+
+    `input` is a tool call the model wrote, so its shape is a claim, not a
+    fact: a string where an object was expected is ordinary malformed output,
+    and the surrounding code already says so. But a non-empty string is truthy,
+    so it won the `or`, then failed the `isinstance` below it, and the
+    `arguments` sitting right there — well-formed, naming a real file — was
+    never read. The fall-through has to be on shape.
+
+    A block carrying both keys does not occur in the corpus, which is why this
+    is synthetic and why nothing caught it. [review: correctness]
+    """
+    write(
+        src,
+        [
+            {"type": "session", "id": "s1", "timestamp": "t", "cwd": "/w"},
+            {
+                "type": "message",
+                "id": "e1",
+                "parentId": None,
+                "timestamp": "t",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "t1",
+                            "name": "read",
+                            "input": "AGENTS.md",
+                            "arguments": {"path": "CHANGELOG.md"},
+                        }
+                    ],
+                },
+            },
+        ],
+    )
+    store.capture(src, "pi", "sess", home=home)
+    index.build(home)
+    db = index.open_db(index.db_path(home))
+    row = db.execute("SELECT paths FROM blocks WHERE kind = 'tool_use'").fetchone()
+    assert row["paths"] == "CHANGELOG.md"
+
+
 # --------------------------------------------------------------------------- #
 # a query is data, not a second query language
 # --------------------------------------------------------------------------- #

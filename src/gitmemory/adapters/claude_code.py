@@ -76,9 +76,12 @@ _MAX_REASONS = 64
 _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 
 # Every short identifier a line supplies: `sessionId`, `model`, `requestId`,
-# `timestamp`, and the keys of `usage`. All of them are re-hashed or rewritten
+# `timestamp`, the keys of `usage`, and the uuid family — `uuid`, `parentUuid`,
+# `sourceToolAssistantUUID`, `agentId`. All of them are re-hashed or rewritten
 # once per turn, so an unbounded one turns a linear parse quadratic, and all of
-# them reach canonical JSON and the index — that is, git.
+# them reach canonical JSON and the index — that is, git. The uuid family read
+# through `_str_or_none` for four epochs, which type-checks a value this
+# comment already claimed was bounded; `_bounded_id` is the claim. [review]
 #
 # Measured over claude-code-log's 162 fixtures, 4,571 records: the longest
 # `model` is 26 characters, `requestId` 28, `timestamp` 27, `usage` key 27,
@@ -342,8 +345,11 @@ def parse(path: str) -> Session:
         # record produced no turn", and the accounting identity in the
         # conformance suite depends on that meaning. The offending value is
         # still in `native`; the turn just falls back to byte-offset identity.
-        raw_uuid = obj.get("uuid")
-        uuid = raw_uuid if isinstance(raw_uuid, str) and raw_uuid else None
+        # Bounded like every other identifier this file reads. It is the turn's
+        # identity when it is present, so it is hashed and written per turn —
+        # the same shape `_bounded_id` exists for, and it was the one short id
+        # that skipped it. Truncate-with-digest, so two long uuids stay two.
+        uuid = _bounded_id(obj.get("uuid"))
         # A *pointer*, never an identity: folding it into `uuid` makes a
         # summary collide with the turn it points at and lose the dedup race.
         raw_ref = obj.get("leafUuid")
@@ -413,7 +419,7 @@ def parse(path: str) -> Session:
             request_id=_bounded_id(_get(obj, "requestId", "request_id")),
             uuid=uuid,
             # null at every compaction boundary; logicalParentUuid survives it.
-            parent_uuid=_str_or_none(_get(obj, "parentUuid", "logicalParentUuid")),
+            parent_uuid=_bounded_id(_get(obj, "parentUuid", "logicalParentUuid")),
             usage=_scrub(raw_usage) if isinstance(raw_usage, dict) else {},
             # `is True`, not `bool()`: the string "false" is truthy, and this
             # flag decides whether a turn is a subagent's — which `rollup_usage`
@@ -426,8 +432,8 @@ def parse(path: str) -> Session:
             # two keys below are different namespaces and are kept apart:
             # `sourceToolAssistantUUID` is a turn uuid, `toolUseID` is a
             # content-block id, and merging them makes joins silently wrong.
-            anchor_uuid=_str_or_none(obj.get("sourceToolAssistantUUID")),
-            agent_id=_str_or_none(obj.get("agentId")),
+            anchor_uuid=_bounded_id(obj.get("sourceToolAssistantUUID")),
+            agent_id=_bounded_id(obj.get("agentId")),
             ref_uuid=ref_uuid,
             native=obj,
             blocks=blocks,
@@ -647,6 +653,31 @@ def estimate_cost(model: str | None, usage: dict) -> dict | None:
     return {"usd": usd, "estimated": True, "as_of": PRICES_AS_OF, "priced_as": match}
 
 
+def _glob_hits(session_id: str, root: str) -> set[str]:
+    """Every path the filename shape reaches under `root`. No validation.
+
+    Split out so the hostile-id test's negative control can ask the
+    implementation what it would find instead of restating the pattern. A
+    restated control drifts *green* when the pattern changes here: the fixture
+    stops planting anything reachable, every hostile id returns `None` for the
+    wrong reason, and the test that exists to prove the charset guard works
+    proves nothing instead. Mirrors `pi._glob_hits`. [review: tests]
+
+    One pattern, not two: `**` matches *zero* or more directories, so
+    `base/*/**/name` already returns everything `base/*/name` does — symlinked
+    project directories included, since `*` and `**` treat those the same way.
+    The second glob was a second full traversal for a strictly smaller set.
+    [pair review]
+
+    Unlike pi's, the shape is the bare stem only. There is no `*_<id>.jsonl`
+    here, so the suffix-collision `pi._names_session` exists for cannot arise:
+    a hit's stem *is* the id.
+    """
+    name = _glob.escape(session_id) + ".jsonl"
+    base = _glob.escape(root)
+    return set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
+
+
 def find_session(session_id: str, projects_root: str) -> str | None:
     """Locate a transcript by id without computing the project directory.
 
@@ -654,11 +685,12 @@ def find_session(session_id: str, projects_root: str) -> str | None:
     (non-alphanumerics to `-`, plus a base-36 JS string hash past 200 chars).
     Globbing is shorter than reimplementing that and cannot drift with it.
 
-    `session_id` reaches this function from a hook payload, so it is untrusted:
-    it is charset-checked before use, escaped so glob metacharacters cannot
-    widen the search, and every hit is confirmed to resolve inside the root.
-    Newest mtime wins when a worktree left duplicates, with the path breaking
-    ties so the answer does not depend on set iteration order.
+    `session_id` is untrusted — nothing in-tree calls this yet outside the
+    tests, and the caller it is written for is a hook payload. So it is
+    charset-checked before use, escaped so glob metacharacters cannot widen
+    the search, and every hit is confirmed to resolve inside the root. Newest
+    mtime wins when a worktree left duplicates, with the path breaking ties so
+    the answer does not depend on set iteration order.
 
     `projects_root` is required, and used to default to the real
     `~/.claude/projects`. Nothing in the product passed it that way — every
@@ -667,23 +699,24 @@ def find_session(session_id: str, projects_root: str) -> str | None:
     own machine and the watcher's whole "roots have no default" rule would
     have one exception nobody chose. A parameter whose default is "somebody's
     real transcripts" has to be spelled out at the call site. [E7 S11]
+
+    The returned path is the globbed one, not the resolved one, so a symlink
+    inside the root is followed by the caller as the user intended — the
+    containment proof is on the target, the answer is the name. That leaves
+    the usual TOCTOU window, and `isfile` does not close any half of it: it is
+    one more check before the same unsynchronised open, and the name can be
+    replaced between the two. What it buys is that the *ordinary* wrong shapes
+    — a directory or a FIFO named `<id>.jsonl`, both of which satisfy the glob
+    and the containment proof — are not returned as transcripts, so the reader
+    blocks or raises only if someone is racing it.
     """
     if not _SESSION_ID_RE.match(session_id or ""):
         return None
     root = os.path.realpath(projects_root)
-    name = _glob.escape(session_id) + ".jsonl"
-    base = _glob.escape(root)
-    # One pattern, not two: `**` matches *zero* or more directories, so
-    # `base/*/**/name` already returns everything `base/*/name` does —
-    # symlinked project directories included, since `*` and `**` treat those
-    # the same way. The second glob was a second full traversal for a strictly
-    # smaller set. [pair review]
-    hits = set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
-    # `isfile` as well as inside-the-root: a directory or FIFO named
-    # `<id>.jsonl` satisfies the glob and the containment proof both, and
-    # returning one hands the reader something it will fail on or block on.
     inside = [
-        h for h in hits if os.path.realpath(h).startswith(root + os.sep) and os.path.isfile(h)
+        h
+        for h in _glob_hits(session_id, root)
+        if os.path.realpath(h).startswith(root + os.sep) and os.path.isfile(h)
     ]
     if not inside:
         return None

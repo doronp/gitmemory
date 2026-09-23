@@ -4362,7 +4362,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "37 mutants",
+        "a full pass is 5" + "47 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4835,18 +4835,47 @@ MUTANTS = [
     (
         "a hit is returned without confirming it resolves inside the root",
         "src/gitmemory/adapters/pi.py",
-        "        h for h in hits if os.path.realpath(h).startswith(root + os.sep)"
-        " and os.path.isfile(h)",
-        "        h for h in hits",
+        "        and os.path.realpath(h).startswith(root + os.sep)",
+        "        and True",
         "tests/test_pi.py::test_find_session_ignores_a_symlink_pointing_out_of_the_root",
+    ),
+    (
+        "a filename merely ending in the id is returned as that session",
+        "src/gitmemory/adapters/pi.py",
+        '    return stem == session_id or stem.partition("_")[2] == session_id',
+        "    return True",
+        "tests/test_pi.py::"
+        "test_find_session_does_not_return_a_session_whose_id_ends_in_the_one_asked_for",
+    ),
+    (
+        "the separator is read as the last underscore rather than the first",
+        "src/gitmemory/adapters/pi.py",
+        '    return stem == session_id or stem.partition("_")[2] == session_id',
+        '    return stem == session_id or stem.rpartition("_")[2] == session_id',
+        "tests/test_pi.py::"
+        "test_find_session_does_not_return_a_session_whose_id_ends_in_the_one_asked_for",
     ),
     (
         "a directory named like a transcript is returned as one",
         "src/gitmemory/adapters/pi.py",
-        "        h for h in hits if os.path.realpath(h).startswith(root + os.sep)"
-        " and os.path.isfile(h)",
-        "        h for h in hits if os.path.realpath(h).startswith(root + os.sep)",
-        "test_find_session_ignores_a_directory_with_a_transcripts_name",
+        "        and os.path.isfile(h)",
+        "        and True",
+        "tests/test_pi.py::test_find_session_ignores_a_directory_with_a_transcripts_name",
+    ),
+    (
+        "claude code returns a directory named like a transcript",
+        "src/gitmemory/adapters/claude_code.py",
+        "        if os.path.realpath(h).startswith(root + os.sep) and os.path.isfile(h)",
+        "        if os.path.realpath(h).startswith(root + os.sep)",
+        "tests/test_claude_code.py::test_find_session_ignores_a_directory_with_a_transcripts_name",
+    ),
+    (
+        "claude code returns a hit without confirming it resolves inside the root",
+        "src/gitmemory/adapters/claude_code.py",
+        "        if os.path.realpath(h).startswith(root + os.sep) and os.path.isfile(h)",
+        "        if os.path.isfile(h)",
+        "tests/test_claude_code.py::"
+        "test_find_session_ignores_a_symlink_pointing_out_of_the_root",
     ),
     (
         "only the timestamp-prefixed filename shape is globbed",
@@ -4879,10 +4908,46 @@ MUTANTS = [
         "test_a_context_edit_keeps_the_replacement_text",
     ),
     (
+        "the session id bound is one character loose",
+        "src/gitmemory/adapters/claude_code.py",
+        '_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\Z")',
+        '_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,128}\\Z")',
+        "test_the_longest_accepted_session_id_is_exactly_128_characters",
+    ),
+    (
+        "a nested wrapper outranks the entry's own text",
+        "src/gitmemory/adapters/pi.py",
+        "    if top is not None:",
+        "    if top is not None and not any("
+        "isinstance(obj.get(k), dict) for k in _NESTED_PROSE_KEYS):",
+        "test_a_nested_wrapper_does_not_override_the_entrys_own_text",
+    ),
+    (
         "an aborted assistant turn loses the one line saying why",
         "src/gitmemory/adapters/pi.py",
-        '    error = message.get("errorMessage")',
-        '    error = None',
+        '    error = obj.get("errorMessage")',
+        "    error = None",
+        "test_an_aborted_assistant_turn_keeps_its_error",
+    ),
+    (
+        "a non-string errorMessage reaches the record as prose",
+        "src/gitmemory/adapters/pi.py",
+        "    if not isinstance(error, str) or not error:",
+        "    if error is None:",
+        "test_an_error_message_that_is_not_prose_is_not_read_as_prose",
+    ),
+    (
+        "a failed background call loses the reason it failed",
+        "src/gitmemory/adapters/pi.py",
+        "                else _with_error(_blocks(content), obj)",
+        "                else _blocks(content)",
+        "test_a_failed_background_call_keeps_the_reason_it_failed",
+    ),
+    (
+        "a block gitmemory composed is indistinguishable from one the file wrote",
+        "src/gitmemory/adapters/pi.py",
+        '    return [*blocks, ("text", error, None, {"gitmemory_synthesized": "errorMessage"})]',
+        '    return [*blocks, ("text", error, None, {})]',
         "test_an_aborted_assistant_turn_keeps_its_error",
     ),
     (
@@ -4894,18 +4959,26 @@ MUTANTS = [
         "test_a_provider_qualified_model_id_is_not_collapsed",
     ),
     (
-        "a model_usage line with no usable model nulls the turn's model",
+        "a model_usage line borrows the conversation model it did not use",
         "src/gitmemory/adapters/pi.py",
-        "                _compose_model(obj) or turn_model",
-        "                _compose_model(obj)",
-        "test_model_usage_without_a_model_falls_back_to_the_session",
+        "                _compose_model(obj)\n",
+        "                _compose_model(obj) or turn_model\n",
+        "test_model_usage_without_a_model_does_not_borrow_the_sessions",
     ),
     (
         "pi's tool arguments are not read for the paths they name",
         "src/gitmemory/index.py",
-        '    args = native.get("input") or native.get("arguments")',
-        '    args = native.get("input")',
+        '        args = native.get("arguments")',
+        "        args = None",
         "test_a_pi_tool_call_indexes_the_path_it_names",
+    ),
+    (
+        "a malformed input masks the arguments beside it",
+        "src/gitmemory/index.py",
+        '    args = native.get("input")\n    if not isinstance(args, dict):\n'
+        '        args = native.get("arguments")',
+        '    args = native.get("input") or native.get("arguments")',
+        "test_a_malformed_input_does_not_hide_the_arguments_beside_it",
     ),
     (
         "equal mtimes are broken by whatever the set yields first",
@@ -4947,7 +5020,11 @@ def run(args: list[str]) -> int:
     `tests bench` explicitly, not pytest's configured `testpaths`: naming them
     here keeps the harness honest about what it ran even if `testpaths` changes
     under it. The corpus test is deselected by `addopts`, so this is the offline
-    suite and it takes about a second. [E3]
+    suite, measured at 81 s on the author's laptop — and it is *this* number,
+    not the row count, that sets what a full pass costs. It said "about a
+    second" from E3 until somebody read it next to the "about a minute" nine
+    lines down and noticed the same call being described twice, an order of
+    magnitude apart. [E3; review: docs]
 
     `ANCHOR_TEST` as well, for the reason written where it is defined: it is the
     one test in the suite that is *supposed* to fail while a mutant is applied,
@@ -4958,7 +5035,7 @@ def run(args: list[str]) -> int:
     run. See `BROKEN` in `main`. [E5]
 
     The timeout is not defensive tidiness, it is a repair. The offline suite is
-    about a minute, and this call had no bound at all until a mutant that
+    the 81 s above, and this call had no bound at all until a mutant that
     removes a file-type check met a test that names a FIFO as a segment: the
     suite blocked in `open`, under the session lock, and the whole pass sat
     there for thirty-three minutes with nothing on stdout. A harness that can
@@ -5040,10 +5117,16 @@ def _select(test: str) -> list[str]:
     """pytest args for a row's intended test.
 
     `-k` matches by *name*, so a name defined in both `test_pi.py` and
-    `test_claude_code.py` — there are three — scores on the union of the two,
+    `test_claude_code.py` — there are six — scores on the union of the two,
     and a mutant in one adapter can be credited to the other adapter's test.
     A row pins the file by writing `tests/test_pi.py::name` instead; a node id
     is a positional argument, not a `-k` expression, so the two do not mix.
+
+    The count was written as three and was five by the time anyone counted, so
+    it is no longer maintained by hand:
+    `test_every_mutation_row_names_a_test_that_exists` fails on any bare name
+    that two test files define, which is the thing this paragraph is really
+    claiming. [review: docs]
     """
     return ["-q", test] if "::" in test else ["-q", "-k", test]
 
@@ -5051,14 +5134,24 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 537 mutants x two suite runs, which
-    is about six hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 536 or trusting the new one untested.
-    (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
-    49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
-    measured against a smaller suite and read as a constant. The count in this
-    sentence has been wrong twice, so it is `len(MUTANTS)` and a timing, not a
-    memory.)
+    The filter exists because a full pass is 547 mutants × two suite runs —
+    long enough that adding one row and checking it used to mean either waiting
+    for the other 546 or trusting the new one untested.
+
+    Cost, as of the 953-test offline suite: **measured**, three rows timed
+    end to end at 3.7 s, 17.1 s and 17.2 s. **Estimated** from those, a full
+    pass is roughly one to two and a half hours. The spread is not noise and
+    does not average away — the first of the two runs is `-x`, so a row costs
+    however long the suite takes to *reach* the test the mutant breaks, and
+    that is a position in collection order, not a property of the row. A row
+    the suite misses entirely pays the full 81 s instead.
+
+    Every figure in this paragraph had drifted: "41 s a row", "1,126-test",
+    "71 verdicts in 49 minutes" and "about six hours" were all carried forward
+    unremeasured across suites that had since changed size, and the six hours
+    was the product of two of them. They are re-measured above and marked for
+    which is which, because the previous sentence claiming the number was "a
+    timing, not a memory" was itself the memory. [review: docs]
     """
     wanted = sys.argv[1:]
     selected = [m for m in MUTANTS if not wanted or any(w.lower() in m[0].lower() for w in wanted)]

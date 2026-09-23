@@ -8,7 +8,6 @@ carries its author's home directory in a `cwd` field.
 
 from __future__ import annotations
 
-import glob as _glob
 import json
 import os
 import pathlib
@@ -202,6 +201,42 @@ def test_a_context_edit_keeps_the_replacement_text(tmp_path):
     assert session.turns[-1].blocks[0].text == "redacted by the user"
 
 
+def test_a_nested_wrapper_does_not_override_the_entrys_own_text(tmp_path):
+    """The nested read is a fallback, not a preference.
+
+    `_PROSE_KEYS` and the keys inside `replacement` are the same words —
+    `content` is both — so "look one level in" is only unambiguous while the
+    top level has nothing to say. An entry carrying both is a tie, and the
+    entry's own text wins it: a wrapper annotates a record, it does not
+    replace the record's own prose.
+
+    No upstream `ContextEditEntry` has a top-level `content`
+    (`session-manager.ts:174-180` @a8ed4977), and no fixture in either fork has
+    a `context_edit` at all, so this pins a tie the format permits and the
+    corpus has never shown. That is the point: the tie-break was decided by
+    statement order, and statement order is not a decision anyone can read.
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(version=3),
+            msg("user", [{"type": "text", "text": "original"}], entry_id="e1"),
+            {
+                "type": "context_edit",
+                "id": "e2",
+                "parentId": "e1",
+                "timestamp": "2026-01-01T00:00:02.000Z",
+                "targetId": "e1",
+                "content": "the entry's own text",
+                "replacement": {"content": "the wrapper's text"},
+            },
+        ],
+    )
+    session = check_adapter(pi, path)
+    assert session.turns[-1].blocks[0].text == "the entry's own text"
+
+
 def test_an_aborted_assistant_turn_keeps_its_error(tmp_path):
     """`errorMessage` sits next to `content`, and `content` is then empty.
 
@@ -226,6 +261,76 @@ def test_an_aborted_assistant_turn_keeps_its_error(tmp_path):
     aborted, partial = check_adapter(pi, path).turns
     assert [b.text for b in aborted.blocks] == ["Request was aborted."]
     assert [b.text for b in partial.blocks] == ["partial", "Request was aborted."]
+    # `native` is the file's own object everywhere else, so the one block
+    # gitmemory composed says so rather than carrying a bare `{}` that reads
+    # as "this entry had no fields". [review: correctness]
+    assert aborted.blocks[0].native == {"gitmemory_synthesized": "errorMessage"}
+
+
+def test_an_error_message_that_is_not_prose_is_not_read_as_prose(tmp_path):
+    """`errorMessage?: string` is upstream's type, not the file's guarantee.
+
+    A transcript is untrusted input, and a `Block.text` is a string by the
+    record model — an object or a number there is a `to_canonical()` failure at
+    commit time, long after the parse that accepted it, which is the same shape
+    as the `_str_or_none` rule one file over. `is not None` would let all three
+    through; the guard is `isinstance`.
+
+    The empty string is checked in the same breath, because a zero-length block
+    is a row in the index that says nothing and matches nothing.
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(),
+            msg("assistant", [{"type": "text", "text": "a"}], errorMessage={"code": 500}),
+            msg("assistant", [{"type": "text", "text": "b"}], errorMessage=500),
+            msg("assistant", [{"type": "text", "text": "c"}], errorMessage=""),
+        ],
+    )
+    turns = check_adapter(pi, path).turns
+    assert [[b.text for b in t.blocks] for t in turns] == [["a"], ["b"], ["c"]]
+    # Still in `native`, as every rejected value is.
+    assert turns[0].native["message"]["errorMessage"] == {"code": 500}
+
+
+def test_a_failed_background_call_keeps_the_reason_it_failed(tmp_path):
+    """The same field, on the entry type that has no `message` at all.
+
+    `ModelUsageEntry` declares `errorMessage?: string`
+    (`session-entries.ts:89` @b52e1f5) and is how a tiny/smol call — a title,
+    a classification — records itself. When one fails, the whole explanation
+    lived only in `native`: the entry has no `content` to fall back on, so the
+    turn had zero blocks and a search for why the background work stopped
+    returned nothing, which is the same defect as the assistant case above
+    reached through a different entry type.
+
+    Synthetic rather than corpus-pinned on purpose: the four shipped fixtures
+    contain no failed `model_usage` entry, so nothing here would have caught
+    it. [review: correctness]
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(),
+            {
+                "type": "model_usage",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "t",
+                "role": "tiny",
+                "provider": "anthropic",
+                "model": "claude-haiku-4-5",
+                "usage": {"input": 4, "output": 0},
+                "errorMessage": "Rate limited after 3 retries.",
+            },
+        ],
+    )
+    (turn,) = check_adapter(pi, path).turns
+    assert [b.text for b in turn.blocks] == ["Rate limited after 3 retries."]
+    assert turn.model == "anthropic/claude-haiku-4-5"
 
 
 def test_a_bash_execution_keeps_its_command_and_output_apart(tmp_path):
@@ -599,8 +704,18 @@ def test_a_provider_qualified_model_id_is_not_collapsed(tmp_path):
     assert second.model == "anthropic/anthropic/claude-opus-5"
 
 
-def test_model_usage_without_a_model_falls_back_to_the_session(tmp_path):
-    """A call that happened is still a call: "no model" is the worse answer."""
+def test_model_usage_without_a_model_does_not_borrow_the_sessions(tmp_path):
+    """Null, not the carry-forward. A `model_usage` entry is by construction a
+    call some *other* model made — `role: "tiny"`/`"smol"`
+    (`session-entries.ts:82-83` @b52e1f5) — so the conversation model is not a
+    weak guess for it, it is the one answer known to be wrong.
+
+    An earlier revision fell back here too, reasoning that a call that happened
+    should not read as "no model". What that produces is the turn below
+    reporting that `anthropic/claude-opus-4-5` burned 12/3 tokens generating an
+    auto-title, in a field `dash_spend` groups by. The honest answer is that
+    the file does not say. [review: correctness]
+    """
     path = write(
         tmp_path,
         "s.jsonl",
@@ -611,12 +726,17 @@ def test_model_usage_without_a_model_falls_back_to_the_session(tmp_path):
                 "id": "u1",
                 "parentId": None,
                 "timestamp": "t",
+                "role": "tiny",
+                "purpose": "title",
                 "usage": {"input": 12, "output": 3},
             },
         ],
     )
     (turn,) = check_adapter(pi, path).turns
-    assert turn.model == "anthropic/claude-opus-4-5"
+    assert turn.model is None
+    # The usage is still read — it is the entry's own, and that is the half of
+    # the record the file does state.
+    assert turn.usage == {"input": 12, "output": 3}
 
 
 # --- find_session ----------------------------------------------------------
@@ -630,20 +750,23 @@ def test_find_session_matches_the_timestamp_prefixed_name(tmp_path):
     assert pi.find_session("s1", str(root)) == str(hit)
 
 
-def _would_glob(sessions: pathlib.Path, session_id: str) -> list[str]:
-    """`find_session`'s two patterns with its guards removed — the control.
+def _would_glob(sessions: pathlib.Path, session_id: str) -> set[str]:
+    """What `find_session`'s globs reach, with its guards removed — the control.
 
-    A deliberate copy of two lines of the implementation. A control that called
-    the function under test would measure the guards, which is the thing on
-    trial; this measures the *fixture*, which is the thing that was wrong.
+    A control that called the function under test would measure the guards,
+    which are the thing on trial; this measures the *fixture*, which is the
+    thing that was wrong. So it needs the glob without the validation, and
+    `pi._glob_hits` is exactly that half, called rather than restated.
+
+    It used to be a copy of two implementation lines, which is a control that
+    can drift — and drift *green*: change a pattern in the adapter and the
+    fixture stops planting anything reachable, every hostile id returns `None`
+    because there is nothing to find, and this test goes on passing while
+    proving nothing about `_SESSION_ID_RE`. That is the exact failure the
+    reachability assertion below was added to catch, so it must not be
+    reintroduced by the assertion's own helper. [review: tests]
     """
-    base = _glob.escape(os.path.realpath(sessions))
-    esc = _glob.escape(session_id)
-    return [
-        hit
-        for name in (f"{esc}.jsonl", f"*_{esc}.jsonl")
-        for hit in _glob.glob(os.path.join(base, "*", "**", name), recursive=True)
-    ]
+    return pi._glob_hits(session_id, os.path.realpath(sessions))
 
 
 @pytest.mark.parametrize(
@@ -689,6 +812,13 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
     (root / "real.jsonl").write_text("")
     for shape in (f"{hostile}.jsonl", f"2026-01-01T00-00-00-000Z_{hostile}.jsonl"):
         target = root / shape
+        # `pathlib`'s `/` *resets* to the right operand when it is absolute, so
+        # an id of `/etc/passwd` would plant outside `tmp_path` entirely and
+        # this loop would do it silently. None of the eleven is absolute today;
+        # the twelfth someone adds might be. Fail loudly instead. [review: tests]
+        assert str(target.resolve()).startswith(str(tmp_path.resolve()) + os.sep), (
+            f"plant escaped tmp_path: {target}"
+        )
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text("")
 
@@ -696,6 +826,36 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
 
     found = pi.find_session(hostile, str(sessions))
     assert found is None, f"escaped or widened the search: {found}"
+
+
+def test_find_session_does_not_return_a_session_whose_id_ends_in_the_one_asked_for(tmp_path):
+    """`*_<id>.jsonl` is a suffix match, and an id may contain `_`.
+
+    `assertValidSessionId` (`session-manager.ts:268` @a8ed4977) permits
+    underscores explicitly, so `alpha_beta` is a legal session id and
+    `…Z_alpha_beta.jsonl` is its legal filename. Asking for `beta` matched it —
+    `*` swallowed `…Z_alpha` — and the function returned *a different
+    session's transcript*, which is worse than returning nothing: the caller
+    gets a real, parseable file for the wrong conversation.
+
+    The separator is recoverable because the prefix is `fileTimestamp`,
+    `timestamp.replace(/[:.]/g, "-")` (`session-manager.ts:1079`), which cannot
+    contain `_`. So the first underscore is the boundary.
+
+    Both halves are asserted. Rejecting the near-miss is worthless if it also
+    broke the id it is named after, and an id containing `_` is precisely the
+    case the fix reasons about. [review: paths]
+    """
+    root = tmp_path / "sessions" / "--w--"
+    root.mkdir(parents=True)
+    hit = root / "2026-01-01T09-00-00-000Z_alpha_beta.jsonl"
+    hit.write_text("")
+    sessions = str(tmp_path / "sessions")
+
+    assert _would_glob(tmp_path / "sessions", "beta"), "vacuous fixture: the glob reaches nothing"
+    assert pi.find_session("beta", sessions) is None
+    assert pi.find_session("alpha", sessions) is None
+    assert pi.find_session("alpha_beta", sessions) == str(hit)
 
 
 def test_find_session_ignores_a_symlink_pointing_out_of_the_root(tmp_path):

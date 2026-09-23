@@ -8,7 +8,7 @@ Three things this format does that Claude Code's does not, all load-bearing:
 
   - **The file is not strictly append-only.** oh-my-pi keeps a fixed-width
     256-byte `title` slot on line 1 that is rewritten in place
-    (`session-entries.ts:16 SESSION_TITLE_SLOT_BYTES` @b52e1f5), and the
+    (`session-entries.ts:15 SESSION_TITLE_SLOT_BYTES` @b52e1f5), and the
     session manager rewrites the *whole* file synchronously on several paths —
     including every resume where records were migrated or malformed
     (`session-manager.ts:1878`: `#rewriteRequired = migrated ||
@@ -30,11 +30,15 @@ Three things this format does that Claude Code's does not, all load-bearing:
     `before-compaction.jsonl` the two compaction records sit 111,630 and
     102,084 bytes *after* their own cut points; in pi's, 111,830 and 102,180.
     It is the same session in both forks — the fixtures are the same 1,003
-    lines and the same 780 paths under the author's home — and the gap between the
-    two numbers is an npm scope: `@mariozechner/pi` became `@oh-my-pi/pi`
-    inside the transcript text, 649 times, 4 bytes shorter each time. 50 of
-    those occurrences fall before the first cut (200 bytes) and 24 before the
-    second (96), which is the whole of the difference. Both numbers come
+    lines, carrying the author's home directory 780 times over 113 distinct
+    paths — and the gap between the two numbers is an npm scope:
+    `@mariozechner/pi` became `@oh-my-pi/pi` inside the transcript text, 649
+    times, 4 bytes shorter each time. 50 of those occurrences fall *inside the
+    first gap* — between the cut point and the record that declares it — which
+    is 200 bytes, and 24 inside the second, which is 96: the whole of the
+    difference in each case. (Counted in the gap, not before the cut; before
+    the cuts there are 342 and 482, which are not the numbers that explain
+    anything.) Both gap sizes come
     from indexing `firstKeptEntryIndex` into the file's physical line list,
     which is exactly the mapping `parse` refuses to make (see `first_kept_
     entry_index` below): fine for sizing the gap, not fine for computing an
@@ -186,6 +190,35 @@ def _blocks(content) -> list[tuple[str, str, str | None, dict]]:
     return out
 
 
+def _with_error(
+    blocks: list[tuple[str, str, str | None, dict]], obj: dict
+) -> list[tuple[str, str, str | None, dict]]:
+    """Append an entry's `errorMessage` as prose, if it has one.
+
+    An aborted or errored call writes its explanation next to `content` rather
+    than in it, and `content` is then usually `[]`. In the shipped corpus that
+    is 19 and 22 assistant messages per *fixture* — 41 per fork — 13 and 14 of
+    them with no content at all: turns with zero blocks whose only prose
+    ("Request was aborted.") reached `native` and stopped there, so a search
+    for why the transcript goes quiet returned nothing. Appended rather than
+    substituted, because an entry can carry both.
+
+    Applied to every entry shape that can declare the field rather than to
+    assistant messages alone. `ModelUsageEntry` declares it too
+    (`session-entries.ts:89` @b52e1f5) and has no `message` at all, so the
+    whole reason a background call failed lived only in `native`; the corpus
+    happens to contain none, which is why only a synthetic pins it.
+
+    `native` is otherwise always the file's own object, so a block gitmemory
+    composed says so instead of carrying a bare `{}` that reads as "this entry
+    had no fields".
+    """
+    error = obj.get("errorMessage")
+    if not isinstance(error, str) or not error:
+        return blocks
+    return [*blocks, ("text", error, None, {"gitmemory_synthesized": "errorMessage"})]
+
+
 def _message_blocks(message: dict, native_role) -> list[tuple[str, str, str | None, dict]]:
     """Blocks for one `type: "message"` entry, whatever its role keeps them in."""
     if native_role == "bashExecution":
@@ -193,10 +226,13 @@ def _message_blocks(message: dict, native_role) -> list[tuple[str, str, str | No
         # fields. Skipping the entry would lose real transcript text, and
         # concatenating the two would make the command unfindable separately
         # from a 10,000-line output, which is the search that matters.
-        return [
-            ("tool_use", _flatten(message.get("command")), "bash", {}),
-            ("tool_result", _flatten(message.get("output")), None, {}),
-        ]
+        return _with_error(
+            [
+                ("tool_use", _flatten(message.get("command")), "bash", {}),
+                ("tool_result", _flatten(message.get("output")), None, {}),
+            ],
+            message,
+        )
     blocks = _blocks(message.get("content"))
     if native_role == "toolResult":
         # The content is a list of plain `text` blocks; only the message level
@@ -206,18 +242,8 @@ def _message_blocks(message: dict, native_role) -> list[tuple[str, str, str | No
         # joined from the matching tool_use.
         name = message.get("toolName")
         tool = name if isinstance(name, str) else None
-        return [("tool_result", t, tool, nat) for _k, t, _n, nat in blocks]
-    # An aborted or errored call writes its explanation next to `content`
-    # rather than in it, and `content` is then usually `[]`. In the shipped
-    # corpus that is 19 and 22 assistant messages per fork, 13 and 14 of them
-    # with no content at all: turns with zero blocks whose only prose — "Request
-    # was aborted." — reached `native` and stopped there, so a search for why
-    # the transcript goes quiet returned nothing. Appended rather than
-    # substituted, because a message can carry both.
-    error = message.get("errorMessage")
-    if isinstance(error, str) and error:
-        blocks = [*blocks, ("text", error, None, {})]
-    return blocks
+        return _with_error([("tool_result", t, tool, nat) for _k, t, _n, nat in blocks], message)
+    return _with_error(blocks, message)
 
 
 def _compose_model(obj: dict) -> str | None:
@@ -228,8 +254,10 @@ def _compose_model(obj: dict) -> str | None:
     carries a `provider` next to a *bare* id, or carries the joined string and
     no `provider` at all. The session header splits it into `provider` and
     `modelId`; an assistant message and a `model_usage` entry split it into
-    `provider` and `model` (`agent-session-stats.test.ts:21-39` passes
-    `model: target.id`); a `model_change` does whichever the build was current
+    `provider` and `model` (`agent-session-stats.test.ts:21-39` @b52e1f5
+    passes `model: target.id`; the rev matters, because the same path in pi at
+    `a8ed4977` is a `createUsage` helper with no `model` field at all); a
+    `model_change` does whichever the build was current
     for — every one of the twelve in the shipped fixtures splits it, while
     oh-my-pi's own tests write it joined and drop `provider`
     (`sdk-model-selection.test.ts:1218,1331`). Reading only the joined spelling
@@ -241,14 +269,22 @@ def _compose_model(obj: dict) -> str | None:
     instrumenting the branch over all four fixtures fires it 0 times in 1,890
     compositions. What it *did* reach was the opposite shape: a provider-
     qualified id that is the model's literal name — `provider: "mock"` with
-    `model: "mock/mock"` (`unexpected-stop-classifier.test.ts:20-21`),
-    `provider: "openrouter"` with `model: "example/model"`
-    (`rpc-client.start.test.ts:24-25`), or upstream issue #8800's
-    `models.yml` proxy serving `anthropic/claude-opus-5` under its own
-    provider. Collapsing those loses the one field that tells two copies of a
-    model apart, which is the distinction #8800 exists to preserve. A doubled
-    prefix on some future writer is visibly wrong; a collapsed one is silently
-    wrong, and this store's whole claim is that its strings are the file's.
+    `model: "mock/mock"` (`unexpected-stop-classifier.test.ts:20-21`
+    @b52e1f5).
+
+    Collapsing that is not merely lossy, it resolves to a different model.
+    oh-my-pi's own catalog ships two distinct entries under `openrouter`:
+    `auto` (name `"Auto"`, cost 0/0) and `openrouter/auto` (name
+    `"Auto Router"`, cost -1000000/-1000000) — `packages/catalog/src/models.json`
+    @b52e1f5. So `provider: "openrouter"` with `model: "openrouter/auto"`
+    collapses to `openrouter/auto`, and upstream's own resolver splits a
+    reference on its *first* slash (`config/model-resolver.ts:689-692`
+    @b52e1f5), reading that back as provider `openrouter`, id `auto` — the
+    other entry, with the other cost row, in a field `dash_spend` groups by.
+    The uncollapsed `openrouter/openrouter/auto` round-trips to the right one.
+    A doubled prefix on some future writer is visibly wrong; a collapsed one
+    is silently wrong, and this store's whole claim is that its strings are
+    the file's.
     """
     name = _get(obj, "modelId", "model")
     if not isinstance(name, str) or not name:
@@ -383,7 +419,7 @@ def parse(path: str) -> Session:
             for i, (k, t, n, nat) in enumerate(
                 _message_blocks(message, native_role)
                 if obj.get("message") is not None
-                else _blocks(content)
+                else _with_error(_blocks(content), obj)
             )
         ]
         turn = Turn(
@@ -399,13 +435,17 @@ def parse(path: str) -> Session:
             # turn and does *not* clobber `model` for the lines after it —
             # upstream's precedence rule is about which model is selected next,
             # a different question from which model wrote this turn.
-            # Both branches fall back to the carry-forward. A `model_usage` line
-            # whose `model` is missing, empty, or not a string is still a call
-            # that happened; reading it as "no model" is a worse answer than the
-            # session's, and it is the only line type that would produce a null
-            # here on an otherwise fully-labelled transcript.
+            # Only the message branch falls back to the carry-forward. A
+            # `model_usage` line is by construction a call some *other* model
+            # made — `role: "tiny"`/`"smol"` (`session-entries.ts:82-83`
+            # @b52e1f5) — so the conversation model is not a weak guess for it,
+            # it is the one answer known to be wrong. An earlier revision
+            # applied the fallback to both branches on the reasoning that a
+            # call that happened should not read as "no model"; that labels an
+            # auto-title generated by a tiny model as the session's opus turn,
+            # in a field `dash_spend` groups by. Null is the honest answer.
             model=(
-                _compose_model(obj) or turn_model
+                _compose_model(obj)
                 if line_type == "model_usage"
                 else _compose_model(message) or turn_model
             ),
@@ -470,6 +510,39 @@ def parse(path: str) -> Session:
     return session
 
 
+def _glob_hits(session_id: str, root: str) -> set[str]:
+    """Every path the two filename shapes reach under `root`. No validation.
+
+    Split out of `find_session` so the hostile-id test's negative control can
+    ask the implementation what it would find instead of restating the
+    patterns. A restated control drifts the moment a shape changes here, and
+    it drifts *green*: the fixture stops planting anything the glob can reach,
+    every hostile id returns `None` for the wrong reason, and the test that
+    exists to prove the charset guard works proves nothing. [review: tests]
+    """
+    base = _glob.escape(root)
+    esc = _glob.escape(session_id)
+    hits: set[str] = set()
+    for name in (f"{esc}.jsonl", f"*_{esc}.jsonl"):
+        # Two *filename* shapes, one depth pattern. `**` matches zero or more
+        # directories, so this already covers `base/*/name`. [pair review]
+        hits |= set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
+    return hits
+
+
+def _names_session(path: str, session_id: str) -> bool:
+    """Whether a globbed filename really names this session, not one ending in it.
+
+    `*_<id>.jsonl` is a suffix match, so it is satisfied by any id the target
+    id happens to end after an underscore. The prefix upstream actually writes
+    is `fileTimestamp` — `timestamp.replace(/[:.]/g, "-")`
+    (`session-manager.ts:1079` @a8ed4977) — which cannot contain `_`, so the
+    first underscore is the separator and everything after it is the id.
+    """
+    stem = os.path.basename(path)[: -len(".jsonl")]
+    return stem == session_id or stem.partition("_")[2] == session_id
+
+
 def find_session(session_id: str, projects_root: str) -> str | None:
     """Locate a transcript by session id under a sessions root.
 
@@ -478,31 +551,42 @@ def find_session(session_id: str, projects_root: str) -> str | None:
     the stem itself. Both shapes are globbed; the bare one costs a pattern and
     covers a renamed file or a build that drops the prefix.
 
-    `session_id` reaches this function from a hook payload, so it is untrusted:
-    charset-checked before use, glob-escaped so metacharacters cannot widen the
-    search, and every hit confirmed to resolve inside the root. Newest mtime
-    wins when a resume-rewrite left duplicates, with the path breaking ties so
-    the answer does not depend on set iteration order.
+    The glob is not the whole test. `*_<id>.jsonl` is a suffix match and an id
+    may itself contain `_` — `assertValidSessionId` (`session-manager.ts:268`
+    @a8ed4977) permits it explicitly — so a search for `beta` also matches
+    `…Z_alpha_beta.jsonl`, which is session `alpha_beta`, and the function used
+    to hand back *a different session's transcript* rather than nothing.
+    `_names_session` re-checks each hit against the two shapes the glob was
+    meant to express. It can do that exactly because the prefix is
+    `fileTimestamp`, which upstream builds as `timestamp.replace(/[:.]/g, "-")`
+    (`session-manager.ts:1079`) and which therefore cannot contain `_`: the
+    first underscore is provably the separator.
+
+    `session_id` is untrusted — nothing in-tree calls this yet, and the caller
+    it is written for is a hook payload. So it is charset-checked before use,
+    glob-escaped so metacharacters cannot widen the search, and every hit is
+    confirmed to resolve inside the root. Newest mtime wins when a
+    resume-rewrite left duplicates, with the path breaking ties so the answer
+    does not depend on set iteration order.
 
     The returned path is the globbed one, not the resolved one, so a symlink
     inside the root is followed by the caller as the user intended — the
     containment proof is on the target, the answer is the name. That leaves the
-    usual TOCTOU window: what is checked here and what the reader opens are two
-    calls. `isfile` closes the shape half of it, so a *directory* or a FIFO
-    named `<id>.jsonl` is not handed back as a transcript to block on.
+    usual TOCTOU window, and `isfile` does not close any half of it: it is one
+    more check before the same unsynchronised open, and the name can be
+    replaced between the two. What it buys is that the *ordinary* wrong shapes
+    — a directory or a FIFO named `<id>.jsonl` — are not returned as
+    transcripts, so the reader blocks or raises only if someone is racing it.
     """
     if not _SESSION_ID_RE.match(session_id or ""):
         return None
     root = os.path.realpath(projects_root)
-    base = _glob.escape(root)
-    esc = _glob.escape(session_id)
-    hits: set[str] = set()
-    for name in (f"{esc}.jsonl", f"*_{esc}.jsonl"):
-        # Two *filename* shapes, one depth pattern. `**` matches zero or more
-        # directories, so this already covers `base/*/name`. [pair review]
-        hits |= set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
     inside = [
-        h for h in hits if os.path.realpath(h).startswith(root + os.sep) and os.path.isfile(h)
+        h
+        for h in _glob_hits(session_id, root)
+        if _names_session(h, session_id)
+        and os.path.realpath(h).startswith(root + os.sep)
+        and os.path.isfile(h)
     ]
     if not inside:
         return None

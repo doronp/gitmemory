@@ -90,8 +90,16 @@ MAX_TERMS = 64
 _PATH = re.compile(
     r"(?:[A-Za-z]:[\\/]|~[\\/]|\.{1,2}[\\/]|[\\/])?(?:[\w.@%+-]{1,255}+[\\/])+[\w.@%+-]{1,255}+"
 )
-# Tool-argument keys that name a file. Claude Code, Hermes and opencode all use
-# some casing of these; unknown keys simply contribute nothing.
+# Tool-argument keys that name a file. Counted across the two conformance
+# corpora: claude-code-log's 162 fixtures carry `file_path` 15x, `filePath` 6x
+# and `path` 5x; pi's and oh-my-pi's four carry `path` 826x. The two notebook
+# spellings appear in neither and are here from Claude Code's NotebookEdit
+# parameters, not from a line we have seen. An unknown key contributes nothing,
+# so the cost of a wrong guess is a path not indexed, never a wrong path.
+#
+# This used to read "Claude Code, Hermes and opencode", naming two agents that
+# `adapters/__init__.py` retracts by name in the same tree — a spelling claim
+# resting on products that are not candidates any more. [review: docs]
 _PATH_KEYS = ("file_path", "filePath", "path", "notebook_path", "notebookPath")
 
 _DDL = f"""
@@ -858,7 +866,13 @@ def _paths(block) -> str:
     # `path` arguments in the shipped fixtures); the four it does not are bare
     # filenames like `AGENTS.md`, which have no separator to be path-shaped and
     # are exactly the ones a reader would search for by name.
-    args = native.get("input") or native.get("arguments")
+    # `or` would be wrong here: a truthy non-dict `input` — a string, a list,
+    # the ordinary malformed output the line above exists for — would win the
+    # fallback and then fail the `isinstance` below, masking an `arguments`
+    # that was right there. Fall through on *shape*, not on truthiness.
+    args = native.get("input")
+    if not isinstance(args, dict):
+        args = native.get("arguments")
     if isinstance(args, dict):
         for key in _PATH_KEYS:
             value = args.get(key)
