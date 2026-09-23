@@ -8,6 +8,7 @@ carries its author's home directory in a `cwd` field.
 
 from __future__ import annotations
 
+import glob as _glob
 import json
 import os
 import pathlib
@@ -118,6 +119,113 @@ def test_the_legacy_ordinal_is_recorded_but_never_resolved(tmp_path):
     assert "first_kept_byte_offset" not in event.meta
     # The summary is the densest prose in a real transcript — it is a turn.
     assert session.turns[-1].blocks[0].text == "# Context Checkpoint"
+
+
+def test_a_repeated_entry_id_is_dropped_and_counted(tmp_path):
+    """Two lines claiming one id: the second is not a turn, and not silent.
+
+    A resume-rewrite can replay an entry. Keeping both would give two turns one
+    identity, which the store's own uniqueness rule then has to resolve by
+    luck; dropping the second without counting it would break the accounting
+    rule that every line read is either a turn or a `skipped` tally.
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(version=3),
+            msg("user", [{"type": "text", "text": "first"}], entry_id="e1"),
+            msg("user", [{"type": "text", "text": "replay"}], entry_id="e1"),
+        ],
+    )
+    session = check_adapter(pi, path)
+    (turn,) = session.turns
+    assert turn.blocks[0].text == "first"
+    assert session.skipped["duplicate_id"] == 1
+
+
+def test_a_repeated_entry_id_resolves_to_the_first_offset(tmp_path):
+    """The cut point is where the id was *first* seen, not last.
+
+    The second line carrying an id is dropped as a duplicate and produces no
+    turn. Letting it overwrite the offset would point a compaction cut at a
+    line the reader was told does not exist — a byte offset into nothing.
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(version=3),
+            msg("user", [{"type": "text", "text": "first"}], entry_id="e1"),
+            msg("user", [{"type": "text", "text": "replay"}], entry_id="e1"),
+            {
+                "type": "compaction",
+                "id": "c1",
+                "parentId": "e1",
+                "timestamp": "2026-01-01T00:00:09.000Z",
+                "summary": "# Context Checkpoint",
+                "firstKeptEntryId": "e1",
+                "tokensBefore": 1,
+            },
+        ],
+    )
+    session = check_adapter(pi, path)
+    (event,) = session.events
+    assert event.meta["first_kept_byte_offset"] == session.turns[0].byte_offset
+
+
+def test_a_context_edit_keeps_the_replacement_text(tmp_path):
+    """`context_edit` wraps its prose one level down, in `replacement`.
+
+    The replacement is what supersedes the target's contribution to model
+    context. Reading only the top level left it in `native` — so the store
+    answered with the superseded text and the new text was unfindable, which
+    is the store returning a version of the session the model never saw.
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(version=3),
+            msg("user", [{"type": "text", "text": "original"}], entry_id="e1"),
+            {
+                "type": "context_edit",
+                "id": "e2",
+                "parentId": "e1",
+                "timestamp": "2026-01-01T00:00:02.000Z",
+                "targetId": "e1",
+                "replacement": {"content": "redacted by the user"},
+            },
+        ],
+    )
+    session = check_adapter(pi, path)
+    assert session.turns[-1].blocks[0].text == "redacted by the user"
+
+
+def test_an_aborted_assistant_turn_keeps_its_error(tmp_path):
+    """`errorMessage` sits next to `content`, and `content` is then empty.
+
+    In the shipped fixtures that is 19 and 22 assistant messages per fork, 13
+    and 14 of them with nothing in `content` at all: turns with zero blocks
+    whose only prose is the reason the transcript goes quiet. Appended rather
+    than substituted — a message can carry both.
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(),
+            msg("assistant", [], errorMessage="Request was aborted."),
+            msg(
+                "assistant",
+                [{"type": "text", "text": "partial"}],
+                errorMessage="Request was aborted.",
+            ),
+        ],
+    )
+    aborted, partial = check_adapter(pi, path).turns
+    assert [b.text for b in aborted.blocks] == ["Request was aborted."]
+    assert [b.text for b in partial.blocks] == ["partial", "Request was aborted."]
 
 
 def test_a_bash_execution_keeps_its_command_and_output_apart(tmp_path):
@@ -418,7 +526,16 @@ def test_a_v3_entry_with_no_content_is_still_a_node(tmp_path):
 
 
 def test_model_usage_keeps_its_own_model_and_usage(tmp_path):
-    """A call made outside the conversation is not billed to the session model."""
+    """A call made outside the conversation is not billed to the session model.
+
+    The `model` here is the *bare* id next to a `provider`, which is the shape
+    every `model_usage` line in both forks' fixtures actually has. An earlier
+    version of this test wrote the joined string in both fields at once — a
+    shape nothing upstream emits — and it was the only test holding up a
+    `startswith` guard in `_compose_model` that fired zero times in 1,890
+    compositions over the corpus. A fabricated input is worse than no test:
+    it makes dead code look pinned.
+    """
     path = write(
         tmp_path,
         "s.jsonl",
@@ -432,7 +549,7 @@ def test_model_usage_keeps_its_own_model_and_usage(tmp_path):
                 "purpose": "title",
                 "api": "anthropic-messages",
                 "provider": "anthropic",
-                "model": "anthropic/claude-haiku-4-5",
+                "model": "claude-haiku-4-5",
                 "usage": {"input": 12, "output": 3},
             },
         ],
@@ -441,6 +558,65 @@ def test_model_usage_keeps_its_own_model_and_usage(tmp_path):
     (turn,) = session.turns
     assert turn.model == "anthropic/claude-haiku-4-5"
     assert turn.usage == {"input": 12, "output": 3}
+
+
+def test_a_provider_qualified_model_id_is_not_collapsed(tmp_path):
+    """`provider` and a slash-bearing `model` name two different things.
+
+    A proxy serving `anthropic/claude-opus-5` under its own provider is the
+    case upstream's model-selection issue exists to keep distinct: the id is
+    the model's literal name, the provider is who served it. Joining is what
+    keeps two copies of one model apart; collapsing on a prefix match throws
+    away the only field that tells them apart.
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(),
+            {
+                "type": "model_usage",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "t",
+                "provider": "openrouter",
+                "model": "example/model",
+                "usage": {"input": 1, "output": 1},
+            },
+            {
+                "type": "model_usage",
+                "id": "u2",
+                "parentId": None,
+                "timestamp": "t",
+                "provider": "anthropic",
+                "model": "anthropic/claude-opus-5",
+                "usage": {"input": 1, "output": 1},
+            },
+        ],
+    )
+    first, second = check_adapter(pi, path).turns
+    assert first.model == "openrouter/example/model"
+    assert second.model == "anthropic/anthropic/claude-opus-5"
+
+
+def test_model_usage_without_a_model_falls_back_to_the_session(tmp_path):
+    """A call that happened is still a call: "no model" is the worse answer."""
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(),
+            {
+                "type": "model_usage",
+                "id": "u1",
+                "parentId": None,
+                "timestamp": "t",
+                "usage": {"input": 12, "output": 3},
+            },
+        ],
+    )
+    (turn,) = check_adapter(pi, path).turns
+    assert turn.model == "anthropic/claude-opus-4-5"
 
 
 # --- find_session ----------------------------------------------------------
@@ -452,6 +628,22 @@ def test_find_session_matches_the_timestamp_prefixed_name(tmp_path):
     hit = root / "--w--" / "2026-01-01T00-00-00-000Z_s1.jsonl"
     hit.write_text("")
     assert pi.find_session("s1", str(root)) == str(hit)
+
+
+def _would_glob(sessions: pathlib.Path, session_id: str) -> list[str]:
+    """`find_session`'s two patterns with its guards removed — the control.
+
+    A deliberate copy of two lines of the implementation. A control that called
+    the function under test would measure the guards, which is the thing on
+    trial; this measures the *fixture*, which is the thing that was wrong.
+    """
+    base = _glob.escape(os.path.realpath(sessions))
+    esc = _glob.escape(session_id)
+    return [
+        hit
+        for name in (f"{esc}.jsonl", f"*_{esc}.jsonl")
+        for hit in _glob.glob(os.path.join(base, "*", "**", name), recursive=True)
+    ]
 
 
 @pytest.mark.parametrize(
@@ -473,28 +665,34 @@ def test_find_session_matches_the_timestamp_prefixed_name(tmp_path):
 def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
     """The id arrives in a hook payload and is interpolated into a glob.
 
-    Every hostile id gets a file it *would* resolve to, in both filename shapes
-    this adapter globs. The version before this planted nothing, so `is None`
-    held because the directory was empty — deleting `_SESSION_ID_RE` and the
-    containment filter outright left all three assertions green. That is the
-    same vacuity `test_claude_code.py::test_find_session_refuses_a_hostile_id`
-    documents having been found and fixed once already; copying the shape of
-    the test and not the reason it exists reintroduced it.
+    Every hostile id gets a file at the exact path each of the two globbed
+    filename shapes would resolve to, `..` components and all — created through
+    the unnormalised path so the literal intermediate directories the glob has
+    to walk exist too. The sessions root is nested four deep so even
+    `../../../../` lands inside `tmp_path`.
+
+    Planting is not the assertion, though. Two earlier versions of this test
+    passed for the wrong reason: the first planted nothing at all, and the
+    second planted for five of the eleven ids, so deleting `_SESSION_ID_RE`
+    turned only three of eleven cases red. Both looked like coverage. So
+    reachability is measured rather than assumed: the unguarded globs are run
+    against the fixture, and if they find nothing the test fails as a bad
+    fixture instead of passing as a good guard. All eleven now reach their
+    plant; ten of them land inside the root, so the charset rule is the only
+    thing refusing them, and `../../../../etc/passwd` resolves out of the root,
+    where containment is.
     """
-    sessions = tmp_path / "sessions"
+    sessions = tmp_path / "a" / "b" / "c" / "sessions"
     root = sessions / "--w--"
     root.mkdir(parents=True)
+    # A decoy with an ordinary name: what a widened `*` would sweep up.
     (root / "real.jsonl").write_text("")
-    # A dotfile the glob matches the moment the leading-alphanumeric rule goes,
-    # and an over-length name the {0,127} bound is the only thing refusing.
-    # Both are inside the root, so containment passes them either way.
-    for stem in (".hidden", "x" * 200):
-        (root / f"{stem}.jsonl").write_text("")
-        (root / f"2026-01-01T00-00-00-000Z_{stem}.jsonl").write_text("")
-    # `sessions/*/../secrets.jsonl` realpaths back inside the root, so traversal
-    # is not caught by containment either — only by the charset.
-    (sessions / "secrets.jsonl").write_text("")
-    (tmp_path / "secrets.jsonl").write_text("")
+    for shape in (f"{hostile}.jsonl", f"2026-01-01T00-00-00-000Z_{hostile}.jsonl"):
+        target = root / shape
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("")
+
+    assert _would_glob(sessions, hostile), f"vacuous fixture: nothing to find for {hostile!r}"
 
     found = pi.find_session(hostile, str(sessions))
     assert found is None, f"escaped or widened the search: {found}"
@@ -505,14 +703,55 @@ def test_find_session_ignores_a_symlink_pointing_out_of_the_root(tmp_path):
 
     The containment filter is the only thing between a planted link and this
     machine's own history, which is the one thing this project must never read.
+
+    Ends with a positive control on the same path: replacing the link with a
+    real file finds it. Without that, `is None` is equally consistent with the
+    lookup being broken for every bare-named file — which it briefly was, since
+    nothing else in the suite noticed when the bare glob shape was dropped.
     """
-    root = tmp_path / "sessions" / "--w--"
+    sessions = tmp_path / "sessions"
+    root = sessions / "--w--"
     root.mkdir(parents=True)
     outside = tmp_path / "elsewhere"
     outside.mkdir()
     (outside / "s1.jsonl").write_text("")
-    (root / "s1.jsonl").symlink_to(outside / "s1.jsonl")
+    link = root / "s1.jsonl"
+    link.symlink_to(outside / "s1.jsonl")
+    assert pi.find_session("s1", str(sessions)) is None
+
+    link.unlink()
+    link.write_text("")
+    assert pi.find_session("s1", str(sessions)) == str(link)
+
+
+def test_find_session_matches_the_bare_name(tmp_path):
+    """The un-prefixed shape is globbed too, and only this says so.
+
+    pi's own writer emits `<ISO-timestamp>_<id>.jsonl`, so the bare pattern
+    covers a renamed file or a build that drops the prefix — a second pattern
+    justified by nothing in the corpus, which is exactly the kind of code that
+    gets deleted as redundant. Dropping it used to leave the whole suite green.
+    """
+    root = tmp_path / "sessions" / "--w--"
+    root.mkdir(parents=True)
+    hit = root / "s1.jsonl"
+    hit.write_text("")
+    assert pi.find_session("s1", str(tmp_path / "sessions")) == str(hit)
+
+
+def test_find_session_ignores_a_directory_with_a_transcripts_name(tmp_path):
+    """A directory or FIFO named `<id>.jsonl` is not a transcript.
+
+    Both satisfy the glob and the containment proof; handing one back gives the
+    reader something that raises on open, or worse, blocks forever on it.
+    """
+    root = tmp_path / "sessions" / "--w--"
+    root.mkdir(parents=True)
+    (root / "s1.jsonl").mkdir()
     assert pi.find_session("s1", str(tmp_path / "sessions")) is None
+
+    os.mkfifo(root / "2026-01-01T00-00-00-000Z_s2.jsonl")
+    assert pi.find_session("s2", str(tmp_path / "sessions")) is None
 
 
 _TIE_SCRIPT = """

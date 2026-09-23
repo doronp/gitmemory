@@ -67,12 +67,14 @@ code, not merely the copyright line.** Verbatim upstream texts:
 ### pi — MIT, Copyright (c) 2025 Mario Zechner
 <https://github.com/earendil-works/pi>
 
-- `packages/coding-agent/src/session/session-entries.ts` and
-  `session-manager.ts` are the source of truth for the entry union, the
-  256-byte rewritable `title` slot, and the rewrite paths that make the format
-  *not* strictly append-only. Read to write `adapters/pi.py`; no code copied.
-  Every claim the adapter's docstring makes about the format cites a file and
-  line at the pinned rev, so a reader can check it rather than trust it.
+- `packages/coding-agent/src/core/session-manager.ts` is the source of truth
+  for the entry union as pi ships it, including `ContextEditEntry` — the
+  rewrite path that makes the format *not* strictly append-only. Read to write
+  `adapters/pi.py`; no code copied. Every claim the adapter's docstring makes
+  about the format cites a file and line at the pinned rev, so a reader can
+  check it rather than trust it. The `src/session/` paths an earlier revision
+  of this file credited to pi do not exist at `a8ed4977`; they are oh-my-pi's,
+  and are credited there.
 - `packages/coding-agent/test/fixtures/` (2 `.jsonl` fixtures) joins the
   conformance corpus, fetched at test time by `tests/fetch_fixtures.sh`. These
   in particular could not be vendored even if the licence invited it: each one
@@ -82,6 +84,11 @@ code, not merely the copyright line.** Verbatim upstream texts:
 ### oh-my-pi — MIT, Copyright (c) 2025 Mario Zechner, (c) 2025-2026 Can Bölük, (c) 2026 Stencil Labs, Inc.
 <https://github.com/can1357/oh-my-pi>
 
+- `packages/coding-agent/src/session/session-entries.ts` and
+  `session-manager.ts` are where the fork moved and extended the entry union,
+  and are the source for the 256-byte rewritable `title` slot
+  (`SESSION_TITLE_SLOT_BYTES`, `session-entries.ts:15` @`b52e1f5`). Read, not
+  copied.
 - A fork of pi writing the same JSONL dialect, which is why one adapter reads
   both and `"omp"` is an alias rather than a second entry in `ADAPTERS`. Its
   `packages/coding-agent/test/fixtures/` (2 `.jsonl`) is the other half of the

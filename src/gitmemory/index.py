@@ -852,7 +852,13 @@ def _paths(block) -> str:
     # malformed output. It used to raise `AttributeError` from inside the row
     # loop and take down the build for every *other* generation too. [E3]
     native = block.native if isinstance(block.native, dict) else {}
-    args = native.get("input")
+    # `input` is Claude Code's spelling and `arguments` is pi's — without the
+    # second, this structured read is dead code on every pi transcript. Most of
+    # what it recovers there the regex below would find anyway (890 of the 894
+    # `path` arguments in the shipped fixtures); the four it does not are bare
+    # filenames like `AGENTS.md`, which have no separator to be path-shaped and
+    # are exactly the ones a reader would search for by name.
+    args = native.get("input") or native.get("arguments")
     if isinstance(args, dict):
         for key in _PATH_KEYS:
             value = args.get(key)

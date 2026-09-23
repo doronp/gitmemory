@@ -679,7 +679,12 @@ def find_session(session_id: str, projects_root: str) -> str | None:
     # the same way. The second glob was a second full traversal for a strictly
     # smaller set. [pair review]
     hits = set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
-    inside = [h for h in hits if os.path.realpath(h).startswith(root + os.sep)]
+    # `isfile` as well as inside-the-root: a directory or FIFO named
+    # `<id>.jsonl` satisfies the glob and the containment proof both, and
+    # returning one hands the reader something it will fail on or block on.
+    inside = [
+        h for h in hits if os.path.realpath(h).startswith(root + os.sep) and os.path.isfile(h)
+    ]
     if not inside:
         return None
 

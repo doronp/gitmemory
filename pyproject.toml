@@ -1,7 +1,7 @@
 [project]
 name = "gitmemory"
 version = "0.1.0"
-description = "Git-versioned, contiguity-checked memory for coding agents"
+description = "Git-versioned, contiguity-checked memory for agents that keep a local, append-only, line-delimited transcript"
 readme = "README.md"
 requires-python = ">=3.13"
 license = "Apache-2.0"

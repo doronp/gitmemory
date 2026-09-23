@@ -1586,7 +1586,7 @@ MUTANTS = [
         return None""",
         """    if not session_id:
         return None""",
-        "test_find_session_refuses_a_hostile_id",
+        "tests/test_claude_code.py::test_find_session_refuses_a_hostile_id",
     ),
     (
         # The docstring on `newest` names this exact defect, and until L4 the
@@ -1596,7 +1596,7 @@ MUTANTS = [
         "src/gitmemory/adapters/claude_code.py",
         """            return (os.path.getmtime(p), p)""",
         """            return (os.path.getmtime(p), 0)""",
-        "test_find_session_breaks_mtime_ties_deterministically",
+        "tests/test_claude_code.py::test_find_session_breaks_mtime_ties_deterministically",
     ),
     (
         # The shim and the watcher agree on a filename and on nothing else.
@@ -4362,7 +4362,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "28 mutants",
+        "a full pass is 5" + "37 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4435,9 +4435,11 @@ MUTANTS = [
     # --- E7 pair review: the README count that only one machine could reach ---
     (
         # Revert the count test to collecting whatever this machine happens to
-        # have. On a machine with the corpus cloned the collection is 322 cases
-        # larger than the number a stranger gets, which is the state this was in
-        # for two epochs.
+        # have. On a machine with all three corpora cloned the collection is 325
+        # tests larger than the number a stranger gets, which is the state this
+        # was in for two epochs. Not the 328 conformance cases: pytest collects
+        # one placeholder per empty `parametrize`, and there are three of them,
+        # so the corpus switches 325 collected items rather than 328.
         "the readme test count is whatever this machine collects",
         "tests/test_docs.py",
         '    offline = _collect(**NO_CORPUS)\n'
@@ -4828,21 +4830,89 @@ MUTANTS = [
         "src/gitmemory/adapters/pi.py",
         '    if not _SESSION_ID_RE.match(session_id or ""):',
         "    if False:",
-        "test_find_session_refuses_a_hostile_id",
+        "tests/test_pi.py::test_find_session_refuses_a_hostile_id",
     ),
     (
         "a hit is returned without confirming it resolves inside the root",
         "src/gitmemory/adapters/pi.py",
-        "    inside = [h for h in hits if os.path.realpath(h).startswith(root + os.sep)]",
-        "    inside = list(hits)",
-        "test_find_session_ignores_a_symlink_pointing_out_of_the_root",
+        "        h for h in hits if os.path.realpath(h).startswith(root + os.sep)"
+        " and os.path.isfile(h)",
+        "        h for h in hits",
+        "tests/test_pi.py::test_find_session_ignores_a_symlink_pointing_out_of_the_root",
+    ),
+    (
+        "a directory named like a transcript is returned as one",
+        "src/gitmemory/adapters/pi.py",
+        "        h for h in hits if os.path.realpath(h).startswith(root + os.sep)"
+        " and os.path.isfile(h)",
+        "        h for h in hits if os.path.realpath(h).startswith(root + os.sep)",
+        "test_find_session_ignores_a_directory_with_a_transcripts_name",
+    ),
+    (
+        "only the timestamp-prefixed filename shape is globbed",
+        "src/gitmemory/adapters/pi.py",
+        '    for name in (f"{esc}.jsonl", f"*_{esc}.jsonl"):',
+        '    for name in (f"*_{esc}.jsonl",):',
+        "test_find_session_matches_the_bare_name",
+    ),
+    (
+        "a repeated entry id is kept as a second turn with the same identity",
+        "src/gitmemory/adapters/pi.py",
+        '            bump("duplicate_id")',
+        '            bump("duplicate_id") if False else None',
+        "test_a_repeated_entry_id_is_dropped_and_counted",
+    ),
+    (
+        "a repeated entry id overwrites the offset of the line that was kept",
+        "src/gitmemory/adapters/pi.py",
+        "            offset_of.setdefault(entry_id, rec.offset)",
+        "            offset_of[entry_id] = rec.offset",
+        "test_a_repeated_entry_id_resolves_to_the_first_offset",
+    ),
+    (
+        "a context_edit's replacement text is left in native and never indexed",
+        "src/gitmemory/adapters/pi.py",
+        "        content = message.get("
+        "\"content\") if raw_message is not None else _prose(obj)",
+        "        content = message.get("
+        '"content") if raw_message is not None else _get(obj, *_PROSE_KEYS)',
+        "test_a_context_edit_keeps_the_replacement_text",
+    ),
+    (
+        "an aborted assistant turn loses the one line saying why",
+        "src/gitmemory/adapters/pi.py",
+        '    error = message.get("errorMessage")',
+        '    error = None',
+        "test_an_aborted_assistant_turn_keeps_its_error",
+    ),
+    (
+        "a provider-qualified model id is collapsed onto its provider",
+        "src/gitmemory/adapters/pi.py",
+        '    return _bounded_id(f"{provider}/{name}")',
+        '    return _bounded_id(name if name.startswith(provider + "/")'
+        ' else f"{provider}/{name}")',
+        "test_a_provider_qualified_model_id_is_not_collapsed",
+    ),
+    (
+        "a model_usage line with no usable model nulls the turn's model",
+        "src/gitmemory/adapters/pi.py",
+        "                _compose_model(obj) or turn_model",
+        "                _compose_model(obj)",
+        "test_model_usage_without_a_model_falls_back_to_the_session",
+    ),
+    (
+        "pi's tool arguments are not read for the paths they name",
+        "src/gitmemory/index.py",
+        '    args = native.get("input") or native.get("arguments")',
+        '    args = native.get("input")',
+        "test_a_pi_tool_call_indexes_the_path_it_names",
     ),
     (
         "equal mtimes are broken by whatever the set yields first",
         "src/gitmemory/adapters/pi.py",
         "            return (os.path.getmtime(p), p)",
         "            return (os.path.getmtime(p),)",
-        "test_find_session_breaks_mtime_ties_deterministically",
+        "tests/test_pi.py::test_find_session_breaks_mtime_ties_deterministically",
     ),
     (
         # The one the module docstring warns about in prose and nothing held:
@@ -4966,12 +5036,24 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
     return True, "CAUGHT", f"  <- {test}"
 
 
+def _select(test: str) -> list[str]:
+    """pytest args for a row's intended test.
+
+    `-k` matches by *name*, so a name defined in both `test_pi.py` and
+    `test_claude_code.py` — there are three — scores on the union of the two,
+    and a mutant in one adapter can be credited to the other adapter's test.
+    A row pins the file by writing `tests/test_pi.py::name` instead; a node id
+    is a positional argument, not a `-k` expression, so the two do not mix.
+    """
+    return ["-q", test] if "::" in test else ["-q", "-k", test]
+
+
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 528 mutants x two suite runs, which
-    is about five hours — long enough that adding one row and checking it used
-    to mean either waiting for the other 501 or trusting the new one untested.
+    The filter exists because a full pass is 537 mutants x two suite runs, which
+    is about six hours — long enough that adding one row and checking it used
+    to mean either waiting for the other 536 or trusting the new one untested.
     (Measured at 41 s a row against the 1,126-test offline suite: 71 verdicts in
     49 minutes, wall clock, on the machine this is run on. The earlier 28 s was
     measured against a smaller suite and read as a constant. The count in this
@@ -4996,7 +5078,7 @@ def main() -> int:
         path.write_text(original.replace(find, replace))
         try:
             suite = run(["-x", "-q"])
-            intended = run(["-q", "-k", test])
+            intended = run(_select(test))
         finally:
             path.write_text(original)
         caught, tag, note = verdict(suite, intended, test)

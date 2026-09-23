@@ -28,8 +28,13 @@ Three things this format does that Claude Code's does not, all load-bearing:
     names `firstKeptEntryId` (or, on legacy files, `firstKeptEntryIndex`) and is
     itself written at the end of the pass. In oh-my-pi's
     `before-compaction.jsonl` the two compaction records sit 111,630 and
-    102,084 bytes *after* their own cut points; in pi's, 111,830 and 102,180 —
-    the same session, differing only in the length of a path. Both numbers come
+    102,084 bytes *after* their own cut points; in pi's, 111,830 and 102,180.
+    It is the same session in both forks — the fixtures are the same 1,003
+    lines and the same 780 paths under the author's home — and the gap between the
+    two numbers is an npm scope: `@mariozechner/pi` became `@oh-my-pi/pi`
+    inside the transcript text, 649 times, 4 bytes shorter each time. 50 of
+    those occurrences fall before the first cut (200 bytes) and 24 before the
+    second (96), which is the whole of the difference. Both numbers come
     from indexing `firstKeptEntryIndex` into the file's physical line list,
     which is exactly the mapping `parse` refuses to make (see `first_kept_
     entry_index` below): fine for sizing the gap, not fine for computing an
@@ -102,12 +107,46 @@ _TITLE_SLOT = "title"
 #
 # `content` is here for `custom_message`, which puts its prose at the *top*
 # level next to `customType` and has no `message` key at all
-# (`compaction.test.ts:138-148`, `session-manager-internal-details.test.ts:24`
-# @b52e1f5). Without it that entry is a turn with zero blocks: the text is in
+# (pi's `compaction.test.ts:138-148` @a8ed4977 `createCustomMessageEntry`, and
+# oh-my-pi's `session-manager-internal-details.test.ts:24` @b52e1f5 — two repos
+# at two revs, which the single trailing `@b52e1f5` this comment used to carry
+# got wrong: at b52e1f5 those compaction.test.ts lines are
+# `createCompactionEntry`, an entry with neither `content` nor `customType`).
+# Without it that entry is a turn with zero blocks: the text is in
 # `native`, so nothing is lost, but it is not in canonical JSON, not in the
 # index, and not counted in `skipped` either — invisible in the one direction
 # the accounting rule exists to prevent.
 _PROSE_KEYS = ("summary", "shortSummary", "content", "data", "text")
+
+# One level deeper, for the entries that wrap their prose in an object. pi's
+# `context_edit` is the only one: `{type, targetId, replacement: {content} |
+# null}` (`src/core/session-manager.ts:174-180` @a8ed4977), where `replacement`
+# is the text that *supersedes* the target's contribution to model context and
+# `null` means drop the target entirely. Reading only the top level left the
+# replacement in `native` and the superseded text canonical — the store would
+# hand back the stale version and the new one was unfindable. Nested rather
+# than folded into `_PROSE_KEYS` because the keys collide: `replacement`
+# carries `content`, and so does a `custom_message`.
+_NESTED_PROSE_KEYS = ("replacement",)
+
+
+def _prose(obj: dict):
+    """The entry's own text, from the top level or one wrapper in.
+
+    No fixture in either fork contains a `context_edit`, so the nested read is
+    pinned by a synthetic transcript rather than the corpus — the shape comes
+    from upstream's source, not from a line we have seen.
+    """
+    top = _get(obj, *_PROSE_KEYS)
+    if top is not None:
+        return top
+    for key in _NESTED_PROSE_KEYS:
+        inner = obj.get(key)
+        if isinstance(inner, dict):
+            nested = _get(inner, *_PROSE_KEYS)
+            if nested is not None:
+                return nested
+    return None
 
 
 def _blocks(content) -> list[tuple[str, str, str | None, dict]]:
@@ -168,29 +207,54 @@ def _message_blocks(message: dict, native_role) -> list[tuple[str, str, str | No
         name = message.get("toolName")
         tool = name if isinstance(name, str) else None
         return [("tool_result", t, tool, nat) for _k, t, _n, nat in blocks]
+    # An aborted or errored call writes its explanation next to `content`
+    # rather than in it, and `content` is then usually `[]`. In the shipped
+    # corpus that is 19 and 22 assistant messages per fork, 13 and 14 of them
+    # with no content at all: turns with zero blocks whose only prose — "Request
+    # was aborted." — reached `native` and stopped there, so a search for why
+    # the transcript goes quiet returned nothing. Appended rather than
+    # substituted, because a message can carry both.
+    error = message.get("errorMessage")
+    if isinstance(error, str) and error:
+        blocks = [*blocks, ("text", error, None, {})]
     return blocks
 
 
 def _compose_model(obj: dict) -> str | None:
     """`provider` + `modelId`/`model` read as the one `"provider/model"` string.
 
-    Four kinds of line name a model and they do not agree on how. The session
-    header splits it into `provider` and `modelId`; an assistant message splits
-    it into `provider` and `model`; a `model_usage` entry writes the joined
-    string *and* a redundant `provider`; and a `model_change` does whichever the
-    build was current for — every one of the twelve in the shipped fixtures
-    splits it, while oh-my-pi's own tests write it joined
+    Four kinds of line name a model and they do not agree on how — but they do
+    agree on one thing, which is what makes this function short: a line either
+    carries a `provider` next to a *bare* id, or carries the joined string and
+    no `provider` at all. The session header splits it into `provider` and
+    `modelId`; an assistant message and a `model_usage` entry split it into
+    `provider` and `model` (`agent-session-stats.test.ts:21-39` passes
+    `model: target.id`); a `model_change` does whichever the build was current
+    for — every one of the twelve in the shipped fixtures splits it, while
+    oh-my-pi's own tests write it joined and drop `provider`
     (`sdk-model-selection.test.ts:1218,1331`). Reading only the joined spelling
     is how `model_change` silently did nothing on all four corpus files.
 
-    Joining here rather than at each site keeps `Turn.model` one namespace. The
-    `startswith` is what stops `model_usage` becoming `anthropic/anthropic/…`.
+    So the join is unconditional. An earlier revision guarded it with
+    `name.startswith(provider + "/")` on the theory that `model_usage` wrote
+    both; it does not, no upstream literal anywhere writes both, and
+    instrumenting the branch over all four fixtures fires it 0 times in 1,890
+    compositions. What it *did* reach was the opposite shape: a provider-
+    qualified id that is the model's literal name — `provider: "mock"` with
+    `model: "mock/mock"` (`unexpected-stop-classifier.test.ts:20-21`),
+    `provider: "openrouter"` with `model: "example/model"`
+    (`rpc-client.start.test.ts:24-25`), or upstream issue #8800's
+    `models.yml` proxy serving `anthropic/claude-opus-5` under its own
+    provider. Collapsing those loses the one field that tells two copies of a
+    model apart, which is the distinction #8800 exists to preserve. A doubled
+    prefix on some future writer is visibly wrong; a collapsed one is silently
+    wrong, and this store's whole claim is that its strings are the file's.
     """
     name = _get(obj, "modelId", "model")
     if not isinstance(name, str) or not name:
         return None
     provider = obj.get("provider")
-    if not isinstance(provider, str) or not provider or name.startswith(provider + "/"):
+    if not isinstance(provider, str) or not provider:
         return _bounded_id(name)
     return _bounded_id(f"{provider}/{name}")
 
@@ -248,6 +312,13 @@ def parse(path: str) -> Session:
             session.parent_session_id = session.parent_session_id or _bounded_id(
                 _get(obj, "parentSession", "branchedFrom")
             )
+            # The header is rewritten in place on every model switch, so this
+            # seeds the carry-forward with the *last* model the session used,
+            # not the first. Turns before the first `model_change` therefore
+            # carry a post-hoc label. Preferred anyway: the alternative is null
+            # until the first switch, and a wrong-but-plausible model on the
+            # opening turns is the smaller error than no model at all — the
+            # per-turn reads above override it wherever the line says otherwise.
             model = _compose_model(obj) or model
             # `version` here is the *file format* version (3 at the time of
             # writing), not the agent's — a different namespace from the
@@ -270,7 +341,7 @@ def parse(path: str) -> Session:
         raw_message = obj.get("message")
         message: dict = raw_message if isinstance(raw_message, dict) else {}
         native_role = message.get("role")
-        content = message.get("content") if raw_message is not None else _get(obj, *_PROSE_KEYS)
+        content = message.get("content") if raw_message is not None else _prose(obj)
 
         # A line belongs in the record model iff it carries an identity or
         # content, not iff its `type` is on an allowlist — an allowlist silently
@@ -328,8 +399,13 @@ def parse(path: str) -> Session:
             # turn and does *not* clobber `model` for the lines after it —
             # upstream's precedence rule is about which model is selected next,
             # a different question from which model wrote this turn.
+            # Both branches fall back to the carry-forward. A `model_usage` line
+            # whose `model` is missing, empty, or not a string is still a call
+            # that happened; reading it as "no model" is a worse answer than the
+            # session's, and it is the only line type that would produce a null
+            # here on an otherwise fully-labelled transcript.
             model=(
-                _compose_model(obj)
+                _compose_model(obj) or turn_model
                 if line_type == "model_usage"
                 else _compose_model(message) or turn_model
             ),
@@ -407,6 +483,13 @@ def find_session(session_id: str, projects_root: str) -> str | None:
     search, and every hit confirmed to resolve inside the root. Newest mtime
     wins when a resume-rewrite left duplicates, with the path breaking ties so
     the answer does not depend on set iteration order.
+
+    The returned path is the globbed one, not the resolved one, so a symlink
+    inside the root is followed by the caller as the user intended — the
+    containment proof is on the target, the answer is the name. That leaves the
+    usual TOCTOU window: what is checked here and what the reader opens are two
+    calls. `isfile` closes the shape half of it, so a *directory* or a FIFO
+    named `<id>.jsonl` is not handed back as a transcript to block on.
     """
     if not _SESSION_ID_RE.match(session_id or ""):
         return None
@@ -418,7 +501,9 @@ def find_session(session_id: str, projects_root: str) -> str | None:
         # Two *filename* shapes, one depth pattern. `**` matches zero or more
         # directories, so this already covers `base/*/name`. [pair review]
         hits |= set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
-    inside = [h for h in hits if os.path.realpath(h).startswith(root + os.sep)]
+    inside = [
+        h for h in hits if os.path.realpath(h).startswith(root + os.sep) and os.path.isfile(h)
+    ]
     if not inside:
         return None
 

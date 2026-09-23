@@ -14,8 +14,11 @@ graphify-out/
 # and the committed checksum is what says it has not moved — committing the
 # dump as well would be a second copy of the corpus that could disagree.
 bench/fixture-dev/
-# claude-code-log's MIT fixtures, cloned by whoever wants to run the 322
-# conformance cases. The default used to be a directory in `/tmp`, which is a
+# Three upstream corpora — claude-code-log's MIT fixtures, pi's and oh-my-pi's
+# — cloned by whoever wants to run the 328 conformance cases. Not vendored:
+# every pi fixture carries its author's home directory in a `cwd` field, and
+# this repository carries nobody's absolute paths. The default used to be a
+# directory in `/tmp`, which is a
 # scratch path this project bans in its documentation for the reason it then
 # proved: the clone outlived the sentence quoting it and not much longer, and
 # the README's test count silently depended on it. Repo-local and ignored, so

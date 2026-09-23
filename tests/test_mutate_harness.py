@@ -359,15 +359,29 @@ def test_every_mutation_row_names_a_test_that_exists():
     the same function and a row that mutated the wrong line still reads CAUGHT.
     So every `test_`-shaped identifier in the expression has to exist, and the
     parameter halves are left alone — pytest matches those as substrings.
+
+    A field may instead be a node id, `tests/test_pi.py::name`, for the three
+    names defined in both adapter test modules; `-k` would score those on the
+    union of the two files. The path half is a filename, not an identifier, so
+    it is checked as a file and dropped before the identifier scan — without
+    that, `test_pi` reads as a test that does not exist.
     """
     defined = set()
     for d in ("tests", "bench"):
         for p in sorted((ROOT / d).glob("test_*.py")):
             defined.update(re.findall(r"^def (test_\w+)\(", p.read_text(), re.M))
+    missing_file = [
+        f"{name}: {expr.split('::')[0]}"
+        for name, _, _, _, expr in MUTANTS
+        if "::" in expr and not (ROOT / expr.split("::")[0]).is_file()
+    ]
+    assert not missing_file, "rows naming a file that does not exist:\n  " + "\n  ".join(
+        missing_file
+    )
     bad = sorted(
         f"{name}: {ident}"
         for name, _, _, _, expr in MUTANTS
-        for ident in re.findall(r"\btest_\w+", expr)
+        for ident in re.findall(r"\btest_\w+", expr.split("::")[-1])
         if ident not in defined
     )
     assert not bad, "rows naming a test that does not exist:\n  " + "\n  ".join(bad)

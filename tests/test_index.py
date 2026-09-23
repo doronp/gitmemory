@@ -311,6 +311,45 @@ def test_a_bare_filename_in_a_tool_argument_lands_in_the_paths_column(home, src)
     assert row["paths"] == "README.md"
 
 
+def test_a_pi_tool_call_indexes_the_path_it_names(home, src):
+    """The same read, one dialect over: pi keys its arguments `arguments`.
+
+    Reading only Claude Code's `input` made this whole branch dead code on
+    every pi transcript. Most of what it recovers there the path regex would
+    find anyway — 890 of the 894 `path` arguments in the shipped fixtures — so
+    the fixture here is one of the four it would not: a bare filename, which
+    has no separator to be path-shaped and is what a reader searches by.
+    """
+    write(
+        src,
+        [
+            {"type": "session", "id": "s1", "timestamp": "t", "cwd": "/w"},
+            {
+                "type": "message",
+                "id": "e1",
+                "parentId": None,
+                "timestamp": "t",
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "toolCall",
+                            "id": "t1",
+                            "name": "read",
+                            "arguments": {"path": "AGENTS.md"},
+                        }
+                    ],
+                },
+            },
+        ],
+    )
+    store.capture(src, "pi", "sess", home=home)
+    index.build(home)
+    db = index.open_db(index.db_path(home))
+    row = db.execute("SELECT paths FROM blocks WHERE kind = 'tool_use'").fetchone()
+    assert row["paths"] == "AGENTS.md"
+
+
 # --------------------------------------------------------------------------- #
 # a query is data, not a second query language
 # --------------------------------------------------------------------------- #
