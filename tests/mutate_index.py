@@ -40,6 +40,14 @@ SUITE_TIMEOUT = 600
 # [E7 pair review]
 ANCHOR_TEST = "tests/test_mutate_harness.py::test_every_mutation_row_anchors_exactly_once"
 
+# The suite, as positional arguments. Named here rather than left to pytest's
+# configured `testpaths` so the harness stays honest about what it ran if
+# `testpaths` changes under it. It lives at module scope, and not inside `run`
+# where it was, because a node id is *also* a positional argument: with both
+# present pytest collects the union, so a row that named one test ran all of
+# them. See `_select`. [review: tests]
+PATHS = ["tests", "bench"]
+
 # (name, file, find, replace, test that must catch it)
 MUTANTS = [
     (
@@ -3899,7 +3907,7 @@ MUTANTS = [
     (
         "the session id enters every turn at whatever length the file chose",
         "src/gitmemory/adapters/claude_code.py",
-        "    if len(value) <= _MAX_ID:\n        return value",
+        "    if len(value) <= _MAX_ID and not value.startswith(_BOUND_MARK):\n        return value",
         "    if True:\n        return value",
         "test_a_long_session_id_is_bounded_before_it_reaches_every_turn",
     ),
@@ -3908,7 +3916,7 @@ MUTANTS = [
         # merges two sessions that share a head.
         "the bound keeps a prefix and drops the digest, so two ids can collide",
         "src/gitmemory/adapters/claude_code.py",
-        '    return f"{value[: _MAX_ID - 17]}-{sha256_text(value)[:16]}"',
+        '    return f"{_BOUND_MARK}{value[: _MAX_ID - 18]}-{sha256_text(value)[:16]}"',
         "    return value[:_MAX_ID]",
         "test_two_long_session_ids_stay_two_sessions",
     ),
@@ -3917,7 +3925,7 @@ MUTANTS = [
         # every real transcript carries, which churns every turn_id in the store.
         "every session id is rewritten, including the ones that were fine",
         "src/gitmemory/adapters/claude_code.py",
-        "    if len(value) <= _MAX_ID:\n        return value",
+        "    if len(value) <= _MAX_ID and not value.startswith(_BOUND_MARK):\n        return value",
         "    if False:\n        return value",
         "test_a_short_session_id_is_passed_through_untouched",
     ),
@@ -4362,7 +4370,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "47 mutants",
+        "a full pass is 5" + "53 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4371,8 +4379,8 @@ MUTANTS = [
         # the literal it searches for makes its own anchor appear twice.
         "the harness scores its own bookkeeping test as the suite going red",
         "tests/mutate_index.py",
-        '+ ["--dese' + 'lect", ANCHOR_TEST, *args],',
-        "+ [*args],",
+        '"-q", "--dese' + 'lect", ANCHOR_TEST, *args],',
+        '"-q", *args],',
         "test_the_suite_run_deselects_the_one_test_a_mutant_is_meant_to_break",
     ),
     # --- E7 pair review (Gemini), findings 1 and 2 ---
@@ -4835,14 +4843,14 @@ MUTANTS = [
     (
         "a hit is returned without confirming it resolves inside the root",
         "src/gitmemory/adapters/pi.py",
-        "        and os.path.realpath(h).startswith(root + os.sep)",
-        "        and True",
+        "        if _names_session(h, session_id) and _contained(h, root) and os.path.isfile(h)",
+        "        if _names_session(h, session_id) and os.path.isfile(h)",
         "tests/test_pi.py::test_find_session_ignores_a_symlink_pointing_out_of_the_root",
     ),
     (
         "a filename merely ending in the id is returned as that session",
         "src/gitmemory/adapters/pi.py",
-        '    return stem == session_id or stem.partition("_")[2] == session_id',
+        "    return bool(sep) and rest == session_id and _FILE_TIMESTAMP_RE.fullmatch(prefix) is not None",
         "    return True",
         "tests/test_pi.py::"
         "test_find_session_does_not_return_a_session_whose_id_ends_in_the_one_asked_for",
@@ -4850,32 +4858,76 @@ MUTANTS = [
     (
         "the separator is read as the last underscore rather than the first",
         "src/gitmemory/adapters/pi.py",
-        '    return stem == session_id or stem.partition("_")[2] == session_id',
-        '    return stem == session_id or stem.rpartition("_")[2] == session_id',
+        '    prefix, sep, rest = stem.partition("_")',
+        '    prefix, sep, rest = stem.rpartition("_")',
         "tests/test_pi.py::"
         "test_find_session_does_not_return_a_session_whose_id_ends_in_the_one_asked_for",
     ),
     (
         "a directory named like a transcript is returned as one",
         "src/gitmemory/adapters/pi.py",
-        "        and os.path.isfile(h)",
-        "        and True",
+        "        if _names_session(h, session_id) and _contained(h, root) and os.path.isfile(h)",
+        "        if _names_session(h, session_id) and _contained(h, root)",
         "tests/test_pi.py::test_find_session_ignores_a_directory_with_a_transcripts_name",
     ),
     (
         "claude code returns a directory named like a transcript",
         "src/gitmemory/adapters/claude_code.py",
-        "        if os.path.realpath(h).startswith(root + os.sep) and os.path.isfile(h)",
-        "        if os.path.realpath(h).startswith(root + os.sep)",
+        "    inside = [h for h in _glob_hits(session_id, root) if _contained(h, root) and os.path.isfile(h)]",
+        "    inside = [h for h in _glob_hits(session_id, root) if _contained(h, root)]",
         "tests/test_claude_code.py::test_find_session_ignores_a_directory_with_a_transcripts_name",
     ),
     (
         "claude code returns a hit without confirming it resolves inside the root",
         "src/gitmemory/adapters/claude_code.py",
-        "        if os.path.realpath(h).startswith(root + os.sep) and os.path.isfile(h)",
-        "        if os.path.isfile(h)",
+        "    inside = [h for h in _glob_hits(session_id, root) if _contained(h, root) and os.path.isfile(h)]",
+        "    inside = [h for h in _glob_hits(session_id, root) if os.path.isfile(h)]",
         "tests/test_claude_code.py::"
         "test_find_session_ignores_a_symlink_pointing_out_of_the_root",
+    ),
+    # --- review: paths — the four guards added for F1/F4/F7/F8 and C-1 ---
+    (
+        "a globbed hit is trusted without checking it is a real directory entry",
+        "src/gitmemory/adapters/claude_code.py",
+        "        if name not in os.listdir(parent):\n            return False",
+        "        if False:\n            return False",
+        "tests/test_claude_code.py::test_a_folding_variant_of_an_id_does_not_open_another_session",
+    ),
+    (
+        "the bounded form is not marked, so it is its own image",
+        "src/gitmemory/adapters/claude_code.py",
+        '    return f"{_BOUND_MARK}{value[: _MAX_ID - 18]}-{sha256_text(value)[:16]}"',
+        '    return f"{value[: _MAX_ID - 17]}-{sha256_text(value)[:16]}"',
+        "tests/test_claude_code.py::test_a_bounded_id_is_never_its_own_image",
+    ),
+    (
+        "a marked value is passed through instead of being re-bounded",
+        "src/gitmemory/adapters/claude_code.py",
+        "    if len(value) <= _MAX_ID and not value.startswith(_BOUND_MARK):\n        return value",
+        "    if len(value) <= _MAX_ID:\n        return value",
+        "tests/test_claude_code.py::test_a_bounded_id_is_never_its_own_image",
+    ),
+    (
+        "the underscore separator is not required to follow a timestamp",
+        "src/gitmemory/adapters/pi.py",
+        "    return bool(sep) and rest == session_id and "
+        "_FILE_TIMESTAMP_RE.fullmatch(prefix) is not None",
+        "    return bool(sep) and rest == session_id",
+        "tests/test_pi.py::test_a_bare_filename_does_not_answer_to_the_suffix_after_its_underscore",
+    ),
+    (
+        "a relative or empty projects root is resolved against the cwd",
+        "src/gitmemory/adapters/claude_code.py",
+        "    if not projects_root or not os.path.isabs(projects_root):",
+        "    if False:",
+        "tests/test_claude_code.py::test_a_projects_root_that_is_not_an_absolute_path_is_refused",
+    ),
+    (
+        "the root keeps its trailing separator, so a root of / matches nothing",
+        "src/gitmemory/adapters/claude_code.py",
+        "    return os.path.realpath(hit).startswith(root.rstrip(os.sep) + os.sep)",
+        "    return os.path.realpath(hit).startswith(root + os.sep)",
+        "tests/test_claude_code.py::test_a_root_of_slash_does_not_reject_every_path",
     ),
     (
         "only the timestamp-prefixed filename shape is globbed",
@@ -5017,14 +5069,22 @@ def say(line: str) -> None:
 def run(args: list[str]) -> int:
     """pytest's exit code. 0 green, 1 tests failed, >=2 it never got that far.
 
-    `tests bench` explicitly, not pytest's configured `testpaths`: naming them
-    here keeps the harness honest about what it ran even if `testpaths` changes
-    under it. The corpus test is deselected by `addopts`, so this is the offline
-    suite, measured at 81 s on the author's laptop — and it is *this* number,
-    not the row count, that sets what a full pass costs. It said "about a
-    second" from E3 until somebody read it next to the "about a minute" nine
-    lines down and noticed the same call being described twice, an order of
-    magnitude apart. [E3; review: docs]
+    Takes every positional argument from its caller, `PATHS` included. It used
+    to name `tests bench` itself, which silently broke node-id rows: pytest
+    unions positionals, so `pytest tests bench x.py::y` collects the suite, not
+    `y`. Ten rows claimed an attribution the harness could not have checked.
+    [review: tests]
+
+    What a full pass costs is set by this call, not by the row count, and the
+    figure depends on something the docstring used to get wrong. `addopts`
+    carries `-m 'not corpus'`, but only one test is marked `corpus`; the ~328
+    conformance cases are gated on the `.conformance/` clones being present, not
+    on a marker. So this is the 955-test offline suite on a machine without the
+    clones and the 1280-test suite on a machine with them — **measured**, 81 s
+    for the former on the author's laptop. It said "about a second" from E3
+    until somebody read it next to the "about a minute" nine lines down and
+    noticed the same call described twice, an order of magnitude apart.
+    [E3; review: docs, claims]
 
     `ANCHOR_TEST` as well, for the reason written where it is defined: it is the
     one test in the suite that is *supposed* to fail while a mutant is applied,
@@ -5046,8 +5106,7 @@ def run(args: list[str]) -> int:
     """
     try:
         return subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "tests", "bench"]
-            + ["--deselect", ANCHOR_TEST, *args],
+            [sys.executable, "-m", "pytest", "-q", "--deselect", ANCHOR_TEST, *args],
             cwd=ROOT,
             timeout=SUITE_TIMEOUT,
         ).returncode
@@ -5114,44 +5173,56 @@ def verdict(suite: int, intended: int, test: str) -> tuple[bool, str, str]:
 
 
 def _select(test: str) -> list[str]:
-    """pytest args for a row's intended test.
+    """pytest args for a row's intended test — positional paths included.
 
     `-k` matches by *name*, so a name defined in both `test_pi.py` and
     `test_claude_code.py` — there are six — scores on the union of the two,
     and a mutant in one adapter can be credited to the other adapter's test.
-    A row pins the file by writing `tests/test_pi.py::name` instead; a node id
-    is a positional argument, not a `-k` expression, so the two do not mix.
+    A row pins the file by writing `tests/test_pi.py::name` instead.
 
-    The count was written as three and was five by the time anyone counted, so
+    A node id therefore returns *without* `PATHS`, and that is the whole point
+    of this function. A node id is a positional argument, not a `-k`
+    expression, so adding it to `tests bench` widened the run to the union
+    instead of narrowing it to the one test: every node-id row scored against
+    the entire suite, `MISSED` meant "no test anywhere caught this", and the
+    file-pinning the node id was introduced to buy was never bought.
+    `test_a_node_id_row_narrows_collection_to_the_test_it_names` is the guard.
+    [review: tests]
+
+    The six was written as three and was five by the time anyone counted, so
     it is no longer maintained by hand:
     `test_every_mutation_row_names_a_test_that_exists` fails on any bare name
     that two test files define, which is the thing this paragraph is really
     claiming. [review: docs]
     """
-    return ["-q", test] if "::" in test else ["-q", "-k", test]
+    return [test] if "::" in test else [*PATHS, "-k", test]
 
 
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 547 mutants × two suite runs —
+    The filter exists because a full pass is 553 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
-    for the other 546 or trusting the new one untested.
+    for the other 552 or trusting the new one untested.
 
-    Cost, as of the 953-test offline suite: **measured**, three rows timed
-    end to end at 3.7 s, 17.1 s and 17.2 s. **Estimated** from those, a full
-    pass is roughly one to two and a half hours. The spread is not noise and
-    does not average away — the first of the two runs is `-x`, so a row costs
-    however long the suite takes to *reach* the test the mutant breaks, and
-    that is a position in collection order, not a property of the row. A row
-    the suite misses entirely pays the full 81 s instead.
+    Cost: **measured**, three rows timed end to end at 3.7 s, 17.1 s and
+    17.2 s, on a machine with the `.conformance/` clones — so against the
+    1280-test suite, not the 955-test offline one (`run` explains why the two
+    differ). **Estimated** from those, a full pass is roughly one to two and a
+    half hours. The spread is not noise and does not average away — the first
+    of the two runs is `-x`, so a row costs however long the suite takes to
+    *reach* the test the mutant breaks, and that is a position in collection
+    order, not a property of the row. A row the suite misses entirely pays for
+    the whole suite instead.
 
     Every figure in this paragraph had drifted: "41 s a row", "1,126-test",
     "71 verdicts in 49 minutes" and "about six hours" were all carried forward
     unremeasured across suites that had since changed size, and the six hours
-    was the product of two of them. They are re-measured above and marked for
-    which is which, because the previous sentence claiming the number was "a
-    timing, not a memory" was itself the memory. [review: docs]
+    was the product of two of them. "953-test offline suite" was the next one:
+    off by two, and attached to timings that were not from the offline suite at
+    all. They are re-measured above and marked for which is which, because the
+    previous sentence claiming the number was "a timing, not a memory" was
+    itself the memory. [review: docs, claims]
     """
     wanted = sys.argv[1:]
     selected = [m for m in MUTANTS if not wanted or any(w.lower() in m[0].lower() for w in wanted)]
@@ -5170,7 +5241,7 @@ def main() -> int:
             continue
         path.write_text(original.replace(find, replace))
         try:
-            suite = run(["-x", "-q"])
+            suite = run(["-x", "-q", *PATHS])
             intended = run(_select(test))
         finally:
             path.write_text(original)

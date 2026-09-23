@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import glob as _glob
 import os
+import re
 
 from ..jsonl import LineTooLong, LineTruncated, iter_records
 from ..records import Block, Event, Session, Turn, canonical_json
@@ -68,8 +69,10 @@ from .claude_code import (
     _MAX_REASONS,
     _SESSION_ID_RE,
     _bounded_id,
+    _contained,
     _flatten,
     _get,
+    _require_root,
     _safe_type,
     _scrub,
     _str_or_none,
@@ -530,6 +533,12 @@ def _glob_hits(session_id: str, root: str) -> set[str]:
     return hits
 
 
+# `fileTimestamp`, exactly: `new Date().toISOString()` (`session-manager.ts:1062`
+# @a8ed4977) with `[:.]` replaced by `-` (`:1079`), giving
+# `YYYY-MM-DDTHH-MM-SS-sssZ`. Anchored so it is the whole prefix or nothing.
+_FILE_TIMESTAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z")
+
+
 def _names_session(path: str, session_id: str) -> bool:
     """Whether a globbed filename really names this session, not one ending in it.
 
@@ -538,9 +547,20 @@ def _names_session(path: str, session_id: str) -> bool:
     is `fileTimestamp` — `timestamp.replace(/[:.]/g, "-")`
     (`session-manager.ts:1079` @a8ed4977) — which cannot contain `_`, so the
     first underscore is the separator and everything after it is the id.
+
+    The prefix has to be *checked*, not merely assumed, because the bare shape
+    is also globbed. Splitting on the first underscore unconditionally made
+    `alpha_beta.jsonl` — a legal bare filename for session `alpha_beta` — answer
+    to `beta` as well, which is the same cross-session read this function exists
+    to stop, reintroduced by the fix for it. A stem is either the id entire, or
+    `<fileTimestamp>_<id>` with the timestamp actually shaped like one.
+    [review: paths C-1]
     """
     stem = os.path.basename(path)[: -len(".jsonl")]
-    return stem == session_id or stem.partition("_")[2] == session_id
+    if stem == session_id:
+        return True
+    prefix, sep, rest = stem.partition("_")
+    return bool(sep) and rest == session_id and _FILE_TIMESTAMP_RE.fullmatch(prefix) is not None
 
 
 def find_session(session_id: str, projects_root: str) -> str | None:
@@ -578,15 +598,13 @@ def find_session(session_id: str, projects_root: str) -> str | None:
     — a directory or a FIFO named `<id>.jsonl` — are not returned as
     transcripts, so the reader blocks or raises only if someone is racing it.
     """
+    root = _require_root(projects_root)
     if not _SESSION_ID_RE.match(session_id or ""):
         return None
-    root = os.path.realpath(projects_root)
     inside = [
         h
         for h in _glob_hits(session_id, root)
-        if _names_session(h, session_id)
-        and os.path.realpath(h).startswith(root + os.sep)
-        and os.path.isfile(h)
+        if _names_session(h, session_id) and _contained(h, root) and os.path.isfile(h)
     ]
     if not inside:
         return None

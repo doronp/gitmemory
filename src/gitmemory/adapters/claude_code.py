@@ -90,6 +90,13 @@ _SESSION_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 # rather than five, for the same reason. [E7 parsing-F5 + F11]
 _MAX_ID = 128
 
+# Prefix on every bounded id, and the reason `_bounded_id` has no fixed point.
+# It must be a character no real value can begin with; `…` is not in any id
+# upstream emits, and a value that does start with one is re-bounded rather
+# than passed through, so the marked space is unspellable from outside.
+# [review: paths F4]
+_BOUND_MARK = "…"
+
 
 def _get(obj: dict, *names: str, default=None):
     """First present, non-null key. Handles schema drift across CC versions.
@@ -145,12 +152,24 @@ def _bounded_id(value) -> str | None:
     — `store.session_id_for` computes that separately and `_safe` guards it —
     and every render boundary already scrubs: the CLI prints through
     `safe_text` and `derive` scrubs every string it writes. [E7 parsing-F5]
+
+    Truncate-with-digest, so two long values stay two — but only because the
+    output is marked. Without `_BOUND_MARK` the bounded form was exactly
+    `_MAX_ID` characters, so it passed the length test and returned *itself*:
+    `f(f(x)) == f(x)`, a fixed point. That is a collision anyone can compute
+    offline from public SHA-256, no search — pick a long value, publish its
+    bounded form as a short one, and the two are one id. `uuid` is the dedup
+    key, so the second record was dropped as `duplicate_uuid`, and `_usage_key`
+    is last-write-wins, so a one-token decoy erased a real line's usage. Marking
+    the output fixes both: a marked value is never passed through, so nothing a
+    transcript can spell lands in the image of this function.
+    [review: paths F4]
     """
     if not isinstance(value, str) or not value:
         return None
-    if len(value) <= _MAX_ID:
+    if len(value) <= _MAX_ID and not value.startswith(_BOUND_MARK):
         return value
-    return f"{value[: _MAX_ID - 17]}-{sha256_text(value)[:16]}"
+    return f"{_BOUND_MARK}{value[: _MAX_ID - 18]}-{sha256_text(value)[:16]}"
 
 
 def _scrub(value, depth: int = 0):
@@ -678,6 +697,54 @@ def _glob_hits(session_id: str, root: str) -> set[str]:
     return set(_glob.glob(os.path.join(base, "*", "**", name), recursive=True))
 
 
+def _contained(hit: str, root: str) -> bool:
+    """Whether `hit` is a real directory entry that resolves inside `root`.
+
+    Two holes, and the first one is the reason this is not a one-liner.
+
+    macOS and Windows match filenames case-insensitively, and APFS folds more
+    than ASCII case: `U+017F` folds to `s`, `U+212A` to `k`. `glob` sees a final
+    component with no metacharacter in it, tests it with `os.path.lexists`, and
+    on a hit **returns the spelling it was asked for** rather than the one on
+    disk. `os.path.realpath` does not canonicalize case either, so containment
+    passed on the fabricated name. Asking for `secret` returned the bytes of
+    `ſecret.jsonl`, and asking for a lowercased uuid returned the transcript
+    named in uppercase — a different session, handed back as if it were the one
+    requested, from an id that satisfies `_SESSION_ID_RE`. Measured: 256 case
+    variants of one id produced 64 distinct path strings behind one inode.
+    Listing the parent is what separates "the filesystem would open this" from
+    "this is the name of a file that exists". [review: paths F1]
+
+    Second, `startswith(root + os.sep)` is wrong when `root` is `/`: realpath
+    gives `/`, the concatenation is `//`, and no real path starts with that, so
+    a root of `/` rejected everything — after globbing the whole filesystem.
+    Stripping the separator before appending it makes the comparison mean what
+    it reads as. [review: paths F8]
+    """
+    parent, name = os.path.split(hit)
+    try:
+        if name not in os.listdir(parent):
+            return False
+    except OSError:
+        return False
+    return os.path.realpath(hit).startswith(root.rstrip(os.sep) + os.sep)
+
+
+def _require_root(projects_root: str) -> str:
+    """The resolved root, or `ValueError` if the caller did not name one.
+
+    `os.path.realpath("")` is the current directory and `realpath(".")` is too,
+    so an empty or relative root silently searched wherever the process
+    happened to be standing. That is the default this function had removed at
+    [E7 S11] — "roots have no default" — coming back through the argument that
+    replaced it. A missing root is a caller bug, not a cache miss, so it raises
+    rather than returning `None`. [review: paths F7]
+    """
+    if not projects_root or not os.path.isabs(projects_root):
+        raise ValueError(f"projects_root must be an absolute path, got {projects_root!r}")
+    return os.path.realpath(projects_root)
+
+
 def find_session(session_id: str, projects_root: str) -> str | None:
     """Locate a transcript by id without computing the project directory.
 
@@ -710,14 +777,10 @@ def find_session(session_id: str, projects_root: str) -> str | None:
     and the containment proof — are not returned as transcripts, so the reader
     blocks or raises only if someone is racing it.
     """
+    root = _require_root(projects_root)
     if not _SESSION_ID_RE.match(session_id or ""):
         return None
-    root = os.path.realpath(projects_root)
-    inside = [
-        h
-        for h in _glob_hits(session_id, root)
-        if os.path.realpath(h).startswith(root + os.sep) and os.path.isfile(h)
-    ]
+    inside = [h for h in _glob_hits(session_id, root) if _contained(h, root) and os.path.isfile(h)]
     if not inside:
         return None
 

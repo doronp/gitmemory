@@ -1183,8 +1183,12 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
     search to whatever matched — both reachable by anything that can write a
     hook payload.
 
-    This planted by hand for five of the eleven ids, so six cases asserted
-    `None` against an empty directory and held for the wrong reason. It is now
+    This planted by hand for three of the eleven ids — **measured**, by running
+    the old fixture against `_glob_hits` — so eight cases asserted `None`
+    against an empty directory and held for the wrong reason. The count read
+    "five … six" until it was measured rather than reasoned out: the glob
+    metacharacter ids look reachable and are not, because `_glob_hits` escapes
+    the id before globbing, so `*` searches for a file named `*.jsonl`. It is now
     the same shape as pi's: each id gets a file at the exact path the globbed
     filename shape would resolve to, created through the unnormalised path so
     the literal intermediate directories the glob has to walk exist too, and
@@ -1322,6 +1326,119 @@ def test_find_session_ignores_a_directory_with_a_transcripts_name(tmp_path):
 
     os.mkfifo(root / "def-456.jsonl")
     assert cc.find_session("def-456", str(projects)) is None
+
+
+# --- review: paths — the filesystem is not the charset guard ---
+
+
+@pytest.mark.parametrize(
+    ("planted", "asked"),
+    [
+        ("ABCDEF01-2222-3333-4444-555566667777", "abcdef01-2222-3333-4444-555566667777"),
+        ("ſecret", "secret"),  # LATIN SMALL LETTER LONG S folds to `s` on APFS
+        ("Key", "key"),  # KELVIN SIGN folds to `k`
+    ],
+)
+def test_a_folding_variant_of_an_id_does_not_open_another_session(tmp_path, planted, asked):
+    """An id that passes the charset guard must not open a differently-named file.
+
+    macOS and Windows match filenames case-insensitively, and APFS folds beyond
+    ASCII case. `glob` sees a final component with no metacharacter, tests it
+    with `os.path.lexists` — which folds — and then returns **the spelling it
+    was asked for**, not the one on disk. `realpath` does not canonicalize case
+    either, so the containment proof passed on a path that is not a directory
+    entry of its own parent. Asking for `secret` returned the bytes of
+    `ſecret.jsonl`.
+
+    That is a cross-session read reachable from a hook payload, using an id the
+    guard accepts, and it does not need a hostile filesystem — only a
+    case-insensitive one, which is the default on the platform this is
+    developed on. `store._safe` already `.lower()`s for this exact reason, so
+    the two halves of the system disagreed about what one session is.
+
+    Skipped where the filesystem does not fold, because then there is no defect
+    to prove and the assertion would be measuring the platform rather than the
+    code.
+
+    The round-trip is asserted only for the pair whose planted spelling is a
+    legal id. `ſecret` and `Key`-with-a-Kelvin-sign are not: `_SESSION_ID_RE` is
+    ASCII, so they are unaskable, and requiring them to resolve would assert
+    the opposite of the charset guard. Only the ASCII case-variant is a name
+    both halves can be spelled with, and for it the lookup must still work —
+    otherwise this "fix" is just a broken lookup. [review: paths F1]
+    """
+    projects = tmp_path / "projects"
+    root = projects / "-Users-x-work"
+    root.mkdir(parents=True)
+    (root / f"{planted}.jsonl").write_text('{"type":"user"}\n')
+
+    if not os.path.exists(root / f"{asked}.jsonl"):
+        pytest.skip("filesystem does not fold this pair, so there is nothing to defend against")
+
+    assert cc.find_session(asked, str(projects)) is None
+    if cc._SESSION_ID_RE.match(planted):
+        assert cc.find_session(planted, str(projects)) == str(root / f"{planted}.jsonl")
+
+
+def test_a_bounded_id_is_never_its_own_image(tmp_path):
+    """`_bounded_id` must have no fixed point, or it hands out free collisions.
+
+    The bounded form was `value[:111] + "-" + sha256(value)[:16]` — exactly
+    `_MAX_ID` characters, so it passed the length test and came back verbatim:
+    `f(f(x)) == f(x)`. Anyone can compute that short string offline from public
+    SHA-256, with no search, and it collides with the long value by
+    construction. The 2^64 argument covers two distinct *long* values; it never
+    covered this.
+
+    Both consumers are real. `uuid` is the dedup key, so the record carrying
+    the twin is dropped as `duplicate_uuid` and its text never reaches the
+    index — asserted here end to end, because the unit property alone would not
+    show that a whole turn goes missing. [review: paths F4]
+    """
+    long = "A" * 200
+    twin = cc._bounded_id(long)
+    assert cc._bounded_id(twin) != twin, "bounded form is its own image"
+    assert cc._bounded_id(long) != cc._bounded_id(twin), "a value and its bound collide"
+    assert cc._bounded_id("A" * 200) != cc._bounded_id("A" * 199 + "B"), "two long ids merged"
+    assert cc._bounded_id("plain-id") == "plain-id", "a short id must pass through untouched"
+
+    src = tmp_path / "s.jsonl"
+    src.write_text(
+        '{"type":"user","uuid":"%s","message":{"role":"user","content":"first"}}\n'
+        '{"type":"user","uuid":"%s","message":{"role":"user","content":"second"}}\n'
+        % (long, twin)
+    )
+    session = cc.parse(str(src))
+    assert session.skipped.get("duplicate_uuid", 0) == 0, session.skipped
+    assert len(session.turns) == 2, "a record was dropped as a duplicate of a value it is not"
+
+
+def test_a_projects_root_that_is_not_an_absolute_path_is_refused():
+    """`realpath("")` is the current directory, and so is `realpath(".")`.
+
+    [E7 S11] removed the `~/.claude/projects` default so no caller could read
+    the developer's own machine by omission. An empty or relative root walks
+    back in through the argument that replaced it: the search silently happens
+    wherever the process is standing. It raises rather than returning `None`
+    because a missing root is a caller bug, and `None` is the same answer as
+    "no such session". [review: paths F7]
+    """
+    for bad in ("", ".", "relative/projects"):
+        with pytest.raises(ValueError, match="absolute"):
+            cc.find_session("abc-123", bad)
+
+
+def test_a_root_of_slash_does_not_reject_every_path():
+    """`realpath("/") + os.sep` is `//`, and no real path begins with that.
+
+    So a root of `/` rejected every hit — fail-closed on the answer, but only
+    after globbing the filesystem to produce the hits it then threw away.
+    Asserted on `_contained` rather than through `find_session`, because the
+    honest end-to-end version of this test is a full-filesystem glob.
+    [review: paths F8]
+    """
+    assert cc._contained("/etc/hosts", "/") is True
+    assert cc._contained("/etc/hosts", "/etc") is False, "still rejects a sibling of the root"
 
 
 # --- E7 parsing-F1: a turn id the input could choose ---

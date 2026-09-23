@@ -374,7 +374,8 @@ def test_every_mutation_row_names_a_test_that_exists():
     reached through the feature added to prevent it. And a bare name that two
     modules define was never flagged at all — the ambiguity node ids exist for
     was only ever fixed by hand, one row at a time, for as many rows as
-    somebody had noticed. Five names qualify today; the prose said three.
+    somebody had noticed. Six names qualify today; the prose said three, then
+    five. This test is the reason the number no longer has to be right.
     [review: tests]
     """
     defined: dict[str, set[str]] = {}
@@ -481,9 +482,47 @@ def test_every_mutation_row_selects_with_an_expression_pytest_can_parse():
         f"{name}: {expr}"
         for name, _, _, _, expr in MUTANTS
         if "::" in expr
-        and not re.fullmatch(r"[\w./-]+\.py::[A-Za-z_]\w*(\[[^\[\]]*\])?", expr)
+        and not re.fullmatch(r"[\w./-]+\.py::[A-Za-z_]\w*(\[.*\])?", expr)
     ]
     assert not malformed, "rows whose node id is not one:\n  " + "\n  ".join(malformed)
+
+
+def test_a_node_id_row_narrows_collection_to_the_test_it_names():
+    """A node-id row has to run *one* test. For ten rows it ran all of them.
+
+    `run` named `tests bench` itself and `_select` appended the node id. All
+    three are positional arguments and pytest collects their union, so
+    `pytest tests bench tests/test_pi.py::x` collected the whole suite — 1280
+    tests on the machine this was found on. Every node-id row was therefore
+    scored against the full suite: `CAUGHT` meant "some test failed", not "the
+    named test failed", the file-pinning the node ids exist for never happened,
+    and the attribution the harness printed was one it had not checked.
+
+    Asserted against real collection rather than against `_select`'s return
+    value, because the defect was invisible at that level — `["-q", nodeid]`
+    reads as correct, and only goes wrong once it meets the argv `run` builds
+    around it. A structural assertion on the return value would have stayed
+    green through the entire bug. [review: tests]
+    """
+    ids = sorted({expr for *_, expr in MUTANTS if "::" in expr})
+    assert ids, "vacuous fixture: no row uses a node id"
+
+    argv = [sys.executable, "-m", "pytest", "--collect-only", "-q", "--deselect", mutate.ANCHOR_TEST]
+    for node in ids:
+        argv += mutate._select(node)
+
+    out = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, timeout=300)
+    collected = [ln.strip() for ln in out.stdout.splitlines() if "::" in ln]
+    assert collected, f"collected nothing, so the check is vacuous:\n{out.stdout[-2000:]}"
+
+    # A bare node id selects every parametrisation of the test it names, so the
+    # count is not `len(ids)` — `test_find_session_refuses_a_hostile_id` alone
+    # is eleven. What must hold is that nothing *else* came along.
+    strays = sorted(c for c in collected if c.partition("[")[0] not in ids)
+    assert not strays, (
+        f"{len(ids)} node ids also selected {len(strays)} tests they do not name; "
+        "_select is widening the run, not narrowing it:\n  " + "\n  ".join(strays[:20])
+    )
 
 
 def test_every_mutation_row_has_a_distinct_name():

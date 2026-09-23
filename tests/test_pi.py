@@ -854,8 +854,72 @@ def test_find_session_does_not_return_a_session_whose_id_ends_in_the_one_asked_f
 
     assert _would_glob(tmp_path / "sessions", "beta"), "vacuous fixture: the glob reaches nothing"
     assert pi.find_session("beta", sessions) is None
-    assert pi.find_session("alpha", sessions) is None
     assert pi.find_session("alpha_beta", sessions) == str(hit)
+
+    # The other direction: an id whose *tail* is the one asked for is the case
+    # above; this is one whose head is. `…Z_beta_alpha.jsonl` is session
+    # `beta_alpha`, and `*_alpha.jsonl` matches it, so unlike the `alpha` probe
+    # that used to sit here — which asserted `None` against a glob that reached
+    # nothing, and held no matter what `_names_session` did — this one is
+    # reachable and the guard is what rejects it. [review: tests T-4]
+    other = root / "2026-01-01T09-00-00-000Z_beta_alpha.jsonl"
+    other.write_text("")
+    assert _would_glob(tmp_path / "sessions", "alpha"), "vacuous: nothing to reject for `alpha`"
+    assert pi.find_session("alpha", sessions) is None
+    assert pi.find_session("beta_alpha", sessions) == str(other)
+
+
+def test_a_bare_filename_does_not_answer_to_the_suffix_after_its_underscore(tmp_path):
+    """The prefix has to be checked, not assumed, because the bare shape exists too.
+
+    `_names_session` splits on the first underscore and compares the tail,
+    which is right for `<fileTimestamp>_<id>.jsonl` and wrong for the other
+    shape the glob asks for. `alpha_beta.jsonl` is a legal bare filename for
+    session `alpha_beta` — `assertValidSessionId` (`session-manager.ts:268`
+    @a8ed4977) permits interior underscores — and its tail is `beta`, so asking
+    for `beta` got back a different session's transcript. The fix for the
+    suffix collision had reintroduced the suffix collision one shape over.
+
+    The prefix is checkable because upstream builds it as
+    `new Date().toISOString()` (`:1062`) with `[:.]` replaced by `-` (`:1079`),
+    so a real separator is preceded by `YYYY-MM-DDTHH-MM-SS-sssZ` and nothing
+    else. Both shapes are asserted, since rejecting the near-miss is worthless
+    if it also broke either filename pi actually writes. [review: paths C-1]
+    """
+    root = tmp_path / "sessions" / "--w--"
+    root.mkdir(parents=True)
+    bare = root / "alpha_beta.jsonl"
+    bare.write_text("")
+    stamped = root / "2026-01-01T09-00-00-000Z_gamma_delta.jsonl"
+    stamped.write_text("")
+    sessions = str(tmp_path / "sessions")
+
+    assert _would_glob(tmp_path / "sessions", "beta"), "vacuous fixture: the glob reaches nothing"
+    assert pi.find_session("beta", sessions) is None
+    assert pi.find_session("delta", sessions) is None
+    assert pi.find_session("alpha_beta", sessions) == str(bare)
+    assert pi.find_session("gamma_delta", sessions) == str(stamped)
+
+
+def test_a_folding_variant_of_an_id_does_not_open_another_session(tmp_path):
+    """pi's bare-stem branch folds the same way claude_code's does.
+
+    The twin of `test_claude_code.py`'s case of the same name; see it for the
+    mechanism. pi is only affected on the bare shape: `*_<id>.jsonl` carries a
+    metacharacter, so glob routes it through `fnmatch`, which is
+    case-sensitive. That is worth pinning in both directions — the folding hole
+    must close, and the suffix shape must not start folding. [review: paths F1]
+    """
+    root = tmp_path / "sessions" / "--w--"
+    root.mkdir(parents=True)
+    (root / "ABCDEF01-2222.jsonl").write_text("")
+    sessions = str(tmp_path / "sessions")
+
+    if not os.path.exists(root / "abcdef01-2222.jsonl"):
+        pytest.skip("filesystem does not fold case, so there is nothing to defend against")
+
+    assert pi.find_session("abcdef01-2222", sessions) is None
+    assert pi.find_session("ABCDEF01-2222", sessions) == str(root / "ABCDEF01-2222.jsonl")
 
 
 def test_find_session_ignores_a_symlink_pointing_out_of_the_root(tmp_path):
