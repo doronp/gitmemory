@@ -4990,7 +4990,8 @@ MUTANTS = [
     (
         "a filename merely ending in the id is returned as that session",
         "src/gitmemory/adapters/pi.py",
-        "    return bool(sep) and rest == session_id and _FILE_TIMESTAMP_RE.fullmatch(prefix) is not None",
+        "    return bool(sep) and rest == session_id"
+        " and _FILE_TIMESTAMP_RE.fullmatch(prefix) is not None",
         "    return True",
         "tests/test_pi.py::"
         "test_find_session_does_not_return_a_session_whose_id_ends_in_the_one_asked_for",
@@ -5013,14 +5014,16 @@ MUTANTS = [
     (
         "claude code returns a directory named like a transcript",
         "src/gitmemory/adapters/claude_code.py",
-        "    inside = [h for h in _glob_hits(session_id, root) if _contained(h, root) and os.path.isfile(h)]",
+        "    inside = [h for h in _glob_hits(session_id, root)"
+        " if _contained(h, root) and os.path.isfile(h)]",
         "    inside = [h for h in _glob_hits(session_id, root) if _contained(h, root)]",
         "tests/test_claude_code.py::test_find_session_ignores_a_directory_with_a_transcripts_name",
     ),
     (
         "claude code returns a hit without confirming it resolves inside the root",
         "src/gitmemory/adapters/claude_code.py",
-        "    inside = [h for h in _glob_hits(session_id, root) if _contained(h, root) and os.path.isfile(h)]",
+        "    inside = [h for h in _glob_hits(session_id, root)"
+        " if _contained(h, root) and os.path.isfile(h)]",
         "    inside = [h for h in _glob_hits(session_id, root) if os.path.isfile(h)]",
         "tests/test_claude_code.py::"
         "test_find_session_ignores_a_symlink_pointing_out_of_the_root",

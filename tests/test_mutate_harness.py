@@ -507,7 +507,8 @@ def test_a_node_id_row_narrows_collection_to_the_test_it_names():
     ids = sorted({expr for *_, expr in MUTANTS if "::" in expr})
     assert ids, "vacuous fixture: no row uses a node id"
 
-    argv = [sys.executable, "-m", "pytest", "--collect-only", "-q", "--deselect", mutate.ANCHOR_TEST]
+    argv = [sys.executable, "-m", "pytest", "--collect-only", "-q"]
+    argv += ["--deselect", mutate.ANCHOR_TEST]
     for node in ids:
         argv += mutate._select(node)
 

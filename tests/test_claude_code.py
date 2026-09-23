@@ -1506,9 +1506,8 @@ def test_a_bounded_id_is_never_its_own_image(tmp_path):
 
     src = tmp_path / "s.jsonl"
     src.write_text(
-        '{"type":"user","uuid":"%s","message":{"role":"user","content":"first"}}\n'
-        '{"type":"user","uuid":"%s","message":{"role":"user","content":"second"}}\n'
-        % (long, twin)
+        f'{{"type":"user","uuid":"{long}","message":{{"role":"user","content":"first"}}}}\n'
+        f'{{"type":"user","uuid":"{twin}","message":{{"role":"user","content":"second"}}}}\n'
     )
     session = cc.parse(str(src))
     assert session.skipped.get("duplicate_uuid", 0) == 0, session.skipped

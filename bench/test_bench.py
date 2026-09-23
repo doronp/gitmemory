@@ -16,8 +16,8 @@ Retrieval difficulty is what the real corpus is for: `pytest -m corpus`.
 
 from __future__ import annotations
 
-import importlib.util
 import dataclasses
+import importlib.util
 import json
 import math
 import os
