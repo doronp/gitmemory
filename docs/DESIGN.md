@@ -99,7 +99,7 @@ Every item below was found by recon on real transcripts and is a required passin
 | `sessionId` is not a stable conversation key (fork-from-compaction observed) | dedup on message `uuid` |
 | schema drifts across CC versions; `sessionId` sometimes `session_id` | every field optional; never `KeyError` |
 | six line types have no uuid and no timestamp | **byte position is the only ordering authority; timestamps are never a sort key [R1]** |
-| worktrees move the project dir | glob `*/<session_id>.jsonl`, take newest mtime — never compute the path |
+| worktrees move the project dir | search for `<session_id>.jsonl` under the root, take newest mtime — never compute the path |
 | PreCompact **cannot** inject context, only block; a block-shaped error leaves the conversation uncompacted | **shim exits 0 unconditionally** |
 | sidechain interleaving | anchor on the parent's `toolUseId`, **not** on time **[R1]** |
 

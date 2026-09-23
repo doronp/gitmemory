@@ -371,8 +371,15 @@ def parse(path: str) -> Session:
         uuid = _bounded_id(obj.get("uuid"))
         # A *pointer*, never an identity: folding it into `uuid` makes a
         # summary collide with the turn it points at and lose the dedup race.
-        raw_ref = obj.get("leafUuid")
-        ref_uuid = raw_ref if isinstance(raw_ref, str) and raw_ref else None
+        # Bounded through the same function as the thing it points at, and that
+        # is the whole reason: `uuid` became bounded one line above while this
+        # stayed verbatim, so a 200,000-character `leafUuid` naming a turn whose
+        # `uuid` was the same 200,000 characters no longer matched it — the
+        # pointer kept the long form and the target now held the digest. A
+        # summary that resolves to nothing is not an error anywhere downstream,
+        # it is just a summary that never attaches. Both sides through one
+        # deterministic function, or neither. [review: records C-5]
+        ref_uuid = _bounded_id(obj.get("leafUuid"))
 
         # A compaction boundary is structural: it is kept whether or not this
         # build of Claude Code put a uuid on it, because the event it produces
@@ -457,7 +464,12 @@ def parse(path: str) -> Session:
             native=obj,
             blocks=blocks,
         )
-        tool_use_id = _str_or_none(_get(obj, "toolUseID", "toolUseId"))
+        # `_bounded_id`, not `_str_or_none`: this writes `anchor_uuid`, which
+        # the line above bounded. Two writers to one field and only one of them
+        # bounded is the bound not existing — the fallback path is the one an
+        # ordinary tool-result line takes, so it was also the common one.
+        # [review: records C-4]
+        tool_use_id = _bounded_id(_get(obj, "toolUseID", "toolUseId"))
         if tool_use_id and not turn.anchor_uuid:
             turn.anchor_uuid = tool_use_id
         session.turns.append(turn)
@@ -831,6 +843,22 @@ def find_session(session_id: str, projects_root: str) -> str | None:
     — a directory or a FIFO named `<id>.jsonl`, both of which satisfy the glob
     and the containment proof — are not returned as transcripts, so the reader
     blocks or raises only if someone is racing it.
+
+    The window is small and it is not theoretical: a loop swapping a directory
+    entry between a real transcript and a symlink to a file outside the root,
+    against a loop calling this, landed 138 out-of-root reads in five seconds
+    — 0.2332% of 59,170 attempts. Measured, on this machine, with the racer
+    doing nothing but renaming.
+
+    Not closed here, because closing it means changing what this returns. The
+    fix is a file descriptor rather than a name: `os.open(hit, O_RDONLY |
+    O_NOFOLLOW)`, then `fstat` it against a dirfd for the root, then hand the
+    caller the fd it is already going to read — the check and the read become
+    the same object and there is nothing left to swap. That is a different
+    signature, so it waits for the first real caller, which is the hook shim.
+    Until then the contract is: the name is a *hint*, and a caller that treats
+    it as a capability is wrong by 0.2% of the time somebody is trying.
+    [review: paths F5]
     """
     root = _require_root(projects_root)
     if not _SESSION_ID_RE.match(session_id or ""):

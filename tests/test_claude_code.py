@@ -1988,6 +1988,15 @@ def test_the_other_identifiers_are_bounded_too_including_the_usage_keys(tmp_path
     hashed and written per turn: exactly the shape the bound exists for, and
     the only member of the family that skipped it. pi bounded all of them from
     the start. [review: robustness]
+
+    Two more writers found later, each reached by a line shape the first four
+    do not cover, which is why they survived a test that already said "the uuid
+    family". `leafUuid` is a *pointer* at a `uuid`, and a pointer bounded
+    differently from its target resolves to nothing — the summary attaches to
+    no turn and nothing anywhere reports that. `toolUseID` is the fallback
+    writer for `anchor_uuid`, so the field was bounded on the line that sets it
+    directly and unbounded on the line an ordinary tool result takes.
+    [review: records C-4, C-5, T-3]
     """
     lines = [
         {
@@ -2004,9 +2013,20 @@ def test_the_other_identifiers_are_bounded_too_including_the_usage_keys(tmp_path
                 "content": [{"type": "text", "text": "hi"}],
                 "usage": {"K" * 100_000: 1, "input_tokens": 5},
             },
-        }
+        },
+        # A pointer at the turn above, long the same way its target was.
+        {"type": "summary", "sessionId": "s1", "leafUuid": "U" * 200_000},
+        # The fallback writer: `sourceToolAssistantUUID` absent, so `toolUseID`
+        # is what lands in `anchor_uuid`.
+        {
+            "type": "user",
+            "uuid": "u2",
+            "sessionId": "s1",
+            "toolUseID": "X" * 200_000,
+            "message": {"content": [{"type": "text", "text": "hi"}]},
+        },
     ]
-    t = check_adapter(cc, write(tmp_path, "s.jsonl", lines)).turns[0]
+    t, summary, fallback = check_adapter(cc, write(tmp_path, "s.jsonl", lines)).turns
 
     assert len(t.model) == cc._MAX_ID
     assert len(t.request_id) == cc._MAX_ID
@@ -2017,6 +2037,9 @@ def test_the_other_identifiers_are_bounded_too_including_the_usage_keys(tmp_path
     assert len(t.parent_uuid) == cc._MAX_ID
     assert len(t.anchor_uuid) == cc._MAX_ID
     assert len(t.agent_id) == cc._MAX_ID
+    assert len(fallback.anchor_uuid) == cc._MAX_ID
+    # The point of bounding the pointer is that it still names the turn.
+    assert summary.ref_uuid == t.uuid
 
 
 def test_two_long_model_names_stay_two_models(tmp_path):

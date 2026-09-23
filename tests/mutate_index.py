@@ -4048,6 +4048,53 @@ MUTANTS = [
         '            model=_str_or_none(message.get("model")),',
         "test_the_other_identifiers_are_bounded_too_including_the_usage_keys",
     ),
+    # --- the uuid family, one row per writer. [review: records T-3] ---
+    # Four conversions shipped with one test and no rows; two more writers were
+    # found afterwards, each on a line shape the first four do not reach. One
+    # row each, because "the family is bounded" is four independent facts and a
+    # refactor reverts one at a time.
+    (
+        "the turn's own identity is typed but not bounded",
+        "src/gitmemory/adapters/claude_code.py",
+        '        uuid = _bounded_id(obj.get("uuid"))',
+        '        uuid = _str_or_none(obj.get("uuid"))',
+        "test_the_other_identifiers_are_bounded_too_including_the_usage_keys",
+    ),
+    (
+        "the parent edge is typed but not bounded",
+        "src/gitmemory/adapters/claude_code.py",
+        '            parent_uuid=_bounded_id(_get(obj, "parentUuid", "logicalParentUuid")),',
+        '            parent_uuid=_str_or_none(_get(obj, "parentUuid", "logicalParentUuid")),',
+        "test_the_other_identifiers_are_bounded_too_including_the_usage_keys",
+    ),
+    (
+        "the sidechain anchor is typed but not bounded",
+        "src/gitmemory/adapters/claude_code.py",
+        '            anchor_uuid=_bounded_id(obj.get("sourceToolAssistantUUID")),',
+        '            anchor_uuid=_str_or_none(obj.get("sourceToolAssistantUUID")),',
+        "test_the_other_identifiers_are_bounded_too_including_the_usage_keys",
+    ),
+    (
+        "the agent id is typed but not bounded",
+        "src/gitmemory/adapters/claude_code.py",
+        '            agent_id=_bounded_id(obj.get("agentId")),',
+        '            agent_id=_str_or_none(obj.get("agentId")),',
+        "test_the_other_identifiers_are_bounded_too_including_the_usage_keys",
+    ),
+    (
+        "the summary's pointer is bounded differently from what it points at",
+        "src/gitmemory/adapters/claude_code.py",
+        '        ref_uuid = _bounded_id(obj.get("leafUuid"))',
+        '        ref_uuid = _str_or_none(obj.get("leafUuid"))',
+        "test_the_other_identifiers_are_bounded_too_including_the_usage_keys",
+    ),
+    (
+        "the fallback writer for the anchor is typed but not bounded",
+        "src/gitmemory/adapters/claude_code.py",
+        '        tool_use_id = _bounded_id(_get(obj, "toolUseID", "toolUseId"))',
+        '        tool_use_id = _str_or_none(_get(obj, "toolUseID", "toolUseId"))',
+        "test_the_other_identifiers_are_bounded_too_including_the_usage_keys",
+    ),
     (
         "a usage key is whatever length the line chose",
         "src/gitmemory/adapters/claude_code.py",
@@ -4384,7 +4431,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "59 mutants",
+        "a full pass is 5" + "68 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -4811,6 +4858,31 @@ MUTANTS = [
     # called "a guard whose removal changes no answer is pinned by nothing".
     # The first four are the bugs the pair review found; the last five are the
     # guards that were there and unpinned. [pi pair review]
+    (
+        "a message that is not an object takes the message branch anyway",
+        "src/gitmemory/adapters/pi.py",
+        '                if isinstance(obj.get("message"), dict)',
+        '                if obj.get("message") is not None',
+        "test_an_entry_whose_message_is_not_an_object_keeps_its_error",
+    ),
+    # Two rows for two call sites of one function, because `_message_blocks`
+    # returns early for each of these roles with a list it built itself — so
+    # each carries its own `_with_error` and each can be dropped alone.
+    # [review: pi T-2]
+    (
+        "a killed bash command loses the reason it was killed",
+        "src/gitmemory/adapters/pi.py",
+        "            ],\n            message,\n        )",
+        "            ],\n            {},\n        )",
+        "test_the_two_roles_with_their_own_block_builder_keep_their_error_too",
+    ),
+    (
+        "a tool that raised loses the reason it raised",
+        "src/gitmemory/adapters/pi.py",
+        "for _k, t, _n, nat in blocks], message)",
+        "for _k, t, _n, nat in blocks], {})",
+        "test_the_two_roles_with_their_own_block_builder_keep_their_error_too",
+    ),
     (
         "the model is read only in the spelling half the writers use",
         "src/gitmemory/adapters/pi.py",
@@ -5252,9 +5324,9 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 559 mutants × two suite runs —
+    The filter exists because a full pass is 568 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
-    for the other 558 or trusting the new one untested.
+    for the other 567 or trusting the new one untested.
 
     Cost: **measured**, three rows timed end to end at 3.7 s, 17.1 s and
     17.2 s, on a machine with the `.conformance/` clones — so against the

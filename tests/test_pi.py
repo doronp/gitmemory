@@ -391,6 +391,81 @@ def test_a_tool_result_is_not_indexed_as_prose(tmp_path):
     assert [(b.kind, b.tool_name) for b in turn.blocks] == [("tool_result", "read")]
 
 
+def test_the_two_roles_with_their_own_block_builder_keep_their_error_too(tmp_path):
+    """`_with_error` has three call sites and two of them were pinned by nothing.
+
+    `bashExecution` and `toolResult` each return early from `_message_blocks`
+    with a list they built themselves, so each one carries its own
+    `_with_error` call — and either could be dropped in a refactor with the
+    suite staying green, because the only tests were on the third site. Both
+    roles can fail the same way the plain one does: a command killed mid-run,
+    a tool that raised. [review: pi T-2]
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(),
+            {
+                "type": "message",
+                "timestamp": "2026-01-01T00:00:02.000Z",
+                "message": {
+                    "role": "bashExecution",
+                    "command": "sleep 90",
+                    "output": "",
+                    "errorMessage": "Command timed out.",
+                },
+            },
+            {
+                "type": "message",
+                "timestamp": "2026-01-01T00:00:03.000Z",
+                "message": {
+                    "role": "toolResult",
+                    "toolCallId": "toolu_01",
+                    "toolName": "read",
+                    "content": [],
+                    "errorMessage": "ENOENT: no such file.",
+                },
+            },
+        ],
+    )
+    bash, result = check_adapter(pi, path).turns
+    assert [b.text for b in bash.blocks] == ["sleep 90", "", "Command timed out."]
+    assert [b.text for b in result.blocks] == ["ENOENT: no such file."]
+    assert bash.blocks[-1].native == {"gitmemory_synthesized": "errorMessage"}
+
+
+def test_an_entry_whose_message_is_not_an_object_keeps_its_error(tmp_path):
+    """Two readings of "has a message", and the entry fell between them.
+
+    Pass 1 substitutes `{}` for a `message` that is not an object; pass 2 asked
+    `is not None` and so still took the message branch, which then looked for
+    `errorMessage` on the substitute and found nothing. The field was sitting
+    at the top level of the entry, where the other branch reads it. Nobody
+    writes a string message on purpose — but a transcript is untrusted input,
+    and losing the one field that says why the turn failed is the same defect
+    the two tests above exist for. [review: pi C-7]
+    """
+    path = write(
+        tmp_path,
+        "s.jsonl",
+        [
+            header(),
+            {
+                "type": "message",
+                "id": "e1",
+                "parentId": None,
+                "timestamp": "2026-01-01T00:00:02.000Z",
+                "message": "not an object",
+                "errorMessage": "Request was aborted.",
+            },
+        ],
+    )
+    (turn,) = check_adapter(pi, path).turns
+    assert [b.text for b in turn.blocks] == ["Request was aborted."]
+    assert turn.native["message"] == "not an object"
+
+
 def test_an_unknown_role_is_not_billed_as_a_model_call(tmp_path):
     """`message.role` is the only discriminator here, so it decides spend.
 
