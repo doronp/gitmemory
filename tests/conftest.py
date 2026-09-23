@@ -21,6 +21,7 @@ point somewhere else, and somewhere else has to exist.
 
 from __future__ import annotations
 
+import glob
 import os
 
 import pytest
@@ -51,6 +52,17 @@ def scandir_budget(monkeypatch):
     is the shape that makes `-k` selections mysterious.
 
     Returns a callable: `calls = scandir_budget(16)`, then `calls[0]` after.
+
+    Patching `os.scandir` alone counts `os.walk`, which resolves the name as a
+    module global on every call, and counts *nothing* under `pathlib.Path.glob`:
+    `glob._StringGlobber.scandir` is a `staticmethod(os.scandir)` bound when
+    `glob` is imported, and `Path._globber is glob._StringGlobber`. Measured on
+    one tree, 3.13.12: `os.walk` 2, `glob.glob` 4, `Path.glob` 0. The daemon
+    test written against this fixture was therefore asserting `0 <= 16`, which
+    no implementation can fail — it read as a cost test and was decoration.
+    Both are patched now, and every caller asserts a floor as well as a ceiling,
+    because a budget nothing spends is the same defect in a different place.
+    [review: tests 2]
     """
 
     def budget(limit: int) -> list[int]:
@@ -64,6 +76,7 @@ def scandir_budget(monkeypatch):
             return real(path)
 
         monkeypatch.setattr(os, "scandir", counted)
+        monkeypatch.setattr(glob._StringGlobber, "scandir", staticmethod(counted))
         return calls
 
     return budget

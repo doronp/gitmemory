@@ -32,6 +32,19 @@ one place that can be wrong is the one place that is already right. It is JSON,
 which Datasette accepts and which is stdlib — no PyYAML for eighty lines of
 prose.
 
+**No CSP and no `nosniff`, deliberately.** Datasette 0.65.1 sends neither
+(`datasette/app.py`, `datasette/utils/asgi.py` @0.65.1 — **Grounded**) and has
+no setting that would: the `Setting(...)` table in `app.py` is page size,
+facets, SQL limits, `allow_download`, cache TTL, `base_url` and the debug
+flags, and nothing about response headers. Adding them means either an
+`asgi_wrapper` plugin — a dependency this project would then own and pin —
+or serving Datasette behind our own ASGI app, which trades the forty lines
+this module is for a web server we maintain. The exposure being bought is
+small: every endpoint is 403 without the root token, and the one sink that
+takes unescaped HTML (`description_html`) is fed module-level literals that a
+test holds constant. Revisit if the dashboard ever renders anything a
+transcript can reach.
+
 See DESIGN.md §2.9 for the panels and, more importantly, for the refusals: the
 `dash_unmeasured` view is not decoration, it is the part of this dashboard that
 keeps the rest of it honest.
@@ -53,9 +66,13 @@ __all__ = ["command", "metadata", "serve"]
 HOST = "127.0.0.1"
 PORT = 8081  # not 8001: Datasette's default collides with half the world
 
-# Every spelling of "this machine only". The CLI warns about a bind outside this
-# set, so the set is the security boundary and not the default value.
-LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})
+# There was a `LOOPBACK = frozenset({"127.0.0.1", "localhost", "::1"})` here,
+# with a comment calling it "the security boundary". It was neither: the CLI
+# resolves `--host` and tests `ipaddress.ip_address(...).is_loopback`, which is
+# the check that catches `127.0.0.2` and a name that resolves to 127.0.0.1, and
+# it has not read this set since. A dead constant that claims to be a boundary
+# is worse than no constant. The string-set version survives as a mutation row
+# — spelled out in full there, since nothing imports it any more.
 
 # What each view is for, in the words a person reading the dashboard needs
 # rather than the words the SQL uses. Keyed by view name; anything not listed
@@ -275,13 +292,23 @@ def serve(home: str | None = None, *, db: str | None = None, host: str = HOST, p
 
 
 def _digest(path: str) -> str:
-    """The index's content digest, short, or `unknown` if it cannot be read."""
+    """The index's content digest, short, or `unknown` if it cannot be read.
+
+    The `except` stays broad — a caption must not stop the server from
+    starting — but it no longer swallows the reason. `unknown` was printed
+    identically for "this index predates the key" and "this file is not a
+    database", and the second is the one worth knowing about: it is the only
+    signal the user gets that the thing Datasette is about to open read-only is
+    not the thing they built. Saying why costs one line on stderr and nothing
+    when the read succeeds. [L-1]
+    """
     try:
         db = index.open_db(path)
         try:
             row = db.execute("SELECT value FROM meta WHERE key = 'content_sha256'").fetchone()
         finally:
             db.close()
-    except Exception:  # noqa: BLE001 - a start-up caption must not block the server
+    except Exception as exc:  # noqa: BLE001 - a start-up caption must not block the server
+        print(f"could not read the content digest from {path}: {exc}", file=sys.stderr)
         return "unknown"
     return row["value"][:12] if row else "unknown"

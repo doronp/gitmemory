@@ -435,8 +435,18 @@ def parse(path: str) -> Session:
                 # with it. The disagreement cost the entry its `errorMessage` —
                 # `_message_blocks` would read the error off the substituted
                 # `{}` while the real one sat at the top level of `obj`, which
-                # is the one place the other branch looks. Two readings of "has
-                # a message" is the bug; there is one now. [review: pi C-7]
+                # is the one place the other branch looks.
+                #
+                # One reading fewer, not one reading. Pass 1 asks a third
+                # question — `content = message.get("content") if raw_message
+                # is not None else _prose(obj)` — so an entry whose `message`
+                # is a non-dict still arrives here with `content = None`
+                # instead of its top-level prose, `_blocks(None)` is empty, and
+                # line 403 calls the entry `no_identity` on that same `None`.
+                # The error survives now; the `summary`/`text` beside it does
+                # not. Closing that moves the `skipped` counters, which every
+                # conformance fixture pins, so it is L-6 and not this.
+                # [review: pi C-7, paths 4]
                 _message_blocks(message, native_role)
                 if isinstance(obj.get("message"), dict)
                 else _with_error(_blocks(content), obj)

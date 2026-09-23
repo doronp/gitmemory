@@ -1197,16 +1197,18 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
     unguarded search finds nothing, this fails as a bad fixture instead of
     passing as a good guard. [E4, vacuity pass 2: L3; review: tests]
 
-    Four of the eleven are unreachable now, and the vacuity floor asserts that
+    Seven of the eleven are unreachable now, and the vacuity floor asserts that
     rather than skipping it. When `_glob_hits` stopped building a pattern and
     started comparing against real directory entries, every id holding a
     separator became *unspellable*: a filename cannot contain `/`, so there is
     no tree in which `../secrets.jsonl` is an entry, and the traversal those
-    four ids were written for cannot be expressed at all. The charset guard is
-    still what this test names, and it is still the thing being deleted in the
-    mutation row — but for those four it is now the second lock rather than the
-    only one, and saying so is better than a floor that quietly passes.
-    [review: paths F2]
+    four ids were written for cannot be expressed at all. The other three —
+    `..`, `""` and `.hidden` — plant `...jsonl`, `.jsonl` and `.hidden.jsonl`,
+    and `_walk_jsonl` skips a dotted name exactly as the replaced glob did
+    (`include_hidden=False`). The charset guard is still what this test names,
+    and it is still the thing being deleted in the mutation row — but for those
+    seven it is now the second lock rather than the only one, and saying so is
+    better than a floor that quietly passes. [review: paths F2, paths 3]
     """
     projects = tmp_path / "a" / "b" / "c" / "projects"
     root = projects / "-Users-x-work"
@@ -1225,6 +1227,8 @@ def test_find_session_refuses_a_hostile_id(tmp_path, hostile):
     reachable = _would_glob(projects, hostile)
     if "/" in hostile:
         assert not reachable, f"a filename cannot hold a separator, yet: {reachable}"
+    elif target.name.startswith("."):
+        assert not reachable, f"a dotted name is not walked, yet: {reachable}"
     else:
         assert reachable, f"vacuous fixture: nothing to find for {hostile!r}"
 
@@ -1350,7 +1354,7 @@ def test_a_self_linking_directory_does_not_multiply_the_search(scandir_budget, t
 
     calls = scandir_budget(16)
     assert cc.find_session("abc-123", str(projects)) == str(proj / "abc-123.jsonl")
-    assert calls[0] <= 16, calls[0]
+    assert 0 < calls[0] <= 16, calls[0]
 
 
 def test_a_self_linking_subagent_directory_does_not_multiply_the_rollup(scandir_budget, tmp_path):
@@ -1377,7 +1381,7 @@ def test_a_self_linking_subagent_directory_does_not_multiply_the_rollup(scandir_
     calls = scandir_budget(16)
     files = cc.session_files(str(main))
     assert [os.path.basename(f) for f in files] == ["x.jsonl", "agent-1.jsonl"]
-    assert calls[0] <= 16, calls[0]
+    assert 0 < calls[0] <= 16, calls[0]
 
 
 def test_a_transcript_dropped_straight_into_the_root_is_not_found(tmp_path):
@@ -2216,3 +2220,39 @@ def test_the_adapter_has_no_default_place_to_look_for_transcripts():
 
     p = inspect.signature(cc.find_session).parameters["projects_root"]
     assert p.default is inspect.Parameter.empty, f"a default is back: {p.default!r}"
+
+
+def test_a_dotted_file_under_the_session_stem_is_not_billed(tmp_path):
+    """The replaced glob skipped dotted names, and `rollup_usage` bills what it finds.
+
+    `<stem>/*/**/<name>` is wildcards all the way down but the last component,
+    and a glob wildcard does not match a leading dot (`include_hidden=False`).
+    `os.walk` has no such rule, so the traversal that replaced the pattern
+    started returning `.#x.jsonl` — which is not a transcript, it is the
+    dangling symlink Emacs writes to lock a file — and any dotted subagent
+    file, whose tokens the old rollup never counted and which now land in the
+    total with nothing said. One skip, three call sites: this one,
+    `find_session`, and pi's two filename shapes. [review: paths 3]
+
+    The suffix is asserted here too, for the same reason against a different
+    mutant: the glob's last component was `*.jsonl`, the walk's filter is
+    `name.endswith(".jsonl")`, and dropping that filter leaves every other
+    test green while `rollup_usage` hands `notes.txt` to the JSON parser.
+    [review: tests 1]
+    """
+    main = tmp_path / "x.jsonl"
+    main.write_text(json.dumps(user("u1", "main")) + "\n")
+    subs = tmp_path / "x" / "subagents"
+    subs.mkdir(parents=True)
+    (subs / "agent-1.jsonl").write_text(json.dumps(user("a1", "sub")) + "\n")
+    (subs / ".agent-2.jsonl").write_text(json.dumps(user("a2", "hidden sub")) + "\n")
+    hidden_dir = tmp_path / "x" / ".cache"
+    hidden_dir.mkdir()
+    (hidden_dir / "agent-3.jsonl").write_text(json.dumps(user("a3", "hidden dir")) + "\n")
+    os.symlink(tmp_path / "nowhere", subs / ".#x.jsonl")
+    (subs / "notes.txt").write_text("not a transcript\n")
+
+    assert [os.path.basename(f) for f in cc.session_files(str(main))] == [
+        "x.jsonl",
+        "agent-1.jsonl",
+    ]

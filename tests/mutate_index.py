@@ -1064,9 +1064,36 @@ MUTANTS = [
     (
         "discovery reads dotted components, so the store is its own corpus",
         "daemon.py",
-        "        if not any(part.startswith(\".\") for part in p.relative_to(root).parts)",
+        '        if not any(\n            part.startswith(".") and part not in named'
+        " for part in p.relative_to(root).parts\n        )",
         "        if True",
         "test_a_dotted_component_is_not_discovered",
+    ),
+    (
+        "a pattern the matcher raises on reaches the matcher",
+        "daemon.py",
+        '    if "\\x00" in value or not pathlib.PurePath(value).parts:',
+        "    if False:",
+        "test_a_pattern_the_matcher_refuses_does_not_stop_every_watch",
+    ),
+    (
+        "the dotted skip swallows a dotted directory the pattern named",
+        "daemon.py",
+        '            part.startswith(".") and part not in named for part in',
+        '            part.startswith(".") for part in',
+        "test_a_dotted_directory_the_pattern_names_is_still_discovered",
+    ),
+    # The skip is relative to the root on purpose: the shipped default root is
+    # `~/.claude/projects`, so on a stock install every absolute path carries a
+    # dotted component and an absolute filter discovers nothing at all. Every
+    # other test in the file uses `tmp_path`, which has no dotted component, so
+    # this mutant was invisible to all of them.
+    (
+        "the dotted skip is absolute and the default root is dotted",
+        "daemon.py",
+        "for part in p.relative_to(root).parts",
+        "for part in p.parts",
+        "test_a_root_that_is_itself_dotted_discovers_everything_under_it",
     ),
     (
         "a doorbell no watch covers is silent again",
@@ -2914,7 +2941,9 @@ MUTANTS = [
     (
         "an unreadable index takes the server down with it",
         "dashboard.py",
-        "    except Exception:  # noqa: BLE001 - a start-up caption must not block the server\n"
+        "    except Exception as exc:  # noqa: BLE001 - a start-up caption must not "
+        "block the server\n"
+        '        print(f"could not read the content digest from {path}: {exc}", file=sys.stderr)\n'
         '        return "unknown"',
         "    except Exception:\n        raise",
         "test_the_start_up_line_survives_an_index_it_cannot_read",
@@ -3767,7 +3796,7 @@ MUTANTS = [
         "loopback is a string set again, not a resolution",
         "__main__.py",
         "    if not _is_loopback(args.host) and not args.expose:",
-        "    if args.host not in dashboard.LOOPBACK and not args.expose:",
+        '    if args.host not in {"127.0.0.1", "localhost", "::1"} and not args.expose:',
         "test_a_bind_outside_loopback_is_refused_and_every_spelling_of_here_is_not",
     ),
     (
@@ -3798,6 +3827,13 @@ MUTANTS = [
         "        if rc != 0:",
         "        if False:",
         "test_no_address_is_printed_before_datasette_has_it",
+    ),
+    (
+        "an unreadable index is `unknown` with no reason again",
+        "dashboard.py",
+        '        print(f"could not read the content digest from {path}: {exc}", file=sys.stderr)\n',
+        "",
+        "test_a_digest_that_cannot_be_read_says_why",
     ),
     (
         # The shape F6 is about: something store-derived reaching a key
@@ -4431,7 +4467,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "68 mutants",
+        "a full pass is 5" + "75 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5019,9 +5055,30 @@ MUTANTS = [
     (
         "the walk follows symlinked directories again",
         "src/gitmemory/adapters/claude_code.py",
-        "    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):",
-        "    for dirpath, _dirnames, filenames in os.walk(root, followlinks=True):",
+        "    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):",
+        "    for dirpath, dirnames, filenames in os.walk(root, followlinks=True):",
         "tests/test_claude_code.py::test_a_self_linking_directory_does_not_multiply_the_search",
+    ),
+    (
+        "the walk descends dotted directories the glob never entered",
+        "src/gitmemory/adapters/claude_code.py",
+        '        dirnames[:] = [d for d in dirnames if not d.startswith(".")]\n',
+        "",
+        "tests/test_claude_code.py::test_a_dotted_file_under_the_session_stem_is_not_billed",
+    ),
+    (
+        "the walk returns dotted files the glob never matched",
+        "src/gitmemory/adapters/claude_code.py",
+        '            if name.endswith(".jsonl") and not name.startswith("."):',
+        '            if name.endswith(".jsonl"):',
+        "tests/test_claude_code.py::test_a_dotted_file_under_the_session_stem_is_not_billed",
+    ),
+    (
+        "the walk returns every file under the stem, transcript or not",
+        "src/gitmemory/adapters/claude_code.py",
+        'if name.endswith(".jsonl") and not name.startswith(".")',
+        'if not name.startswith(".")',
+        "tests/test_claude_code.py::test_a_dotted_file_under_the_session_stem_is_not_billed",
     ),
     # One row for one flag, though two tests bust their budget on it —
     # `..._does_not_multiply_the_rollup` is the same walk reached from
@@ -5324,7 +5381,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 568 mutants × two suite runs —
+    The filter exists because a full pass is 575 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

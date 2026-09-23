@@ -728,10 +728,23 @@ def _walk_jsonl(root: str) -> Iterator[tuple[str, str]]:
     two comparisons per file. The remaining cost is linear in the real tree and
     unbounded only by how much is under the root, which is the user's own
     directory rather than an attacker's multiplier. [review: paths F3]
+
+    Dotted names are skipped, which the replaced pattern did for free: every
+    component of `<root>/*/**/<name>` but the last is a wildcard, and glob's
+    wildcards do not match a leading dot (`include_hidden=False`). Dropping
+    that was a silent widening of three call sites at once — `find_session`
+    (whose id arrives in a hook payload), pi's two filename shapes, and
+    `session_files`, which hands everything it finds to `rollup_usage` to
+    parse and bill. The concrete thing it lets in is not an attack, it is
+    Emacs: `.#<name>.jsonl` is a dangling symlink to `user@host.pid`, and a
+    dotted subagent file under a session stem is tokens billed from a file the
+    old rollup never read. `daemon._hits` carries the same skip for the same
+    reason; one commit should not leave two conventions. [review: paths 3]
     """
-    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
         for name in filenames:
-            if name.endswith(".jsonl"):
+            if name.endswith(".jsonl") and not name.startswith("."):
                 yield dirpath, name
 
 

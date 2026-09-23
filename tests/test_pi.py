@@ -1042,11 +1042,17 @@ def test_both_filename_shapes_cost_one_traversal(scandir_budget, tmp_path):
     comparisons per file inside one walk, so the second one is free.
 
     Measured as directory reads rather than seconds, for the reason the
-    `scandir_budget` fixture gives. The budget is deliberately tight enough that
-    walking this four-directory tree twice fails it: the point is the factor,
-    not the absolute number. The self-links make it the pi twin of
+    `scandir_budget` fixture gives. The self-links make it the pi twin of
     `test_a_self_linking_directory_does_not_multiply_the_search` at the same
     time — `**` would still be running. [review: paths F2/F3]
+
+    The budget was 6 and the docstring said it was "deliberately tight enough
+    that walking this four-directory tree twice fails it". Both halves were
+    wrong: the tree is three directories, not four — `a` and `b` are symlinks
+    and are not descended — so one walk is 3 reads and two walks are 6, which
+    a budget of 6 allows. Restoring the two-pass implementation left this
+    green. 4 is one more than the walk costs and two fewer than repeating it,
+    and the floor says the count is real. [review: tests 2]
     """
     sessions = tmp_path / "sessions"
     root = sessions / "--w--"
@@ -1056,9 +1062,9 @@ def test_both_filename_shapes_cost_one_traversal(scandir_budget, tmp_path):
     os.symlink(".", root / "a")
     os.symlink(".", root / "b")
 
-    calls = scandir_budget(6)
+    calls = scandir_budget(4)
     assert pi.find_session("s1", str(sessions)) == str(hit)
-    assert calls[0] <= 6, calls[0]
+    assert 0 < calls[0] <= 4, calls[0]
 
 
 def test_a_file_in_the_sessions_root_is_not_a_transcript(tmp_path):

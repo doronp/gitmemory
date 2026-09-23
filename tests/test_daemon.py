@@ -410,7 +410,12 @@ def test_a_self_linking_root_does_not_multiply_discovery(scandir_budget, tmp_pat
 
     The budget is what makes this a regression test and not a smoke test — the
     old code blows it in the first millisecond rather than after a timeout.
-    [review: paths F2]
+
+    It was decoration for one commit, and the floor below is why it is not
+    again. `scandir_budget` patched `os.scandir` only, which `pathlib`'s globber
+    never reads — it binds `staticmethod(os.scandir)` at `glob` import — so this
+    counted 0 reads and asserted `0 <= 16`, which nothing can fail. The fixture
+    patches both now. [review: paths F2, tests 2]
     """
     root = tmp_path / "proj"
     root.mkdir()
@@ -421,7 +426,7 @@ def test_a_self_linking_root_does_not_multiply_discovery(scandir_budget, tmp_pat
     calls = scandir_budget(16)
     found = daemon.discover([daemon.Watch(agent="a", roots=(str(root),))])
     assert [os.path.basename(p) for _, p in found] == ["a.jsonl"]
-    assert calls[0] <= 16, calls[0]
+    assert 0 < calls[0] <= 16, calls[0]
 
 
 def test_a_dotted_component_is_not_discovered(tmp_path):
@@ -441,6 +446,46 @@ def test_a_dotted_component_is_not_discovered(tmp_path):
     _write(str(root / "sub" / ".hidden.jsonl"), TURN)
     found = daemon.discover([daemon.Watch(agent="a", roots=(str(root),))])
     assert [os.path.basename(p) for _, p in found] == ["a.jsonl"]
+
+
+def test_a_dotted_directory_the_pattern_names_is_still_discovered(tmp_path):
+    """The skip above is `glob.glob`'s, and `glob.glob`'s skip has an exception.
+
+    `include_hidden=False` suppresses hidden names matched by a *wildcard*. A
+    dotted component written out in the pattern is matched literally and
+    traversed — measured on 3.13.12, where the old matcher returned both files
+    below and the blanket skip that replaced it returned neither. `_pattern`
+    allows `.kimi/**/*.jsonl` (not absolute, does not climb), so the failure
+    mode was a watch that matched nothing while looking correctly configured,
+    which is the same shape as an agent that has not run yet.
+    [review: gemini 1]
+    """
+    root = tmp_path / "proj"
+    _write(str(root / ".kimi" / "a.jsonl"), TURN)
+    _write(str(root / ".kimi" / "sub" / "b.jsonl"), TURN)
+    _write(str(root / ".other" / "c.jsonl"), TURN)
+
+    assert [os.path.basename(p) for p in daemon._hits(str(root), ".kimi/**/*.jsonl")] == [
+        "a.jsonl",
+        "b.jsonl",
+    ]
+    assert daemon._hits(str(root), "**/*.jsonl") == []
+
+
+def test_a_root_that_is_itself_dotted_discovers_everything_under_it(tmp_path):
+    """The skip is relative to the root, and the shipped default root is dotted.
+
+    `roots = ["~/.claude/projects"]` is what the README tells people to write,
+    so the absolute path of every transcript on a stock install carries a
+    dotted component. A filter over `p.parts` rather than
+    `p.relative_to(root).parts` therefore discovers *nothing* on the default
+    configuration while every test in this file passes: `tmp_path` has no
+    dotted component, so the difference between the two spellings is invisible
+    to all of them. [review: tests 1]
+    """
+    root = tmp_path / ".claude" / "projects" / "-Users-x-work"
+    _write(str(root / "a.jsonl"), TURN)
+    assert [os.path.basename(p) for p in daemon._hits(str(root), "**/*.jsonl")] == ["a.jsonl"]
 
 
 # --- capture ----------------------------------------------------------------
@@ -1686,6 +1731,34 @@ def test_an_absolute_pattern_is_refused_rather_than_walked(tmp_path):
 
     assert [w.pattern for w in got] == [daemon.PATTERN]
     assert any("pattern" in m for m in said), said
+
+
+def test_a_pattern_the_matcher_refuses_does_not_stop_every_watch(tmp_path):
+    """One watch's `pattern = "."` stopped capture for the whole machine, for ever.
+
+    `glob.glob` took `.`, `./` and `./.` and matched the root itself, which
+    `_covers` then dropped. `Path.glob` raises `ValueError: Unacceptable
+    pattern` on all three — `PurePath` parses them to no components — and
+    `_hits` runs inside `discover`, which `tick` calls outside any `try`. So the
+    raise reached `run`'s floor as `pass failed`, and since the config is re-read
+    every pass it kept reaching it: one bad pattern, every watch dark, no
+    capture, rc=1 and nothing else said. An embedded NUL, which `tomllib`
+    accepts, does the same thing one layer down in `lstat`. [review: paths 2]
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    _write(str(root / "a.jsonl"), TURN)
+
+    for bad in (".", "./", "./.", "a\x00b"):
+        _config(home, [root], pattern=bad)
+        said: list[str] = []
+        got = daemon.load_watches(home, log=said.append)
+        assert [w.pattern for w in got] == [daemon.PATTERN], bad
+        assert any("names nothing" in m for m in said), (bad, said)
+        # And the pass it would have killed runs: the root is still watched.
+        assert daemon.tick(home, got, interval=0).appended == len(TURN), bad
+        shutil.rmtree(os.path.join(home, "raw"), ignore_errors=True)
+        shutil.rmtree(os.path.join(home, "sessions"), ignore_errors=True)
 
 
 def test_a_root_of_slash_is_refused_for_being_slash(tmp_path):

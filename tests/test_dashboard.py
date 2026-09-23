@@ -943,3 +943,22 @@ def test_no_address_is_printed_before_datasette_has_it(capsys, home, src, monkey
     out = capsys.readouterr()
     assert "http://127.0.0.1:8081" not in out.out, out.out
     assert "nothing is serving 127.0.0.1:8081" in out.err, out.err
+
+
+def test_a_digest_that_cannot_be_read_says_why(capsys, tmp_path):
+    """`unknown` is the caption for two different facts, and one of them matters.
+
+    `_digest` swallowed every exception and printed `content unknown`, which is
+    also what a valid index missing the key prints. So "this file is not a
+    database" — the one signal that Datasette is about to serve something other
+    than what `gitmemory index` built — arrived as the same six characters as a
+    benign miss. The `except` stays broad, because a caption must not stop the
+    server; the reason now reaches stderr. [L-1]
+    """
+    not_a_db = tmp_path / "gitmemory-v2.db"
+    not_a_db.write_bytes(b"this is not a database")
+
+    assert dashboard._digest(str(not_a_db)) == "unknown"
+    err = capsys.readouterr().err
+    assert str(not_a_db) in err, err
+    assert "could not read the content digest" in err, err

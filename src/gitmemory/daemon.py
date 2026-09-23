@@ -276,11 +276,26 @@ def _pattern(value: object, say) -> str:
     pattern that cannot match anything the watch will accept is a
     misconfiguration, and this module's rule for those is loud, not quiet.
     [E4, review: daemon 10]
+
+    The last two are patterns `glob.glob` *accepted* and `Path.glob` raises on,
+    which matters because `_hits` runs inside `discover`, which `tick` calls
+    outside any `try`: the raise leaves `run`'s floor to catch it as `pass
+    failed`, and config is re-read every pass, so one watch with `pattern = "."`
+    stops capture for every watch on the machine, on every pass, for as long as
+    the daemon runs. `.`, `./` and `./.` are the whole of the first set —
+    `PurePath` parses every one of them to no components at all, which is
+    exactly the "Unacceptable pattern" `Path.glob` refuses — and an embedded
+    NUL is the second, which `tomllib` will happily hand us and `lstat` will
+    not take. Both fall back to the default rather than raising, because the
+    watch's roots are still worth reading. [review: paths 2]
     """
     if not isinstance(value, str) or not value:
         return PATTERN
     if os.path.isabs(value) or os.pardir in value.split(os.sep):
         say(f"pattern {value!r} leaves the watch root; using {PATTERN!r}")
+        return PATTERN
+    if "\x00" in value or not pathlib.PurePath(value).parts:
+        say(f"pattern {value!r} names nothing a root can hold; using {PATTERN!r}")
         return PATTERN
     return value
 
@@ -538,17 +553,35 @@ def _hits(root: str, pattern: str) -> list[str]:
     (`include_hidden=False`) — and `_roots` leans on that skip: the default
     store lives at `~/.gitmemory` and a watch root of `~` is allowed, so a
     daemon that saw dotted paths would read its own segments back as new
-    sessions. Filtering them restores the old result set exactly; verified on a
-    tree carrying a hidden directory, a hidden file, a symlinked directory and
-    a plain one.
+    sessions.
+
+    A blanket skip is *not* what `glob.glob` does, and the first version of
+    this was one. `include_hidden=False` suppresses hidden names matched by a
+    *wildcard*; a dotted component the pattern spells out is matched literally
+    and traversed. So `pattern = ".kimi/**/*.jsonl"` found two transcripts
+    under the old matcher and nothing at all under the new one — silently,
+    since a watch that matches no files is indistinguishable from an agent that
+    has not run. `_pattern` allows that pattern: it is neither absolute nor a
+    climb. `named` restores it.
+
+    One corner is deliberately wider than `glob.glob`. `named` is positionless,
+    so a dotted component the pattern spells out is also accepted where `**`
+    reached it: `.custom/**/*.jsonl` returns `.custom/x/.custom/d.jsonl` here
+    and did not there (measured, 3.13.12). Both paths live under a hidden
+    directory the config named by hand, which is the only thing the skip exists
+    to prevent an accident with, and the exact rule costs a positional matcher
+    that has to model `**` consuming zero or more components.
 
     A pattern that is absolute or climbs would raise here rather than silently
     widening; `_pattern` rejects both before a `Watch` is ever built.
     """
+    named = {c for c in pattern.split("/") if c.startswith(".")}
     return sorted(
         str(p)
         for p in pathlib.Path(root).glob(pattern)
-        if not any(part.startswith(".") for part in p.relative_to(root).parts)
+        if not any(
+            part.startswith(".") and part not in named for part in p.relative_to(root).parts
+        )
     )
 
 
