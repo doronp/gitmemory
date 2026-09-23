@@ -49,7 +49,19 @@ its *session* recall is 0.9687. Verified cause: 32 of 470 instances list an
 answer session that contains no `has_answer` turn at all (45 of 890 answer
 sessions), so the offsets the oracle reads cannot land in it. That is a property
 of LongMemEval, not of the harness, which is why the apparatus gate is on turn
-recall. Treat every session-recall number on this page as capped near 0.97.
+recall.
+
+This page used to tell you to treat every session-recall number on it as
+"capped near 0.97", and that was wrong. 0.9687 is the oracle's mean over all
+470 instances; it is not a ceiling on any cell, and the page contradicts it in
+plain sight — **38 of the 140 per-type cells below sit above 0.97, and 8 of
+them are exactly 1.0000**, `candidate` arms among them. The 32 unreachable
+instances depress a whole-set mean and are silent in a breakdown that does not
+contain them. Read a session-recall number against the `reference` cell in its
+own row, which is the oracle under the same slice, rather than against 1.0. On
+this run no `candidate` cell exceeds its own row's oracle (0 of 28 slices), but
+nothing structurally forbids it: the oracle retrieves by turn offset and a text
+retriever can return a session the offsets cannot reach.
 
 **2. Under `before_evidence`, the live window *beats* the index** — 0.7893 vs
 0.7456 turn recall. Not an anomaly: walling off everything before the evidence
