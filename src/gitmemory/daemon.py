@@ -31,6 +31,7 @@ Three rules that are easy to get wrong and are therefore stated here:
 from __future__ import annotations
 
 import contextlib
+import fnmatch
 import json
 import os
 import pathlib
@@ -282,12 +283,21 @@ def _pattern(value: object, say) -> str:
     outside any `try`: the raise leaves `run`'s floor to catch it as `pass
     failed`, and config is re-read every pass, so one watch with `pattern = "."`
     stops capture for every watch on the machine, on every pass, for as long as
-    the daemon runs. `.`, `./` and `./.` are the whole of the first set —
-    `PurePath` parses every one of them to no components at all, which is
-    exactly the "Unacceptable pattern" `Path.glob` refuses — and an embedded
-    NUL is the second, which `tomllib` will happily hand us and `lstat` will
-    not take. Both fall back to the default rather than raising, because the
+    the daemon runs. The first set is every spelling that `PurePath` parses to
+    no components at all — `.`, `./`, `./.`, and equally `.//.` and `././.`,
+    which is why the test is `parts` and not a list of three strings — and that
+    is exactly the "Unacceptable pattern" `Path.glob` refuses. The second is an
+    embedded NUL, which `tomllib` will happily hand us and `lstat` will not
+    take. Both fall back to the default rather than raising, because the
     watch's roots are still worth reading. [review: paths 2]
+
+    The NUL half is deliberately wider than the raise it guards. A NUL inside a
+    *magic* component never reaches `lstat` — `fnmatch` handles it and
+    `Path.glob("*.jsonl\\x00")` returns `[]` rather than raising (measured,
+    3.13.12) — so this converts a pattern that would match nothing into
+    `PATTERN`, which matches everything under the root. Reachable only from a
+    config that spells a NUL on purpose, and the alternative is a guard that
+    has to know which components `glob` treats as magic. [review: opus 7]
     """
     if not isinstance(value, str) or not value:
         return PATTERN
@@ -564,23 +574,34 @@ def _hits(root: str, pattern: str) -> list[str]:
     has not run. `_pattern` allows that pattern: it is neither absolute nor a
     climb. `named` restores it.
 
+    The exception is not "spelled out literally", it is "the pattern component
+    starts with a dot" — `.k*/**/*.jsonl` reaches `.kimi/a.jsonl` under
+    `glob.glob` too. Equality against `named` missed that and returned nothing
+    for every dotted *wildcard*, the same silent-empty failure one rung along;
+    measured, 3.13.12. Hence `fnmatchcase` rather than `in`, which also makes
+    the `startswith` filter on `named` load-bearing: `fnmatch`'s `*` matches a
+    leading dot where `glob`'s does not, so an unfiltered `named` containing
+    `**` would accept every hidden component there is. [review: gemini 1]
+
     One corner is deliberately wider than `glob.glob`. `named` is positionless,
-    so a dotted component the pattern spells out is also accepted where `**`
+    so a dotted component the pattern asks for is also accepted where `**`
     reached it: `.custom/**/*.jsonl` returns `.custom/x/.custom/d.jsonl` here
-    and did not there (measured, 3.13.12). Both paths live under a hidden
-    directory the config named by hand, which is the only thing the skip exists
-    to prevent an accident with, and the exact rule costs a positional matcher
-    that has to model `**` consuming zero or more components.
+    and did not there (measured, 3.13.12). Everything it lets through lives
+    under a hidden directory the config asked for by name or by dotted
+    wildcard, which is the only thing the skip exists to prevent an accident
+    with, and the exact rule costs a positional matcher that has to model `**`
+    consuming zero or more components.
 
     A pattern that is absolute or climbs would raise here rather than silently
     widening; `_pattern` rejects both before a `Watch` is ever built.
     """
-    named = {c for c in pattern.split("/") if c.startswith(".")}
+    named = [c for c in pattern.split("/") if c.startswith(".")]
     return sorted(
         str(p)
         for p in pathlib.Path(root).glob(pattern)
         if not any(
-            part.startswith(".") and part not in named for part in p.relative_to(root).parts
+            part.startswith(".") and not any(fnmatch.fnmatchcase(part, c) for c in named)
+            for part in p.relative_to(root).parts
         )
     )
 

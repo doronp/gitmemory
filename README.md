@@ -35,6 +35,12 @@ them at any k.
 off the distractors. The reported mode was pre-registered before anything was
 measured, for exactly this reason. A benchmark that picked its own mode would
 have published the 0.7893 as a gitmemory number.
+
+**And the second caveat: the index above is BM25, and BM25 is the worst of the
+three retrievers.** A dense arm scores 0.8215 and a reranking arm 0.8295 on the
+same instances under the same mode. That does not touch the claim — it is about
+the boundary, and every arm is behind it — but it does mean the default install
+ships the arm that came last.
 [Full gate report](docs/benchmarks/E3-longmemeval.md) — four compaction modes,
 fourteen calibration gates, every arm including the ones that lost.
 
@@ -73,8 +79,8 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | The same extractor on text nobody wrote for a benchmark | a census of every distinct human turn in a third-party MIT corpus of real sessions — 140 items, labelled blind by three annotators at 139/140 agreement | **precision 0.0000, recall 0.0000**. Seven fixes later, 0.1250 / 0.5000 — one true positive, and the set is a regression floor from the first fix onward |
 | …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | 9 of 61 — precision 0.15. After the two fixes: **54 withdrawn, all 7 left are reversals** — and read the caveat below before quoting that |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **981 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **577** negative controls |
+| The suite | on a fresh checkout, no downloads | **984 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **582** negative controls |
 
 Those two numbers do not add up, and should not: switching the corpus on
 collects 1300, not 1303. Three of the conformance cases fill parametrisations
@@ -223,8 +229,11 @@ as rows on the page, not as omissions:
 - **Both tails are invisible.** A prevented dead-end is an unbounded unmeasured
   saving; a stale memory that misled is an unbounded unmeasured cost. Any single
   frugality number assumes both are zero.
-- **Three of the four retriever arms have never run** — only BM25/FTS5 was
-  measured. The gate report says so in the arm list.
+- **BM25/FTS5 is the weakest retriever measured, not the best.** All three
+  retriever arms have now run, and the shipped default loses: 0.7456 turn
+  recall against 0.8215 for `dense` (model2vec) and 0.8295 for `rerank`
+  (flashrank over BM25's top 50). Both are behind the `hybrid` extra, so a
+  default install gets the arm that came last.
 - **The decision graph is close to useless on real sessions**, and that is
   measured rather than suspected. Precision 0.0000 on the user side — 14 nodes,
   none of them a directive — and 0.15 on the assistant side, since lifted by

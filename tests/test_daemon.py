@@ -472,6 +472,73 @@ def test_a_dotted_directory_the_pattern_names_is_still_discovered(tmp_path):
     assert daemon._hits(str(root), "**/*.jsonl") == []
 
 
+def test_a_dotted_wildcard_reaches_the_directories_it_matches(tmp_path):
+    """`glob.glob`'s exception is about the dot, not about spelling the name out.
+
+    `.k*/` is as much a request for hidden directories as `.kimi/` is, and
+    `glob.glob` treats it as one. Matching `named` by equality did not: every
+    dotted wildcard returned the empty list, which is the failure the test
+    above exists to prevent, one rung along and equally silent. The third
+    assertion is the one that keeps the fix from going too far — `fnmatch`'s
+    `*` matches a leading dot, so a `named` that was not filtered to dotted
+    components would hold `**` and wave everything through. [review: gemini 1]
+    """
+    root = tmp_path / "proj"
+    _write(str(root / ".kimi" / "a.jsonl"), TURN)
+    _write(str(root / ".kimi" / "sub" / "b.jsonl"), TURN)
+    _write(str(root / ".other" / "c.jsonl"), TURN)
+
+    assert [os.path.basename(p) for p in daemon._hits(str(root), ".k*/**/*.jsonl")] == [
+        "a.jsonl",
+        "b.jsonl",
+    ]
+    assert [os.path.basename(p) for p in daemon._hits(str(root), ".*/*.jsonl")] == [
+        "a.jsonl",
+        "c.jsonl",
+    ]
+    assert daemon._hits(str(root), "**/*.jsonl") == []
+
+
+def test_naming_one_dotted_directory_does_not_exempt_the_ones_inside_it(tmp_path):
+    """The exemption is per component, not a switch the pattern flips once.
+
+    `.kimi/**/*.jsonl` asks for `.kimi`. It does not ask for the `.git` and the
+    `.venv` the agent's own project keeps inside it, and a watch that returned
+    editor lock files and pack indexes as transcripts would be captured,
+    committed and indexed as if they were sessions. Two mutants that flatten
+    the check to "any dotted component named anywhere" survived the suite
+    before this: every earlier fixture put its unnamed dotted directory
+    *beside* the named one, where the glob never reaches it.
+    [review: opus 2]
+    """
+    root = tmp_path / "proj"
+    _write(str(root / ".kimi" / "a.jsonl"), TURN)
+    _write(str(root / ".kimi" / ".git" / "o.jsonl"), TURN)
+    _write(str(root / ".kimi" / ".venv" / "v.jsonl"), TURN)
+
+    assert [os.path.basename(p) for p in daemon._hits(str(root), ".kimi/**/*.jsonl")] == [
+        "a.jsonl"
+    ]
+
+
+def test_a_dotted_component_is_exempt_wherever_the_pattern_puts_it(tmp_path):
+    """`~/.config/<tool>/sessions` is the other half of the world's layouts.
+
+    Every other test of this filter spells the dotted component first, so a
+    matcher that only ever looked at the pattern's first component passed all
+    of them while discovering nothing for a pattern whose dot is in the middle
+    — the silent-empty watch again. [review: opus 3]
+    """
+    root = tmp_path / "proj"
+    _write(str(root / "agents" / ".kimi" / "a.jsonl"), TURN)
+    _write(str(root / "agents" / ".kimi" / "sub" / "b.jsonl"), TURN)
+
+    assert [os.path.basename(p) for p in daemon._hits(str(root), "agents/.kimi/**/*.jsonl")] == [
+        "a.jsonl",
+        "b.jsonl",
+    ]
+
+
 def test_a_root_that_is_itself_dotted_discovers_everything_under_it(tmp_path):
     """The skip is relative to the root, and the shipped default root is dotted.
 

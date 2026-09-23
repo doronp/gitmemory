@@ -32,9 +32,11 @@ one place that can be wrong is the one place that is already right. It is JSON,
 which Datasette accepts and which is stdlib — no PyYAML for eighty lines of
 prose.
 
-**No CSP and no `nosniff`, deliberately.** Datasette 0.65.1 sends neither
-(`datasette/app.py`, `datasette/utils/asgi.py` @0.65.1 — **Grounded**) and has
-no setting that would: the `Setting(...)` table in `app.py` is page size,
+**No CSP and no `nosniff`, deliberately.** Datasette 0.65.5 — what `uv.lock`
+pins and what the `serve` extra resolves to — sends neither on any HTML page it
+serves (measured in-process through `httpx.ASGITransport` against `/`, `/<db>`
+and `/<db>/<table>`: both headers absent — **Grounded**) and has no setting
+that would: the `Setting(...)` table in `app.py` is page size,
 facets, SQL limits, `allow_download`, cache TTL, `base_url` and the debug
 flags, and nothing about response headers. Adding them means either an
 `asgi_wrapper` plugin — a dependency this project would then own and pin —
@@ -44,6 +46,13 @@ small: every endpoint is 403 without the root token, and the one sink that
 takes unescaped HTML (`description_html`) is fed module-level literals that a
 test holds constant. Revisit if the dashboard ever renders anything a
 transcript can reach.
+
+"Sends neither" is about the HTML pages, not about Datasette entire:
+`blob_renderer.py:44` does send `nosniff`, on `?_blob_column=` downloads. The
+earlier version of this paragraph said 0.65.1 and said it three times, marked
+**Grounded**, against a lock file that has pinned 0.65.5 throughout — a source
+mark on a version nobody resolved. The conclusion held; the citation did not.
+[review: opus 6]
 
 See DESIGN.md §2.9 for the panels and, more importantly, for the refusals: the
 `dash_unmeasured` view is not decoration, it is the part of this dashboard that

@@ -1082,8 +1082,9 @@ MUTANTS = [
     (
         "discovery reads dotted components, so the store is its own corpus",
         "daemon.py",
-        '        if not any(\n            part.startswith(".") and part not in named'
-        " for part in p.relative_to(root).parts\n        )",
+        '        if not any(\n            part.startswith(".")'
+        ' and not any(fnmatch.fnmatchcase(part, c) for c in named)'
+        "\n            for part in p.relative_to(root).parts\n        )",
         "        if True",
         "test_a_dotted_component_is_not_discovered",
     ),
@@ -1097,9 +1098,50 @@ MUTANTS = [
     (
         "the dotted skip swallows a dotted directory the pattern named",
         "daemon.py",
-        '            part.startswith(".") and part not in named for part in',
-        '            part.startswith(".") for part in',
+        '            part.startswith(".")'
+        " and not any(fnmatch.fnmatchcase(part, c) for c in named)",
+        '            part.startswith(".")',
         "test_a_dotted_directory_the_pattern_names_is_still_discovered",
+    ),
+    # The exception `glob.glob` makes is for a pattern component that starts
+    # with a dot, wildcard or not. Equality against `named` implements half of
+    # it and returns the empty list for the other half, which looks exactly
+    # like an agent that has not run. The second row is the other side: with
+    # `named` unfiltered, `fnmatch`'s `*` matches a leading dot and `**` waves
+    # every hidden component through, which is the skip deleted.
+    (
+        "a dotted wildcard in the pattern reaches nothing",
+        "daemon.py",
+        "not any(fnmatch.fnmatchcase(part, c) for c in named)",
+        "part not in named",
+        "test_a_dotted_wildcard_reaches_the_directories_it_matches",
+    ),
+    (
+        "every pattern component is a licence for hidden names",
+        "daemon.py",
+        '    named = [c for c in pattern.split("/") if c.startswith(".")]',
+        '    named = list(pattern.split("/"))',
+        "test_a_dotted_wildcard_reaches_the_directories_it_matches",
+    ),
+    # The two below flatten the per-component check into a per-pattern one, in
+    # opposite directions: the first exempts every dotted component once the
+    # pattern names any, the second only ever consults the pattern's first
+    # component. Both survived the suite until the tests they name were
+    # written, because every fixture put its dotted component first and its
+    # unnamed dotted directory beside the named one rather than inside it.
+    (
+        "naming one dotted directory exempts every dotted directory",
+        "daemon.py",
+        "not any(fnmatch.fnmatchcase(part, c) for c in named)",
+        "not named",
+        "test_naming_one_dotted_directory_does_not_exempt_the_ones_inside_it",
+    ),
+    (
+        "only the pattern's first component can name a dotted directory",
+        "daemon.py",
+        'for c in pattern.split("/") if c.startswith(".")',
+        'for c in pattern.split("/")[:1] if c.startswith(".")',
+        "test_a_dotted_component_is_exempt_wherever_the_pattern_puts_it",
     ),
     # The skip is relative to the root on purpose: the shipped default root is
     # `~/.claude/projects`, so on a stock install every absolute path carries a
@@ -3853,6 +3895,17 @@ MUTANTS = [
         "",
         "test_a_digest_that_cannot_be_read_says_why",
     ),
+    # Deleting the whole line is caught by the path and the caption. Deleting
+    # only `{exc}` is the same defect and was not: the line still names the
+    # file and still says it could not read the digest, it has just stopped
+    # being the one thing the change was for. [review: opus 5]
+    (
+        "the reason is dropped and the caption keeps its name",
+        "dashboard.py",
+        'f"could not read the content digest from {path}: {exc}"',
+        'f"could not read the content digest from {path}"',
+        "test_a_digest_that_cannot_be_read_says_why",
+    ),
     (
         # The shape F6 is about: something store-derived reaching a key
         # datasette renders as trusted HTML.
@@ -4485,7 +4538,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "77 mutants",
+        "a full pass is 5" + "82 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5402,7 +5455,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 577 mutants × two suite runs —
+    The filter exists because a full pass is 582 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

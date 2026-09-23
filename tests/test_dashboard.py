@@ -954,6 +954,11 @@ def test_a_digest_that_cannot_be_read_says_why(capsys, tmp_path):
     than what `gitmemory index` built — arrived as the same six characters as a
     benign miss. The `except` stays broad, because a caption must not stop the
     server; the reason now reaches stderr. [L-1]
+
+    The last assertion is the one the name promises and the first two do not
+    keep: dropping `{exc}` from the message leaves the path and the caption
+    intact, so a test that checks only those passes against a line that has
+    stopped saying why. Measured as a surviving mutant. [review: opus 5]
     """
     not_a_db = tmp_path / "gitmemory-v2.db"
     not_a_db.write_bytes(b"this is not a database")
@@ -962,3 +967,4 @@ def test_a_digest_that_cannot_be_read_says_why(capsys, tmp_path):
     err = capsys.readouterr().err
     assert str(not_a_db) in err, err
     assert "could not read the content digest" in err, err
+    assert "not a database" in err, err

@@ -893,10 +893,21 @@ def test_a_sweep_leaves_no_temporary_store_behind():
     relying on refcounts nobody had checked, with a file-descriptor ceiling and
     a disk of copied transcripts as the failure. `score` closes them in a
     `finally`; this counts what is left in TMPDIR to prove it. [E3]
+
+    TMPDIR is redirected at the test rather than read from the environment,
+    because the assertion is a before/after diff of a directory the whole
+    machine writes to: any other process that touched the system temp
+    directory during the sweep failed this test, and one did — a second bench
+    run in another shell. Observed twice, once here and once by a reviewer on a
+    clean tree. [review: opus note]
     """
-    tmp = Path(tempfile.gettempdir())
+    tmp = Path(tempfile.mkdtemp(prefix="sweep-scope-"))
     before = set(os.listdir(tmp))
-    score.score(corpus(score.MIN_INSTANCES), gitmemory_factory, k=5, compaction_modes=[None])
+    tempfile.tempdir = str(tmp)  # the documented override; every arm reads it
+    try:
+        score.score(corpus(score.MIN_INSTANCES), gitmemory_factory, k=5, compaction_modes=[None])
+    finally:
+        tempfile.tempdir = None
     new = set(os.listdir(tmp)) - before
     assert not [n for n in new if n.endswith(".jsonl")], "transcript temp files"
     assert not [n for n in new if (tmp / n / "sessions" / "claude-code").is_dir()], "arm stores"
