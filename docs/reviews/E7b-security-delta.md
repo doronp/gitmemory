@@ -49,14 +49,15 @@ Code's flattened path (L4) — **one per lens**, which is the argument for havin
 run four rather than one.
 
 Three commits carry the earlier half: `810b9e3` (L2 F1–F5, L4 F1 and F6),
-`2bd6392` (L3-F1, L3-F4), `cf5320c` (L4 F3–F5). What is in the working tree with
-this document is L2-F6 (the shim's tracing guard) and L2-F7 (`hook/README.md`),
-L3-F2 (`safe_text` on the index path), L3-F3 (`MAX_CHARS`), and all three of L1
-— F1's two-token deletion in `_MID`, and F2 and F3 as comments.
+`2bd6392` (L3-F1, L3-F4), `cf5320c` (L4 F3–F5). The rest landed with this
+document in `3a3b144`: L2-F6 (the shim's tracing guard) and L2-F7
+(`hook/README.md`), L3-F2 (`safe_text` on the index path), L3-F3 (`MAX_CHARS`),
+and all three of L1 — F1's two-token deletion in `_MID`, and F2 and F3 as
+comments.
 
 Every source fix has a negative control. Six mutation rows were added or
 re-anchored this round and a targeted pass caught **6 of 6** by the intended
-test; the suite is at **517** rows. The two exceptions are stated where they
+test; the index stood at **517** rows. The two exceptions are stated where they
 occur and neither is silent: L4-F3's control is the doc test itself, run by hand
 because the test is corpus-gated and skips on a fresh checkout, and the two
 documentation-only dispositions (L1-F2, L1-F3) have nothing to mutate.
