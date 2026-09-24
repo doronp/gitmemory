@@ -453,11 +453,87 @@ def test_the_session_thresholds_are_the_ones_other_systems_publish(tmp_path):
     allof = measure(sorted(evidence), parsed, evidence, sessions)
     assert (allof.session_hit, allof.session_recall_all) == (1.0, 1.0)
 
+    # Two answer sessions, one of them reached. This is the only case that
+    # tells the two metrics apart, and without it the test is decorative:
+    # `found_sessions` is always a subset of `answer_sessions`, so on a
+    # single-session instance `>=` is exactly `bool()` and both metrics are
+    # the same number on every other path here. On the corpus they differ by
+    # 13.6 points. The fractional `session_recall` reads 0.5 on the same
+    # retrieval, which is the third distinct quantity the report prints. [E8]
+    partial = measure(sorted(evidence), parsed, evidence, sessions | {"unreached"})
+    assert (partial.session_hit, partial.session_recall_all) == (1.0, 0.0)
+    assert partial.session_recall == 0.5
+
+    # `session_mrr` is the third session number the report prints, and nothing
+    # asserted it either — setting it to a constant survived the suite. An
+    # unmatched offset consumes rank 1, so the first answer session lands at
+    # rank 2. [E8]
+    ranked = measure([10**9, *sorted(evidence)], parsed, evidence, sessions)
+    assert ranked.session_mrr == 0.5
+
     none = measure([10**9], parsed, evidence, sessions)
     assert (none.session_hit, none.session_recall_all) == (0.0, 0.0)
 
     empty = measure(sorted(evidence), parsed, evidence, set())
     assert (empty.session_hit, empty.session_recall_all, empty.session_recall) == (0.0, 0.0, 0.0)
+
+
+def test_the_session_report_keys_are_the_metrics_they_name():
+    """Nothing read the session metrics back out of the report dict.
+
+    `_summarise` is nine hand-written key-to-field pairs, and the only
+    whole-dict assertion in this file compares two arms against each other —
+    so a key wired to the wrong field mutates both sides equally and stays
+    green. Every published number leaves through here. Driving the fields off
+    the dataclass rather than a literal list means a tenth metric cannot be
+    added to `ArmMetrics` and quietly left out of the report. [E8]
+    """
+    fields = [f.name for f in dataclasses.fields(score.ArmMetrics)]
+    one = score.ArmMetrics(**{name: i for i, name in enumerate(fields)})
+    # `unmatched` is the one field whose report key is not its own name.
+    assert score._summarise([one]) == {
+        ("unmatched_per_query" if name == "unmatched" else name): float(i)
+        for i, name in enumerate(fields)
+    }
+
+
+def test_every_report_column_names_the_metric_printed_under_it():
+    """Headers and cells, held against each other index by index.
+
+    Neither list was reachable from a test, and they are two hand-maintained
+    sequences that have to stay parallel. Transposing one adjacent pair in
+    either — `S-Hit` and `S-All`, say — silently relabels every session number
+    this project prints, including the two the comparison page quotes as
+    headline figures, and nothing else in the suite notices. [E8]
+    """
+    from bench.__main__ import _metric_cells, _metric_columns
+
+    # Each metric is given its own position as its value, so a transposition
+    # lands as a number in the wrong column rather than as two equal numbers.
+    keys = [
+        "turn_recall",
+        "turn_hit",
+        "turn_recall_all",
+        "turn_mrr",
+        "session_recall",
+        "session_hit",
+        "session_recall_all",
+        "session_mrr",
+        "unmatched_per_query",
+    ]
+    cells = _metric_cells({key: float(i) for i, key in enumerate(keys)})
+    assert cells == [f"{float(i):.4f}" for i in range(8)] + ["8.00"]
+    assert _metric_columns(10) == [
+        "Turn recall",
+        "Hit@10",
+        "All@10",
+        "Turn MRR",
+        "Session recall",
+        "S-Hit@10",
+        "S-All@10",
+        "Session MRR",
+        "Unmatched/query",
+    ]
 
 
 def test_an_unmatched_offset_consumes_its_rank_and_is_counted(tmp_path):

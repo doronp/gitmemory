@@ -82,7 +82,7 @@ class ArmMetrics:
     # quantities. A session is coarser than a turn — several turns share one —
     # so these two read higher than their turn-level twins on the same
     # retrieval, and quoting a turn number against a session number understates
-    # this harness rather than flattering it. [E6]
+    # this harness rather than flattering it. [E8]
     session_hit: float  # 1.0 if at least one answer session was retrieved within k
     session_recall_all: float  # 1.0 only if every answer session was retrieved within k
 

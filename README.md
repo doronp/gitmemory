@@ -48,21 +48,26 @@ fourteen calibration gates, every arm including the ones that lost.
 
 **We do not beat the leaders on the numbers as each side publishes them.** On
 session-level retrieval on LongMemEval-S — the one axis where a shape-matched
-comparison exists — the shipped arm reads Hit@10 **0.9660** and all-evidence@10
-**0.8298**, against Total Recall's self-reported 0.9940 and 0.9773 and
-Recallium's 0.9840 and 0.9630.
+comparison exists — the shipped arm reads **S-Hit@10 0.9660** and **S-All@10
+0.8298**, against Total Recall's self-reported 0.9940 and 0.9773 and
+Recallium's 0.9840 and 0.9630. Those are the session-level columns; the
+turn-level `Hit@10` and `All@10` in the table above are different quantities
+and are lower.
 
-Two things make that less of a verdict than it looks. Their `k = 10` buys ten
-*sessions*; ours buys ten *turns*, and our ground-truth oracle tops out at
-**0.9319** under the turn budget — so two of the figures above us are higher
-than anything this harness can express. And against the one baseline running
-the *identical* dataset file with an LLM-free retrieval harness, agentmemory's
-BM25 configuration, we are ahead: **0.9660 to 0.9460**.
+Against agentmemory — the one baseline running the *identical* dataset file
+with an LLM-free retrieval harness — we split: ahead of its BM25 configuration
+**0.9660 to 0.9460**, behind its hybrid configuration at **0.9860**, which
+beats all three of our arms.
+
+Our own ground-truth oracle scores 0.9319 on S-All@10, and our shipped arm sits
+10.2 points under it. That gap is retrieval quality, not apparatus. Their
+`k = 10` selects ten sessions where ours selects ten turns, which is a real
+difference we have **not** measured the size of and should not lean on.
 
 The gap that matters more: most of the field leads with LLM-judged answer
 accuracy, and **we have no number on that axis at all.**
 
-[Full comparison](docs/benchmarks/E6-where-we-stand.md) — three tables split by
+[Full comparison](docs/benchmarks/E8-where-we-stand.md) — three tables split by
 measurement axis, what every cell is sourced to, and the ordered work that would
 make the comparison real.
 
@@ -101,14 +106,16 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | The same extractor on text nobody wrote for a benchmark | a census of every distinct human turn in a third-party MIT corpus of real sessions — 140 items, labelled blind by three annotators at 139/140 agreement | **precision 0.0000, recall 0.0000**. Seven fixes later, 0.1250 / 0.5000 — one true positive, and the set is a regression floor from the first fix onward |
 | …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | 9 of 61 — precision 0.15. After the two fixes: **54 withdrawn, all 7 left are reversals** — and read the caveat below before quoting that |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **985 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **584** negative controls |
+| The suite | on a fresh checkout, no downloads | **988 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **589** negative controls |
 
 Those two numbers do not add up, and should not: switching the corpus on
-collects 1300, not 1303. Three of the conformance cases fill parametrisations
+collects 1313, not 1316. Three of the conformance cases fill parametrisations
 that collect as one empty placeholder each while the corpus is absent, so they
-replace three of the 975 rather than joining them. The row used to read "plus",
-which quietly asserted the sum.
+replace three of the 988 rather than joining them. The row used to read "plus",
+which quietly asserted the sum. These figures were the only ones on the page no
+test pinned, and that is exactly why they were the ones that drifted — they
+read 1300, 1303 and 975 against a board already saying 984. Pinned now.
 
 The 328 conformance cases replay three MIT corpora — claude-code-log's fixtures
 through the Claude Code adapter, pi's and oh-my-pi's through the pi adapter —

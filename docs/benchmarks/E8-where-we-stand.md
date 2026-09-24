@@ -12,20 +12,24 @@ they should change what we do:
 1. **On session-level retrieval on LongMemEval-S, our shipped arm reads
    S-Hit@10 0.9660 and S-All@10 0.8298, against Total Recall's self-reported
    0.9940 and 0.9773.** Straight comparison: we lose, by 2.8 and 14.8 points.
-2. **That comparison is not clean, and the direction of the bias is against
-   us.** Their `k = 10` buys ten *sessions*. Ours buys ten *turns*, from a
-   corpus averaging 47.7 sessions and 493 turns per instance. Our own
-   ground-truth oracle — an arm that reads the answer offsets directly and
-   bypasses retrieval entirely — tops out at S-All@10 **0.9319** under the turn
-   budget. Total Recall's reported 0.9773 is *above our apparatus ceiling*. A
-   score we cannot reach with perfect retrieval is not a score we lost to; it
-   is a score measured on different apparatus.
+2. **The comparison is not clean, but we cannot say which way it is biased.**
+   Their `k = 10` buys ten *sessions*; ours buys ten *turns*. That is a real
+   structural difference and it is the first thing to fix. What it is *not* is
+   quantified by anything on this page — see [the budget
+   section](#the-budget-difference-is-real-and-unquantified), which corrects an
+   earlier draft of this document that claimed our oracle's 0.9319 was a
+   ceiling their 0.9773 sat above. It is not a ceiling, the 0.9319 is not a
+   budget effect, and the argument has been withdrawn.
 3. **We have no end-to-end QA accuracy number.** Total Recall's 98.0%, Mem0's
    94.4%, Honcho's 92.6% and the rest of the leaderboard are LLM-judged answer
    accuracy. On that axis gitmemory does not rank low — it is absent. Adding it
    is tractable and is item 1 of the work list at the bottom.
 
-Everything below is sourced. Vendor self-reports are marked. Our numbers come
+Every cell in Tables 1 and 2 is sourced, and vendor self-reports are marked.
+Table 3 is not a like-for-like table and its cells carry their attribution in
+prose rather than a column; two of its figures (Zep's 104 ms, Mem0's mean
+tokens) are second-hand from the papers named in the row and have not been
+reproduced here. Our numbers come
 from the run in the next section.
 
 ## Our run
@@ -73,17 +77,40 @@ approximately the same thing. Sorted by the strict metric where published.
 | **gitmemory `dense`** | **0.9723** | **0.8702** | 0.9033 | this run | yes | — |
 | **gitmemory `candidate`** (shipped) | **0.9660** | **0.8298** | 0.8863 | this run | yes | — |
 | agentmemory (BM25 only) | 0.9460 | — | — | same as above | yes | **yes — identical dataset file** |
-| LongMemEval paper, Stella V5 1.5B | 0.862 | — | — | [arXiv 2410.10813](https://arxiv.org/abs/2410.10813) | no | no — **M split**, not S |
+| *LongMemEval paper, Stella V5 1.5B* | *0.862* | — | — | [arXiv 2410.10813](https://arxiv.org/abs/2410.10813) | no | **not comparable — M split**, listed for context only |
 | *gitmemory `reference` oracle* | *1.0000* | *0.9319* | *1.0000* | this run | — | apparatus ceiling, not a system |
 
-Read the oracle row first. It is not a competitor; it is the ceiling this
-harness can express. Under a ten-*turn* budget, reading the ground-truth
-offsets directly still misses every answer session for some instances, because
-several instances need more distinct sessions than ten turns can touch, and
-because 45 answer sessions across 32 instances are unreachable in the source
-data at all. **0.9319 is the most any retriever can score here.** Two of the
-three systems above us report a number higher than that, which tells you their
-budget is not ours rather than telling you anything about their retriever.
+Read the oracle row second, and read it carefully, because the obvious reading
+of it is wrong. The oracle is not a competitor and **it is not a ceiling.** It
+retrieves `sorted(evidence)[:k]` — the ground-truth answer *turn* offsets. Its
+S-All@10 of 0.9319 is `438/470`: it fails on exactly the 32 instances that list
+an answer session containing no `has_answer` turn (45 of 890 answer sessions),
+so no offset the oracle can read lands in that session. That is a property of
+LongMemEval, already measured and written down in [E3
+§1](E3-longmemeval.md#five-things-this-run-does-not-let-you-say).
+
+A text retriever is not bound by it. The oracle can only return turns that are
+evidence; `candidate` can return any turn, including a non-evidence turn inside
+an answer session the offsets cannot reach. The `live_context` row is the proof
+in this very table: turn recall 0.0000 — it retrieves no evidence turn at all —
+and S-Hit@10 0.8894. Sessions are reachable through turns the oracle never
+returns. **Nothing here caps a retriever at 0.9319.**
+
+That row cuts both ways and the reverse edge is sharper: a session metric
+scores a hit for retrieving *any* turn in the right session, so `live_context`
+reads 0.8894 while holding **none** of the evidence. Session-level numbers —
+ours and everyone else's, since this is how the field measures — are a coarser
+question than "did you find the evidence", and 0.0000 turn recall beside
+0.8894 S-Hit is what that coarseness costs. It is an argument for publishing
+both, which is why both are in the run table.
+
+An earlier draft of this page said the opposite — that 0.9319 was "the most any
+retriever can score here" and that Total Recall's 0.9773 therefore sat above
+our apparatus ceiling. That was wrong, and it was wrong in the flattering
+direction: it turned a loss into an artefact. It is also the second time this
+repository has made that mistake; `de80d99` retracted the same claim at the
+`session_recall` level one commit series earlier. Recorded here rather than
+quietly deleted.
 
 The row that *is* clean is agentmemory's. It runs
 `longmemeval_s_cleaned.json` — byte-identical to our pinned dataset — with an
@@ -137,9 +164,11 @@ all and has to be argued rather than measured.
 
 ## Why we lose where we lose
 
-- **Budget mismatch, worth more than any retriever difference.** Ten turns is a
-  strictly tighter budget than ten sessions on a corpus with 47.7 sessions and
-  493 turns per instance. Our oracle ceiling of 0.9319 quantifies it.
+- **We are 10.2 points below our own oracle on S-All@10** — 0.8298 against
+  0.9319, on instances where the answer turns are all reachable within the
+  budget. That gap is retrieval quality, not apparatus, and it is the honest
+  headline of this section. See the next heading for why the budget argument
+  does not absorb it.
 - **The corpus is not the dataset.** `bench/synth.py` renders LongMemEval
   sessions into Claude Code JSONL, which adds 10.1% fabricated `tool_result`
   documents to the retrieval corpus and puts a fabricated `bash`/`git status`
@@ -152,6 +181,34 @@ all and has to be argued rather than measured.
 - **n = 470, not 500.** We exclude the 30 abstention instances. Recallium
   explicitly includes them. Total Recall says 500 without saying whether the
   abstention items are scored.
+
+## The budget difference is real and unquantified
+
+Their `k = 10` selects ten sessions. Ours selects ten turns. On its face that is
+tighter, and it was tempting to price the difference using the oracle. That
+does not work, and the reason is worth keeping:
+
+The calibration gate requires `reference turn_recall == 1.0` exactly
+(`bench/score.py`, the `apparatus` check), and it passes on every mode. The
+oracle retrieves `sorted(evidence)[:k]`, so its turn recall is
+`min(k, |evidence|) / |evidence|`. That equals 1.0 for all 470 instances only
+if **every instance has ten or fewer evidence turns**. So the ten-turn budget
+never truncates the oracle at all, and it cannot be what costs the oracle its
+6.8 points. Those points are the 32 dataset instances, nothing else.
+
+What follows is narrower than the earlier claim. The budget difference is
+structural and we should remove it by running with a session budget — item 2 of
+the work list. But we have **no measurement of its size**, we cannot currently
+say whether it flatters us or them, and we should stop implying it explains the
+gap. The one thing that is measured is that our shipped arm sits 10.2 points
+below our own oracle under identical conditions.
+
+Total Recall's 0.9773 being above our oracle's 0.9319 is then an open question,
+not an answer: it could mean their retrieval reaches sessions through
+non-evidence turns (which ours can do too and the oracle by construction
+cannot), or that their harness resolves answer sessions differently on the 32
+degenerate instances, or that they score a different instance set. We do not
+know, and the page should not pretend otherwise.
 
 ## What the field's numbers are worth
 

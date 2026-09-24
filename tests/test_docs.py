@@ -150,6 +150,35 @@ def test_the_readme_conformance_count_is_the_conformance_count():
     assert int(claimed.group(1).replace(",", "")) == cases
 
 
+def test_the_readme_arithmetic_paragraph_is_the_arithmetic():
+    """The paragraph explaining why the board's two counts do not sum.
+
+    It is the paragraph that makes the board honest, and it was the only set
+    of numbers on the page nothing checked — so it drifted, and sat at 1300 /
+    1303 / 975 beside a board reading 984 and 328 until a reviewer walked the
+    arithmetic by hand. Every other number in that table is pinned by the two
+    tests above; these three were pinned by nothing, which is the whole reason
+    they were the ones that went stale. [E8]
+    """
+    if not _corpus() or not _pi_corpus():
+        pytest.skip("the third-party corpora are not cloned; run tests/fetch_fixtures.sh")
+
+    text = _read("README.md")
+    offline = _collect(**NO_CORPUS)
+    with_corpus = _collect()
+    claimed = re.search(r"(\d[\d,]*) conformance cases", text)
+    assert claimed, "the README no longer states a conformance count"
+    conformance = int(claimed.group(1).replace(",", ""))
+
+    # The gap is the parametrised corpus tests, each of which collects one
+    # empty placeholder while the corpus is absent and is replaced — not
+    # joined — by its cases once it is present.
+    placeholders = offline + conformance - with_corpus
+    assert placeholders == 3, f"{placeholders} placeholder(s); the README says three"
+    assert f"collects {with_corpus}, not {offline + conformance}." in text
+    assert f"replace three of the {offline}" in text
+
+
 def test_the_design_document_does_not_promise_a_file_that_is_not_written():
     """`manifest.json` was the name in every version of the verification recipe.
 

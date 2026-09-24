@@ -919,6 +919,48 @@ MUTANTS = [
         "        session_hit=1.0 if found_turns else 0.0,",
         "test_the_session_thresholds_are_the_ones_other_systems_publish",
     ),
+    # The four below were written by a standalone reviewer as mutations that
+    # would survive, and they did: the session test walked only instances with
+    # one answer session, where `found_sessions >= answer_sessions` collapses
+    # to `bool(found_sessions)` and the two metrics are indistinguishable. The
+    # fix was a two-session case in the test; these pin it. [E8]
+    (
+        "the lenient session threshold is the strict one",
+        "bench/score.py",
+        "        session_hit=1.0 if found_sessions else 0.0,",
+        "        session_hit=1.0 if answer_sessions and "
+        "found_sessions >= answer_sessions else 0.0,",
+        "test_the_session_thresholds_are_the_ones_other_systems_publish",
+    ),
+    (
+        "the strict session threshold is the lenient one",
+        "bench/score.py",
+        "        session_recall_all=(1.0 if answer_sessions and "
+        "found_sessions >= answer_sessions else 0.0),",
+        "        session_recall_all=(1.0 if answer_sessions and found_sessions else 0.0),",
+        "test_the_session_thresholds_are_the_ones_other_systems_publish",
+    ),
+    (
+        "the strict session mean aggregates the lenient metric",
+        "bench/score.py",
+        '        "session_recall_all": statistics.mean(m.session_recall_all for m in ms),',
+        '        "session_recall_all": statistics.mean(m.session_hit for m in ms),',
+        "test_the_session_report_keys_are_the_metrics_they_name",
+    ),
+    (
+        "the session reciprocal rank is a constant",
+        "bench/score.py",
+        "                session_mrr = 1.0 / rank",
+        "                session_mrr = 1.0",
+        "test_the_session_thresholds_are_the_ones_other_systems_publish",
+    ),
+    (
+        "the two session columns are transposed",
+        "bench/__main__.py",
+        "        f\"{m['session_hit']:.4f}\",\n        f\"{m['session_recall_all']:.4f}\",",
+        "        f\"{m['session_recall_all']:.4f}\",\n        f\"{m['session_hit']:.4f}\",",
+        "test_every_report_column_names_the_metric_printed_under_it",
+    ),
     (
         "alpha is not corrected for the number of modes",
         "bench/score.py",
@@ -4553,7 +4595,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "84 mutants",
+        "a full pass is 5" + "89 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5470,7 +5512,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 584 mutants × two suite runs —
+    The filter exists because a full pass is 589 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

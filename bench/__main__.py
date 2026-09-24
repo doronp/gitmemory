@@ -59,6 +59,33 @@ def _table(header: list[str], rows: list[list[str]]) -> None:
     print()
 
 
+def _metric_columns(k: int) -> list[str]:
+    """Headers for `_metric_cells`, in the same order, which is the whole point.
+
+    `Hit@k` and `All@k` bracket `Turn recall` deliberately, and the `S-` pair
+    brackets `Session recall` the same way: the fractional mean is ours, the
+    thresholds either side are what other systems publish, and printing them
+    adjacent is what stops a reader comparing a fractional recall against
+    someone else's hit rate.
+
+    Split out of `main` so a test can hold it against `_metric_cells`. It was
+    unreachable from a test before, and transposing two entries in either list
+    relabels every number this project prints with the suite green — which is
+    a bad property for the two columns the comparison page quotes. [E8]
+    """
+    return [
+        "Turn recall",
+        f"Hit@{k}",
+        f"All@{k}",
+        "Turn MRR",
+        "Session recall",
+        f"S-Hit@{k}",
+        f"S-All@{k}",
+        "Session MRR",
+        "Unmatched/query",
+    ]
+
+
 def _metric_cells(m: dict[str, float]) -> list[str]:
     return [
         f"{m['turn_recall']:.4f}",
@@ -167,21 +194,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("Calibration passed.")
     print()
-    # `Hit@k` and `All@k` bracket `Turn recall` deliberately: the fractional
-    # mean in the middle is ours, the two either side are what other systems
-    # publish, and printing them adjacent is what stops a reader comparing a
-    # fractional recall against someone else's hit rate.
-    cols = [
-        "Turn recall",
-        f"Hit@{results['k']}",
-        f"All@{results['k']}",
-        "Turn MRR",
-        "Session recall",
-        f"S-Hit@{results['k']}",
-        f"S-All@{results['k']}",
-        "Session MRR",
-        "Unmatched/query",
-    ]
+    cols = _metric_columns(results["k"])
 
     print("## Overall")
     print()
