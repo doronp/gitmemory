@@ -72,6 +72,19 @@ class ArmMetrics:
     # derived from the set the loop already builds; neither costs a pass.
     turn_hit: float  # 1.0 if at least one evidence turn was retrieved within k
     turn_recall_all: float  # 1.0 only if every evidence turn was retrieved within k
+    # The same two thresholds applied to `found_sessions`, because the published
+    # numbers this harness has to be read against are session-level: a vendor
+    # reporting "at least one correct past session landed in the top K" is
+    # reporting `session_hit`, and one reporting "the full set of correct
+    # sessions in the top K" is reporting `session_recall_all`. Neither has a
+    # counterpart in the fractional `session_recall` above, so comparing that
+    # mean-of-fractions against either of them compares two different
+    # quantities. A session is coarser than a turn — several turns share one —
+    # so these two read higher than their turn-level twins on the same
+    # retrieval, and quoting a turn number against a session number understates
+    # this harness rather than flattering it. [E6]
+    session_hit: float  # 1.0 if at least one answer session was retrieved within k
+    session_recall_all: float  # 1.0 only if every answer session was retrieved within k
 
 
 def normal_cdf(x: float) -> float:
@@ -215,6 +228,8 @@ def _measure(
         unmatched=unmatched,
         turn_hit=1.0 if found_turns else 0.0,
         turn_recall_all=1.0 if evidence and found_turns >= evidence else 0.0,
+        session_hit=1.0 if found_sessions else 0.0,
+        session_recall_all=(1.0 if answer_sessions and found_sessions >= answer_sessions else 0.0),
     )
 
 
@@ -453,4 +468,6 @@ def _summarise(ms: list[ArmMetrics]) -> dict[str, float]:
         "unmatched_per_query": statistics.mean(m.unmatched for m in ms),
         "turn_hit": statistics.mean(m.turn_hit for m in ms),
         "turn_recall_all": statistics.mean(m.turn_recall_all for m in ms),
+        "session_hit": statistics.mean(m.session_hit for m in ms),
+        "session_recall_all": statistics.mean(m.session_recall_all for m in ms),
     }

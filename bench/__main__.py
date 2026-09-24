@@ -66,6 +66,8 @@ def _metric_cells(m: dict[str, float]) -> list[str]:
         f"{m['turn_recall_all']:.4f}",
         f"{m['turn_mrr']:.4f}",
         f"{m['session_recall']:.4f}",
+        f"{m['session_hit']:.4f}",
+        f"{m['session_recall_all']:.4f}",
         f"{m['session_mrr']:.4f}",
         f"{m['unmatched_per_query']:.2f}",
     ]
@@ -175,6 +177,8 @@ def main(argv: list[str] | None = None) -> int:
         f"All@{results['k']}",
         "Turn MRR",
         "Session recall",
+        f"S-Hit@{results['k']}",
+        f"S-All@{results['k']}",
         "Session MRR",
         "Unmatched/query",
     ]

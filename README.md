@@ -44,6 +44,28 @@ ships the arm that came last.
 [Full gate report](docs/benchmarks/E3-longmemeval.md) — four compaction modes,
 fourteen calibration gates, every arm including the ones that lost.
 
+## Where this sits against other memory systems
+
+**We do not beat the leaders on the numbers as each side publishes them.** On
+session-level retrieval on LongMemEval-S — the one axis where a shape-matched
+comparison exists — the shipped arm reads Hit@10 **0.9660** and all-evidence@10
+**0.8298**, against Total Recall's self-reported 0.9940 and 0.9773 and
+Recallium's 0.9840 and 0.9630.
+
+Two things make that less of a verdict than it looks. Their `k = 10` buys ten
+*sessions*; ours buys ten *turns*, and our ground-truth oracle tops out at
+**0.9319** under the turn budget — so two of the figures above us are higher
+than anything this harness can express. And against the one baseline running
+the *identical* dataset file with an LLM-free retrieval harness, agentmemory's
+BM25 configuration, we are ahead: **0.9660 to 0.9460**.
+
+The gap that matters more: most of the field leads with LLM-judged answer
+accuracy, and **we have no number on that axis at all.**
+
+[Full comparison](docs/benchmarks/E6-where-we-stand.md) — three tables split by
+measurement axis, what every cell is sourced to, and the ordered work that would
+make the comparison real.
+
 ## What it keeps
 
 The raw bytes, copied out at every compaction, tiled by byte offset so the
@@ -79,8 +101,8 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | The same extractor on text nobody wrote for a benchmark | a census of every distinct human turn in a third-party MIT corpus of real sessions — 140 items, labelled blind by three annotators at 139/140 agreement | **precision 0.0000, recall 0.0000**. Seven fixes later, 0.1250 / 0.5000 — one true positive, and the set is a regression floor from the first fix onward |
 | …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | 9 of 61 — precision 0.15. After the two fixes: **54 withdrawn, all 7 left are reversals** — and read the caveat below before quoting that |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **984 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **582** negative controls |
+| The suite | on a fresh checkout, no downloads | **985 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **584** negative controls |
 
 Those two numbers do not add up, and should not: switching the corpus on
 collects 1300, not 1303. Three of the conformance cases fill parametrisations

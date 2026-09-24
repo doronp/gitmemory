@@ -429,6 +429,37 @@ def test_hit_and_all_are_the_two_thresholds_recall_averages_over(tmp_path):
     assert (empty.turn_hit, empty.turn_recall_all, empty.turn_recall) == (0.0, 0.0, 0.0)
 
 
+def test_the_session_thresholds_are_the_ones_other_systems_publish(tmp_path):
+    """Session Hit@k and All@k, because the published numbers are session-level.
+
+    A vendor reporting "at least one correct past session landed in the top K"
+    is reporting `session_hit`; one reporting "the full set of correct sessions
+    in the top K" is reporting `session_recall_all`. Neither is the fractional
+    `session_recall`, so the two thresholds exist for the same reason their
+    turn-level twins do: to stop a reader comparing a mean of fractions against
+    someone else's thresholded rate.
+
+    The empty-ground-truth trap is the one that matters here. `set() >= set()`
+    is True, so an instance with no answer sessions would score a perfect
+    `session_recall_all` for retrieving nothing, and a sweep over a corpus with
+    any such instance would report a number inflated by them.
+    """
+    inst = make_instance(0, evidence_turns=3)
+    transcript = synth.to_transcript(inst, seed=13, compaction=None)
+    parsed = parse_bytes(transcript.bytes_data, tmp_path)
+    evidence = set(transcript.evidence_byte_offsets)
+    sessions = set(inst.answer_session_ids)
+
+    allof = measure(sorted(evidence), parsed, evidence, sessions)
+    assert (allof.session_hit, allof.session_recall_all) == (1.0, 1.0)
+
+    none = measure([10**9], parsed, evidence, sessions)
+    assert (none.session_hit, none.session_recall_all) == (0.0, 0.0)
+
+    empty = measure(sorted(evidence), parsed, evidence, set())
+    assert (empty.session_hit, empty.session_recall_all, empty.session_recall) == (0.0, 0.0, 0.0)
+
+
 def test_an_unmatched_offset_consumes_its_rank_and_is_counted(tmp_path):
     """Past the end and in the gap between two turns: both are misses, both count."""
     inst = make_instance(0)

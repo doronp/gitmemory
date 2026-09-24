@@ -905,6 +905,21 @@ MUTANTS = [
         "test_the_shuffled_arm_is_asked_another_instances_question",
     ),
     (
+        "an instance needing no sessions scores a perfect session all",
+        "bench/score.py",
+        "        session_recall_all=(1.0 if answer_sessions and "
+        "found_sessions >= answer_sessions else 0.0),",
+        "        session_recall_all=(1.0 if found_sessions >= answer_sessions else 0.0),",
+        "test_the_session_thresholds_are_the_ones_other_systems_publish",
+    ),
+    (
+        "the session hit threshold reads the turn set",
+        "bench/score.py",
+        "        session_hit=1.0 if found_sessions else 0.0,",
+        "        session_hit=1.0 if found_turns else 0.0,",
+        "test_the_session_thresholds_are_the_ones_other_systems_publish",
+    ),
+    (
         "alpha is not corrected for the number of modes",
         "bench/score.py",
         "    alpha = ALPHA / max(1, len(modes))",
@@ -4538,7 +4553,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "82 mutants",
+        "a full pass is 5" + "84 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5455,7 +5470,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 582 mutants × two suite runs —
+    The filter exists because a full pass is 584 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 
