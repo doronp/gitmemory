@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center"><strong>What your coding agent loses at compaction, kept byte for byte, provably, on your own machine.</strong></p>
+<p align="center"><strong>Memory for AI agents: what your agent loses at compaction, kept byte for byte, provably, on your own machine.</strong></p>
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
