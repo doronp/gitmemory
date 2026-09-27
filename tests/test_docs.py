@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Claims the documentation makes that the repository can check for itself.
 
 A docs review round found ten wrong statements, and the common shape of them was

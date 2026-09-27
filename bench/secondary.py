@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The secondary set: every human turn in somebody else's real sessions.
 
 Every extraction number before this one was written by an agent. The gate

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The property `conftest.py` exists for, asserted rather than assumed.
 
 An autouse fixture is invisible at every call site it protects, so the one

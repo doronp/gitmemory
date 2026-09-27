@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """LongMemEval-S session retrieval, scored the way the peers score it. [E9]
 
 `score.py` retrieves turns from a transcript padded with fabricated tool noise;

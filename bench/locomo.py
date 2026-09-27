@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """LoCoMo evidence-retrieval benchmark, run through the shipped pipeline. [E9]
 
 LoCoMo (snap-research/locomo, CC BY-NC 4.0) is never vendored: `fetch_locomo.sh`

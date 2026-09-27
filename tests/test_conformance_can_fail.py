@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Mutation tests for the conformance suite itself.
 
 The E1 conformance suite was vacuous. A six-lens review proved it by mutating

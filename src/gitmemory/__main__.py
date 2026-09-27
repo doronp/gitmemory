@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """`python -m gitmemory` — capture, verify, push.
 
 Deliberately thin. `push` exists at E2 only so the refusal is a real, runnable

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """E6: the dashboard — the views it reads and the server it starts.
 
 Two halves, and they fail for different reasons.

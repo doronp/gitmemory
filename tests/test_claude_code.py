@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """One test per DESIGN.md §2.2 trap. Each was found by recon on real transcripts.
 
 Fixtures are synthetic or third-party (claude-code-log, MIT). This machine's

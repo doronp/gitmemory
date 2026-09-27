@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Mutation + attribution check for the E3 index, run by hand, not by pytest.
 
 Two questions, because the first one alone is not enough:

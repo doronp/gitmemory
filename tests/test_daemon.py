@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The watcher. [E4]
 
 The property under test throughout: **if the hook is never installed the system

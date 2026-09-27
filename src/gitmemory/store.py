@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Append-only segment store, generations, and the contiguity proof.
 
 The store never writes to the source transcript. It copies out the bytes that

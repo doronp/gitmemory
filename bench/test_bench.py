@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Tests for the benchmark and calibration harness.
 
 Every test here is meant to fail against a specific mutation of the code it

@@ -1,5 +1,7 @@
 #!/bin/sh
 { set +xv; } 2>/dev/null  # line 2 on purpose — see "the tracing guard" below
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 # gitmemory hook shim. Writes stdin to the spool and exits 0, always.
 #
 # It constructs no JSON, parses nothing, and spawns nothing. The watcher

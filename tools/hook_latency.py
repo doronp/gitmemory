@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """E4: Hook shim latency benchmark tool.
 
 Runs the POSIX sh hook shim N times (default 1000) against a realistic

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Scoring for the decision gate, and a runner that needs no generator.
 
 Split out of `bench/decisions.py` for one reason: an extractor developed with

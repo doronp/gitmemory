@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Scoring, calibration, and the ship gate for the retrieval benchmark.
 
 The gate is the point of this file. A benchmark that prints numbers is a

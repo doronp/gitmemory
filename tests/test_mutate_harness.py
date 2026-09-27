@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The mutation harness scores itself correctly.
 
 `tests/mutate_index.py` is not run by pytest — it is a hand-run tool, and every

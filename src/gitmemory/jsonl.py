@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-FileCopyrightText: 2026 Anoop Grover (fable, MIT)
+# SPDX-License-Identifier: Apache-2.0 AND MIT
 """Streaming JSONL reader with exact byte offsets.
 
 Vendored from fable (https://github.com/grooverLab/fable), MIT, Copyright (c)

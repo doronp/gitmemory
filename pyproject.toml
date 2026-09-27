@@ -5,7 +5,31 @@ description = "Git-versioned, contiguity-checked memory for agents that keep a l
 readme = "README.md"
 requires-python = ">=3.13"
 license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "licenses/*"]
+authors = [{ name = "The gitmemory authors" }]
+maintainers = [{ name = "doronp" }]
+keywords = ["agent-memory", "llm-agents", "claude-code", "transcripts", "git", "retrieval", "bm25"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+    "Topic :: System :: Archiving",
+]
 dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/doronp/gitmemory"
+Documentation = "https://github.com/doronp/gitmemory/tree/main/docs"
+Source = "https://github.com/doronp/gitmemory"
+Issues = "https://github.com/doronp/gitmemory/issues"
+Changelog = "https://github.com/doronp/gitmemory/blob/main/CHANGELOG.md"
+Security = "https://github.com/doronp/gitmemory/security/policy"
 
 [project.scripts]
 gitmemory = "gitmemory.__main__:main"

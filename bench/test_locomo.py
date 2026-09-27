@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The LoCoMo harness on a synthetic sample shaped like the pinned release. [E9]"""
 
 from __future__ import annotations

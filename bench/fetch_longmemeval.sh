@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 # Fetch the third-party LongMemEval-Cleaned dataset (MIT licence).
 # This script is a utility for the gitmemory benchmark harness.
 # It must never be pointed at the owner's own data under ~/.claude/projects or similar.

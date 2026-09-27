@@ -28,3 +28,6 @@ bench/fixture-dev/
 # worktree is a checkout, so git offers to commit it as a gitlink — and did,
 # once. Their scratch is theirs; it is not this repository's history.
 .claude/
+# A local editor tool's cache. Not this project's, and it once rode along into
+# the sdist because nothing ignored it.
+.impeccable/

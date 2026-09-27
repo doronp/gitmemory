@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Two fixtures: one keeps tests out of the developer's home, one budgets I/O.
 
 A test suite for a program that reads transcripts and writes a store has two

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Five adversarial probes in vocabularies no fixture split uses.
 
 The gate fixture scores 1.0000/1.0000 and has done through five rounds of real

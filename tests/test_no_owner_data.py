@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The repository must not contain anyone's personal paths, data, or history.
 
 gitmemory is a generic memory system. It was built on a machine with 1.1 GB of

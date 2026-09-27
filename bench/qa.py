@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """End-to-end QA accuracy: retrieve, an LLM reads, an LLM judges. [E9]
 
 The LLM lives only here, in the benchmark harness; `src/gitmemory/` stays

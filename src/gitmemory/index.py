@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Retrieval index — SQLite FTS5 over the store, rebuilt from raw, never authoritative.
 
 Three decisions, all of them reversible, none of them accidental:

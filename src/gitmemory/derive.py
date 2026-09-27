@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Derivation: key ideas and a timeline, rebuilt from committed bytes alone.
 
 Three rules, and the whole module is downstream of them:

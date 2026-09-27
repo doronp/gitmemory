@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Adapter registry. An agent is *supported* when it passes tests/conformance.py.
 
 An adapter is exactly two callables and nothing else:

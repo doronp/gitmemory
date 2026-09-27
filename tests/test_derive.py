@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """E5: derivation — key ideas and the timeline.
 
 The decision extractor has its own gate and its own corpus; these are the tests

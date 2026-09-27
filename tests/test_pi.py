@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The pi / oh-my-pi adapter. One test per thing the format does differently.
 
 Fixtures are synthetic or third-party (earendil-works/pi and can1357/oh-my-pi,

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Synthetic transcript generator, gold resolver, and baselines for the E5 decision gate.
 
 Every session in the corpus is written from templates and a seeded RNG, satisfying

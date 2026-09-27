@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """E2: the segment store, generations, and the contiguity proof.
 
 The gate for this epoch is "a fuzzer cannot produce an undetected hole", so the

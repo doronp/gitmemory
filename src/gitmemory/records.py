@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Canonical records — the agent-agnostic projection every adapter must produce.
 
 Two rules make the committed tree diffable, and both are load-bearing:

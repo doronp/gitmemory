@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Dump a split of the decision corpus to disk, generator not included.
 
     python -m bench.fixture bench/fixture-dev            # dev, seed 42

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The localhost dashboard: Datasette over the index, and nothing of our own.
 
 Datasette is Apache-2.0, reads SQLite, ships faceting, filtering, charts, CSV

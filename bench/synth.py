@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Synthetic transcript generator for LongMemEval instances."""
 
 from __future__ import annotations

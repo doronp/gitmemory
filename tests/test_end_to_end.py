@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The whole path, with nothing stubbed: agent -> shim -> spool -> watcher -> git. [E4]
 
 Every other test in E4 exercises one half. `test_hook.py` runs the real shim and

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The egress gate — the only place secrets are looked for.
 
 Raw stays local and verbatim; that is the thesis, and scrubbing before hashing

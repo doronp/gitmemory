@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The watcher: the thing that makes capture a guarantee rather than a hope.
 
 DESIGN.md §2.3 splits the trigger in two. The hook is for latency and is

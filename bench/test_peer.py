@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The peer-protocol scorer, against numbers worked by hand. [E9]"""
 
 from __future__ import annotations

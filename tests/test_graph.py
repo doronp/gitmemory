@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """E5: the decision graph emitter.
 
 `derive` decides what a decision is and is measured for it. This module only

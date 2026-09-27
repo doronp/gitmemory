@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The adapter contract. An agent is *supported* when `check_adapter` passes.
 
 Agent-agnostic on purpose: Hermes, Kimi and opencode adapters import this

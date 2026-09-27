@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The decision graph: gitmemory supplies the claims, graphify supplies the graph.
 
 `derive.decisions` says *which blocks are decisions*, which is the part that can

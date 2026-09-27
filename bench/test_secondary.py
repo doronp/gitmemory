@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The secondary set, pinned.
 
 The scores here are `==`, not `>=`. A floor is right for a probe, where the

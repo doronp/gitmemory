@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The store's own git repository. Every call is `git -C <home>`, never cwd.
 
 This module is the only place in gitmemory that runs git. It is small on

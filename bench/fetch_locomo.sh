@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 # Fetch the third-party LoCoMo dataset (snap-research/locomo, CC BY-NC 4.0).
 # Never vendored: only scores computed from it are published. [E9]
 # This script is a utility for the gitmemory benchmark harness.

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """Claude Code adapter: ~/.claude/projects/**/*.jsonl -> canonical records.
 
 Every branch here exists because recon on real transcripts found a way to get

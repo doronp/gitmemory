@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The probe scores, pinned as a floor.
 
 These are not a gate. The gate is `docs/DESIGN.md`'s pre-registered

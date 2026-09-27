@@ -1,4 +1,6 @@
 #!/bin/sh
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 # Fetch the third-party conformance corpora. Not vendored: they belong to their
 # authors, and every pi/oh-my-pi fixture carries its author's home directory in
 # a `cwd` field, so a vendored copy would put somebody else's absolute paths in

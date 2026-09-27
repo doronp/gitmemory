@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """E4: conformance and durability tests for the POSIX sh hook shim.
 
 The shim is the entry point for all capture triggers. It must never block the

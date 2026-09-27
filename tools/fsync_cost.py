@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """What `os.fsync` costs against what `F_FULLFSYNC` costs, on this machine.
 
 `store._fsync_dir` chooses the cheap one deliberately and its docstring says by

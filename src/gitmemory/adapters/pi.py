@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """pi / oh-my-pi adapter: ~/.pi/agent/sessions/**/*.jsonl -> canonical records.
 
 pi (earendil-works/pi) and oh-my-pi (can1357/oh-my-pi, a fork of it) write the

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """E3: the retrieval index.
 
 The gate for this epoch is a measured recall number, which `bench/` produces.

@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2026 The gitmemory authors
+# SPDX-License-Identifier: Apache-2.0
 """The git layer. [E4]
 
 Every test here runs a real `git`, because every property this module claims is
