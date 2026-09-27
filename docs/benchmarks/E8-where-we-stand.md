@@ -141,6 +141,13 @@ the question "do we beat them" is usually asked about these.
 | Zep | 71.2% | gpt-4o | arXiv 2501.13956 Table 2 | yes |
 | **gitmemory** | **none** | — | — | — |
 
+> **Since measured (E9).** gitmemory has no reader model, so at E8 it had no
+> QA number to report. E9 added an eval-only reader and judge (`bench/qa.py`,
+> never imported by the product): **94.2%, 5th of 10**, with a Gemini 3.1 Pro
+> reader and judge rather than each vendor's own. See
+> [E9-peer-protocols.md](E9-peer-protocols.md). The table above is kept as E8
+> wrote it.
+
 Two caveats worth more than the numbers. First, **every row is a vendor
 self-report** — there is no neutral, populated LongMemEval leaderboard. Second,
 Total Recall's own page annotates its 98.0% as "measured on an earlier
