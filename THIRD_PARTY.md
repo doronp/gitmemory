@@ -115,13 +115,19 @@ code, not merely the copyright line.** Verbatim upstream texts:
 
 Not redistributed here, so no licence text travels with this repository — but
 the project's rule is that attribution lands when the first line of code
-depends on something, and `src/gitmemory/derive.py` now does.
+depends on something. Versions are the ones in `uv.lock`; licences were read
+from PyPI.
 
 | Package | Version verified | Licence | Used for |
 |---|---|---|---|
 | `sumy` | 0.13.0 | Apache-2.0 | LexRank over prose blocks (`derive.ideas`) |
 | `numpy` | ≥2.0 | BSD-3-Clause | LexRank's matrix; sumy does not declare it |
 | `graphifyy` | 0.9.65 | Apache-2.0 | the decision graph (`graph.build` → `build_from_json`) |
+| `datasette` | 0.65.5 | Apache-2.0 | the dashboard (`serve` extra) |
+| `datasette-dashboards` | 0.8.0 | Apache-2.0 | the dashboard's views (`serve` extra) |
+| `datasette-render-markdown` | 2.2.1 | Apache-2.0 | view descriptions (`serve` extra) |
+| `model2vec` | 0.9.0 | MIT | the `dense` bench arm (`hybrid` extra; `recall` does not use it) |
+| `flashrank` | 0.2.10 | Apache-2.0 | the `rerank` bench arms (`hybrid` extra; `recall` does not use it) |
 
 `sumy`'s default tokenizer downloads an `nltk` `punkt` model on first use.
 gitmemory never reaches it: `derive._Tok` supplies the two methods sumy's
@@ -140,6 +146,17 @@ decision *is*, which is the part that can be wrong, and keeps the gate on it.
 `tests/test_graph.py` asserts our emitted dict against graphify's own
 `validate_extraction` rather than against our reading of its schema, so an
 upgrade that moves a required field fails a test instead of a diagram.
+
+## Benchmark data, fetched at run time
+
+Never vendored or committed. Each script pins a revision and a sha256 and
+refuses a file whose digest differs; only scores computed from the data are
+published. [docs/REPRODUCE.md](docs/REPRODUCE.md#dataset-licensing) has the details.
+
+| Dataset | Licence | Fetched by | Used for |
+|---|---|---|---|
+| LongMemEval-S cleaned (`xiaowu0162/longmemeval-cleaned`) | MIT | `bench/fetch_longmemeval.sh` | E3, E8, E9 LongMemEval rows |
+| LoCoMo (`snap-research/locomo`) | **CC BY-NC 4.0**, non-commercial | `bench/fetch_locomo.sh` | E9 LoCoMo rows |
 
 ## Not taken
 

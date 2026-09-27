@@ -22,8 +22,8 @@ The first public release, 0.1.0. What it contains:
   dialects). They pass 328 conformance cases drawn from three third-party MIT
   corpora.
 - **Retrieval.** A SQLite FTS5 (BM25) index rebuilt from raw bytes, and
-  `gitmemory recall`. The optional `hybrid` extra adds the dense and rerank
-  arms that the benchmarks score.
+  `gitmemory recall`. The optional `hybrid` extra installs what the
+  benchmarks' dense and rerank arms need; `recall` itself stays BM25.
 - **Derivation.** `gitmemory derive` produces key ideas and a timeline.
   Decision-graph extraction is opt-in (`--graph`).
 - **Dashboard.** `gitmemory dashboard` runs Datasette over the index,

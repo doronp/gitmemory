@@ -115,6 +115,11 @@ evidence of anything by itself.
 
 **The gate is met: 1.0000 ≥ 0.85 and 1.0000 ≥ 0.60.**
 
+> *Since (2026-09-22, E5 fix 2, `d56196a`):* tightening the extractor against
+> real sessions took this held-out split to **1.0000 / 0.7428** (257 of 346).
+> It still clears the bar. The trade is priced in
+> [E5-secondary-set.md](E5-secondary-set.md); the run above is kept as scored.
+
 ### What changed between the runs
 
 The guards were rewritten as classes. The one real bug: `_REPAIR` — "that's a

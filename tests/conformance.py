@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The adapter contract. An agent is *supported* when `check_adapter` passes.
 
-Agent-agnostic on purpose: Hermes, Kimi and opencode adapters import this
-unchanged. If a rule here only makes sense for Claude Code, it belongs in
+Agent-agnostic on purpose: the Claude Code and pi adapters both run it
+unchanged, and so must the next one. If a rule here only makes sense for Claude Code, it belongs in
 test_claude_code.py instead.
 
 Every rule below is written so that it *fails* for an adapter that loses data.

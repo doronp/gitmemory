@@ -549,10 +549,14 @@ SQLite FTS5 with **separate columns** and per-column `bm25()` weights. Flat inde
 failure: tool output is the bulk of a transcript and the least of its signal, so flat BM25 returns
 pasted logs.
 
-A dense arm (Model2Vec, RRF at k=60) and a rerank arm (FlashRank on top-50) are planned, shipped as
-the **optional `hybrid` extra**, and **have never been run** — `docs/benchmarks/E3-longmemeval.md`
-records both as *"arm not available"* against the 470-instance gate. Until they run, FTS5 alone is
-the measured system and they are a hypothesis.
+A dense arm (Model2Vec, RRF at k=60) and a rerank arm (FlashRank on top-50) were planned, shipped as
+the **optional `hybrid` extra**. This paragraph used to say they had never been run, and
+`docs/benchmarks/E3-longmemeval.md` recorded both as *"arm not available"*. **[E3 rerun, `85ce76d`:
+both have now run on the 470-instance gate, and both beat BM25** — `dense` (Model2Vec alone) 0.8215
+and `rerank` (FlashRank over BM25's top 50) 0.8295 turn recall, against FTS5's 0.7456. E9 added an
+RRF `hybrid` arm (BM25 + dense, k=60) and `rerank12` (a MiniLM-L-12 cross-encoder over BM25's top
+200) in `docs/benchmarks/E9-peer-protocols.md`. All of them are bench arms and none is wired into
+`recall`, so the shipped system is FTS5 alone, and FTS5 is the arm that came last.**]**
 
 **[E4, review: docs — this paragraph used to give the bulk as "~79% of text volume" and to settle
 ANN with "at ~144 k vectors numpy brute force is 5.8 ms and *exact*". Neither number had a source
@@ -620,6 +624,9 @@ answers the token-burn objection.)*
 **UNVERIFIED, must be tested before claiming coexistence:** whether multiple `UserPromptSubmit`
 hooks' `additionalContext` outputs concatenate or last-wins.
 
+**As built:** the CLI only. There is no MCP server and no `UserPromptSubmit` hook in `src/`, so
+nothing is injected; injection cost is carried as `NOT BUILT` on the dashboard (§2.9).
+
 ### 2.9 Dashboard
 
 `uvx datasette --immutable $GITMEMORY_HOME/index/gitmemory.db -m dashboard.yml --host 127.0.0.1
@@ -658,8 +665,9 @@ verify claims against. Seven SQL views *inside the database*, so `sqlite3` and t
 dashboard get the same definitions: `dash_corpus` · `dash_growth` · `dash_contiguity` ·
 `dash_requests` · `dash_unbilled` · `dash_spend` · `dash_unmeasured`. Deviations:
 
-- **Quality and Health are not built.** Quality needs the three retriever arms the environment
-  cannot install (§3) — a panel reading one arm would claim a comparison that has not happened.
+- **Quality and Health are not built.** Quality needs a comparison across retriever arms, and the
+  index the dashboard reads holds only the shipped BM25 arm; the others run in `bench/` (§3) — a
+  panel reading one arm would claim a comparison it cannot show.
   Health needs daemon liveness and hook latency, which are not in the index.
 - **No dollar figure, deliberately.** "Estimated $ + price-snapshot date" above would make this
   repository a price list with an expiry date nobody watches, and a stale one is worse than
@@ -696,6 +704,11 @@ Public + synthetic only. **Never this machine's history.**
   ground-truth errors. An earlier revision put the count at 99; that number has no source recorded
   here and is not repeated until one is. The licence alone decides the question, and a human ruling
   on CC BY-NC 4.0 is required before any LoCoMo number is published at all.
+  **[E9: the ruling was made** — scores may be published, the data is never vendored.
+  `bench/fetch_locomo.sh` downloads it at run time, and the LoCoMo numbers are in
+  `docs/benchmarks/E9-peer-protocols.md`, which also relays a source for the 99:
+  [locomo-audit](https://github.com/dial481/locomo-audit), 99 of the 1,540 category 1–4 gold
+  answers.**]**
 - **`thedotmack/membench` (MIT) ablation design**, borrowed: 4 arms (candidate / none / shuffled /
   reference), item-paired, Bonferroni-corrected, calibration gate. The `none` arm is a floor **by
   construction** (it returns nothing), so the comparison against it is one-sample, not paired.
@@ -711,7 +724,11 @@ Public + synthetic only. **Never this machine's history.**
   measured**: the E3 gate ran 470 instances against FTS5 and skipped the other three, which need the
   `hybrid` **extra** the environment does not install — the report says so, in the arm list, as
   *"arm not available"*. Planning to measure is not measuring, and this bullet read as though the
-  comparison had happened. [E4, review: docs — the unrun arms]
+  comparison had happened. [E4, review: docs — the unrun arms] **[Since then (E3 rerun `85ce76d`,
+  E9): BM25, Model2Vec (`dense`) and FlashRank over BM25's top 50 (`rerank`) are measured on E3's
+  harness; an RRF `hybrid` of BM25 and dense, and `rerank12`, under the peer protocols in E9.
+  RRF+FlashRank as written here was not run. The shipped BM25 arm scores below every other arm
+  measured beside it.]**
 - **Contiguity fuzzing** (Hypothesis): injected truncation, interleaving, duplicate replay, schema
   drift, mid-write crash, in-place mutation, inode reuse. The claim must be fuzzed, not asserted.
 - **Determinism:** build twice from the same raw, `git diff --exit-code` on `derived/`.
@@ -734,6 +751,9 @@ Public + synthetic only. **Never this machine's history.**
 | E5 | Derivation (+ decision graph behind its gate) | Every node has a `source_ref`; build twice = identical bytes |
 | E6 | Dashboard | Runs offline from one command |
 | E7 | RC1: full security review, README + graphic, Apache-2.0, private repo | No unresolved findings |
+
+This table is the plan as it was locked. Where each epoch stands now, E7b to E9 included, is kept
+in [ROADMAP.md](../ROADMAP.md).
 
 **Process:** per-module code review after each module's commit (skilled reviewer agents on
 distinct lenses, findings adversarially verified). One full security review at RC1. Claude and

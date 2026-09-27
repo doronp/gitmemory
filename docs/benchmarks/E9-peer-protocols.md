@@ -148,9 +148,12 @@ sh bench/fetch_locomo.sh                        # pinned revision + sha256, into
 python -m bench.peer --protocol mempalace --arms candidate,rerank,rerank12,hybrid --k 1,5,10
 python -m bench.peer --protocol official  --arms candidate,rerank,rerank12,hybrid --k 5,10
 python -m bench.locomo --protocol mempalace --arms candidate,rerank,rerank12 --k 5,10
-python -m bench.qa --bench lme    --arm rerank --k 10 --split all
+python -m bench.qa --bench lme    --arm rerank12 --k 10 --split all
 python -m bench.qa --bench locomo --arm rerank --unit session --k 10 --split all
 ```
+
+*Corrected 2026-09-28:* the LongMemEval QA line read `--arm rerank`. The
+published 94.20 is the `rerank12` row; `rerank` read 93.60.
 
 - **Corpus.** LongMemEval sessions are rendered to Claude Code JSONL without the
   fabricated tool noise E3/E8 added (`to_transcript(..., plain=True)`), so the

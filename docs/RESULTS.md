@@ -58,8 +58,9 @@ session-level retrieval on LongMemEval-S — the one axis where a shape-matched
 comparison exists — the shipped arm reads **S-Hit@10 0.9660** and **S-All@10
 0.8298**, against Total Recall's self-reported 0.9940 and 0.9773 and
 Recallium's 0.9840 and 0.9360. Those are the session-level columns; the
-turn-level `Hit@10` and `All@10` in the table above are different quantities
-and are lower.
+turn-level figures (turn recall in the first table on this page, and turn
+`Hit@10` 0.8362 and `All@10` 0.6617 in [E3](benchmarks/E3-longmemeval.md)) are
+different quantities and are lower.
 
 Against agentmemory — the one baseline running the *identical* dataset file
 with an LLM-free retrieval harness — we split: ahead of its BM25 configuration
@@ -217,11 +218,13 @@ as rows on the page, not as omissions:
 - **Both tails are invisible.** A prevented dead-end is an unbounded unmeasured
   saving; a stale memory that misled is an unbounded unmeasured cost. Any single
   frugality number assumes both are zero.
-- **BM25/FTS5 is the weakest retriever measured, not the best.** All three
-  retriever arms have now run, and the shipped default loses: 0.7456 turn
-  recall against 0.8215 for `dense` (model2vec) and 0.8295 for `rerank`
-  (flashrank over BM25's top 50). Both are behind the `hybrid` extra, so a
-  default install gets the arm that came last.
+- **BM25/FTS5 is the weakest retriever measured, not the best.** Every other
+  arm beats the shipped default wherever the two ran side by side: on E3's
+  harness, 0.7456 turn recall against 0.8215 for `dense` (model2vec) and 0.8295
+  for `rerank` (flashrank over BM25's top 50); under the peer protocols in E9,
+  it is last of our four arms on LongMemEval-S and of our three on LoCoMo. The
+  other arms exist only in `bench/`, behind the `hybrid` extra, so every install
+  gets the arm that came last.
 - **The decision graph is close to useless on real sessions**, and that is
   measured rather than suspected. Precision 0.0000 on the user side — 14 nodes,
   none of them a directive — and 0.15 on the assistant side, since lifted by

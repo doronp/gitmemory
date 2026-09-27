@@ -6,7 +6,9 @@
 |---|---|
 | [README](../README.md) | What gitmemory is, the quickstart, results at a glance |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | The shape of the system in about five minutes |
+| [USAGE.md](USAGE.md) | Getting value out of it: the daily loop, reading `recall`, handing memory back to an agent |
 | [RESULTS.md](RESULTS.md) | Every published result, including the ones it loses |
+| [REPRODUCE.md](REPRODUCE.md) | The command behind each result, what it needs, and how closely a rerun matches |
 | [watching.md](watching.md) | Configuring `gitmemory watch`: roots, flags, and telling a misconfigured watcher from an idle one |
 | [../hook/README.md](../hook/README.md) | Installing the optional hook shim, and its measured cost |
 | [agents.md](agents.md) | Which agents can be captured, which cannot, and why |

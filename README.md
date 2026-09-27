@@ -81,6 +81,10 @@ capture happen exactly at the compaction boundary instead of at the next sweep;
 **without it the system is still correct.** For watcher flags and
 troubleshooting, see [docs/watching.md](docs/watching.md).
 
+**What to do with it next** — reading `recall` output, handing it back to an
+agent after compaction, derived key ideas, the dashboard — is in
+[docs/USAGE.md](docs/USAGE.md).
+
 | Command | What it does |
 |---|---|
 | `gitmemory watch` | Tails the configured roots, captures what grew, and commits |
@@ -92,15 +96,17 @@ troubleshooting, see [docs/watching.md](docs/watching.md).
 | `gitmemory dashboard` | Serves the index with Datasette, read-only, on loopback, behind a sign-in |
 | `gitmemory push` | Runs the redaction gate over what a push would send (it does not send yet) |
 
-Optional extras: `hybrid` (the dense and rerank arms from the benchmarks),
-`derive` (key ideas and the graph), and `serve` (the dashboard). Example:
+Optional extras: `hybrid` (what the benchmarks' dense and rerank arms need;
+`recall` does not use them), `derive` (key ideas and the graph), and
+`serve` (the dashboard). Example:
 `uv tool install "gitmemory[serve] @ git+https://github.com/doronp/gitmemory"`.
 
 ## Results
 
 These are all of the published results, wins and losses together. Each row links
 to the report it comes from; [docs/RESULTS.md](docs/RESULTS.md) is the full
-narrative.
+narrative, and [docs/REPRODUCE.md](docs/REPRODUCE.md) gives the command behind
+each number and how closely a rerun should match.
 
 **Recovering evidence behind the compaction boundary** ([E3](docs/benchmarks/E3-longmemeval.md): 470 LongMemEval instances, k = 10, seed 42, 4 compaction modes, 14 calibration gates)
 

@@ -43,8 +43,8 @@ ask it directly.
 
 ### What a broken run can cost
 
-Not only the one capture. Two things escape that description and both are
-measured rather than argued:
+Not only the one capture. Three things escape that description and all three
+are measured rather than argued:
 
 - **A line of the shell's own noise, once.** Not the shim's — the shell's.
   With `ulimit -f` set in the environment, a payload over the limit killed

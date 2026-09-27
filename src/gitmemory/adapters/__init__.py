@@ -2,16 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 """Adapter registry. An agent is *supported* when it passes tests/conformance.py.
 
-An adapter is exactly two callables and nothing else:
+An adapter is exactly two symbols and nothing else:
 
+    AGENT: str                     # the format name recorded on every Session
     parse(path: str) -> Session
-    find_session(session_id: str, projects_root: str) -> str | None
+
+(`claude_code.find_session` is a helper the Claude Code adapter keeps for its
+own tests; it is not part of the contract, and nothing in the product calls it.)
 
 Adapters may not touch git, the index, or derivation. Claude Code was first and
 pi/oh-my-pi is second. The three this docstring used to name next — Hermes,
 Kimi, opencode — are not candidates any more: two moved to SQLite and one is
-archived. The README's "What this can be pointed at" table is the current list,
-and it is a list of *formats*, not of products.
+archived. docs/agents.md is the current list, and it is a list of *formats*,
+not of products.
 """
 
 from . import claude_code, pi

@@ -25,6 +25,11 @@ they should change what we do:
    accuracy. On that axis gitmemory does not rank low — it is absent. Adding it
    is tractable and is item 1 of the work list at the bottom.
 
+> *Since (2026-09-27, E9):* finding 3 no longer holds. E9 scored QA with an
+> eval-only reader and judge — 94.2 on LongMemEval-S, 85.5 on LoCoMo — and ran
+> session retrieval under the field's ten-session budget. See
+> [E9-peer-protocols.md](E9-peer-protocols.md). This page is kept as E8 wrote it.
+
 Every cell in Tables 1 and 2 is sourced, and vendor self-reports are marked.
 Table 3 is not a like-for-like table and its cells carry their attribution in
 prose rather than a column; two of its figures (Zep's 104 ms, Mem0's mean
@@ -276,6 +281,13 @@ Ordered by ratio of information gained to work required.
    compaction boundary. That is the claim the product actually makes, and there
    is no yardstick for it — which is a gap in the field, and the only route to
    a number where being first is worth more than being second.
+
+> *Since (2026-09-27, E9):* items 1, 2 and 6 are done — QA is scored, a
+> ten-session budget is run, and abstention is included (500 questions in the
+> MemPalace protocol; abstention 90.0 in QA). Item 3 is done in part: the
+> sessions are still rendered as Claude Code JSONL, but without the fabricated
+> tool noise. Items 4, 5 and 7 are open. See
+> [E9-peer-protocols.md](E9-peer-protocols.md).
 
 ## Licence and scope notes
 
