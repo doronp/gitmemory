@@ -1234,6 +1234,14 @@ def test_a_control_sequence_in_a_transcript_does_not_reach_the_index_raw(home, s
     assert "ALWAYS USE PICKLE" in rows[0]["prose"], "escaped, not dropped"
 
 
+def test_the_other_invisible_ranges_are_escaped_too():
+    """Tag characters spell ASCII nobody sees; invisible operators and interlinear
+    annotation marks render as nothing. Each range's two endpoints. [E9, review: 8]
+    """
+    for cp in (0xE0000, 0xE007F, 0x2061, 0x2064, 0xFFF9, 0xFFFB):
+        assert records.safe_text(f"a{chr(cp)}b") == f"a\\u{cp:04x}b", hex(cp)
+
+
 # --------------------------------------------------------------------------- #
 # the seam bench/ scores through
 # --------------------------------------------------------------------------- #

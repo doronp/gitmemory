@@ -3,7 +3,7 @@
 Datasette is Apache-2.0, reads SQLite, ships faceting, filtering, charts, CSV
 and JSON export, and a stable URL for every query. Writing a web UI to show
 eight tables next to that would be the single worst trade in this repository.
-So this module is about forty lines: it points Datasette at the index, hands it
+So this module writes no UI: it points Datasette at the index, hands it
 a metadata file that says what the numbers mean, and gets out of the way.
 
 Three things it is careful about.
@@ -40,8 +40,8 @@ that would: the `Setting(...)` table in `app.py` is page size,
 facets, SQL limits, `allow_download`, cache TTL, `base_url` and the debug
 flags, and nothing about response headers. Adding them means either an
 `asgi_wrapper` plugin — a dependency this project would then own and pin —
-or serving Datasette behind our own ASGI app, which trades the forty lines
-this module is for a web server we maintain. The exposure being bought is
+or serving Datasette behind our own ASGI app, which trades a module that
+writes no UI for a web server we maintain. The exposure being bought is
 small: every endpoint is 403 without the root token, and the one sink that
 takes unescaped HTML (`description_html`) is fed module-level literals that a
 test holds constant. Revisit if the dashboard ever renders anything a
@@ -80,8 +80,7 @@ PORT = 8081  # not 8001: Datasette's default collides with half the world
 # resolves `--host` and tests `ipaddress.ip_address(...).is_loopback`, which is
 # the check that catches `127.0.0.2` and a name that resolves to 127.0.0.1, and
 # it has not read this set since. A dead constant that claims to be a boundary
-# is worse than no constant. The string-set version survives as a mutation row
-# — spelled out in full there, since nothing imports it any more.
+# is worse than no constant. [E9, review: 9]
 
 # What each view is for, in the words a person reading the dashboard needs
 # rather than the words the SQL uses. Keyed by view name; anything not listed

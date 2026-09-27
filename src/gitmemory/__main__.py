@@ -17,7 +17,6 @@ import sqlite3
 import sys
 
 from . import daemon, dashboard, derive, gitrepo, index, redact, store
-from .adapters import get as get_adapter
 from .records import safe_text
 
 
@@ -52,29 +51,14 @@ def _safe_exc(exc: BaseException) -> str:
 
 def _capture(args) -> int:
     home = store.resolve_home(args.home)
-    if args.session_id:
-        # An explicit id skips `capture_one`'s naming, not its parse handling.
-        boundaries = None
-        if not args.no_parse:
-            try:
-                session = get_adapter(args.agent).parse(args.source)
-                boundaries = [e.byte_offset for e in session.events if e.kind == "compaction"]
-            except (OSError, RecursionError, ValueError) as exc:
-                print(
-                    f"parse failed ({_safe_exc(exc)}); capturing bytes without boundaries",
-                    file=sys.stderr,
-                )
-        cap = store.capture(
-            args.source, args.agent, args.session_id, home=home, boundaries=boundaries
-        )
-    else:
-        cap = daemon.capture_one(
-            home,
-            args.source,
-            args.agent,
-            parse=not args.no_parse,
-            log=lambda m: print(m, file=sys.stderr),
-        )
+    cap = daemon.capture_one(
+        home,
+        args.source,
+        args.agent,
+        parse=not args.no_parse,
+        log=lambda m: print(m, file=sys.stderr),
+        session_id=args.session_id,
+    )
     # Said before the result line and on stderr, beside `diverged`, because it
     # is the same kind of fact: something about this store is not the ordinary
     # case. A capture that reclaims an orphan reports `+0B`, so without this the
@@ -124,6 +108,20 @@ def _poll_seconds(text: str) -> float:
 # Low enough to be a deliberate choice for a test, high enough that the busy
 # loop at 0 is unreachable.
 _MIN_POLL = 0.01
+
+
+def _positive_int(text: str) -> int:
+    """A strictly positive integer.
+
+    [E9, review: 10]
+    """
+    try:
+        value = int(text)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"invalid int value: {text!r}") from err
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"must be positive: {text}")
+    return value
 
 
 def _watch(args) -> int:
@@ -215,7 +213,10 @@ def _push(args) -> int:
     if not clean:
         print("refusing to push: the redaction gate found credentials", file=sys.stderr)
         return 1
-    print(f"gate passed for {why}; transport lands in E4", file=sys.stderr)
+    print(
+        f"gate passed for {why}; push runs the redaction gate only and does not send yet",
+        file=sys.stderr,
+    )
     return 1
 
 
@@ -285,7 +286,7 @@ def _dashboard(args) -> int:
 def _derive(args) -> int:
     if (code := _not_a_store(args.home)) is not None:
         return code
-    stats = derive.build(args.home, count=args.ideas)
+    stats = derive.build(args.home, count=args.ideas, graph=args.graph)
     for line in stats.skipped:
         print(f"skipped {line}", file=sys.stderr)
     print(
@@ -357,7 +358,7 @@ def main(argv: list[str] | None = None) -> int:
     ver = sub.add_parser("verify", help="check every manifest's contiguity proof")
     ver.set_defaults(fn=_verify)
 
-    push = sub.add_parser("push", help="send the store to an opted-in remote")
+    push = sub.add_parser("push", help="run the redaction gate only (does not send yet)")
     push.add_argument("remote", nargs="?", default="origin")
     push.set_defaults(fn=_push)
 
@@ -367,7 +368,13 @@ def main(argv: list[str] | None = None) -> int:
 
     der = sub.add_parser("derive", help="rebuild derived/ — key ideas and a timeline")
     der.add_argument(
-        "--ideas", type=int, default=derive.DEFAULT_IDEAS, help="key sentences per generation"
+        "--ideas",
+        type=_positive_int,
+        default=derive.DEFAULT_IDEAS,
+        help="key sentences per generation",
+    )
+    der.add_argument(
+        "--graph", action="store_true", help="extract and build decision graph"
     )
     der.set_defaults(fn=_derive)
 
@@ -384,7 +391,7 @@ def main(argv: list[str] | None = None) -> int:
 
     rec = sub.add_parser("recall", help="search the index; one line per turn, best first")
     rec.add_argument("query")
-    rec.add_argument("-k", type=int, default=10)
+    rec.add_argument("-k", type=_positive_int, default=10)
     rec.add_argument("--db", default=None)
     rec.set_defaults(fn=_recall)
 

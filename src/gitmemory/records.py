@@ -54,7 +54,9 @@ UNSAFE = re.compile(
     "[\u0000-\u0008\u000b-\u001f\u007f-\u009f"  # C0 except tab and newline, DEL, C1
     "\u00ad\u180e\u2060\ufeff"  # soft hyphen, MVS, word joiner, BOM
     "\u061c\u200b-\u200f\u202a-\u202e\u2066-\u2069"  # zero-width, bidi marks, overrides
-    "\u2028\u2029]"  # line and paragraph separators
+    "\u2028\u2029"  # line and paragraph separators
+    "\u2061-\u2064\ufff9-\ufffb"  # invisible operators, interlinear annotation [E9, review: 8]
+    "\U000e0000-\U000e007f]"  # tag characters: invisible ASCII look-alikes
 )
 
 

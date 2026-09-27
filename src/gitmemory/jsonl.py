@@ -13,9 +13,13 @@ Byte offsets from this module are gitmemory's only ordering authority.
 Timestamps are never a sort key (six Claude Code line types have none).
 """
 
+import errno
+import fcntl
 import json
+import os
+import stat
 from collections.abc import Callable, Iterator
-from typing import Any, NamedTuple
+from typing import IO, Any, NamedTuple
 
 
 class Record(NamedTuple):
@@ -23,6 +27,26 @@ class Record(NamedTuple):
     offset: int  # byte offset of this object's span in the file
     length: int  # byte length of the span
     obj: Any
+
+
+def open_untrusted(path: str) -> IO[bytes]:
+    """Open a file someone else controls: no symlink, no FIFO, no device.
+
+    `O_NONBLOCK` so opening a FIFO returns instead of waiting for a writer while
+    the caller holds the store lock; cleared again once `fstat` says regular.
+    [E9, review: 2]
+    """
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            raise OSError(errno.EINVAL, f"Not a regular file: {path}")
+        flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, flags & ~os.O_NONBLOCK)
+    except BaseException:
+        os.close(fd)
+        raise
+    return os.fdopen(fd, "rb")
 
 
 _decoder = json.JSONDecoder()
@@ -88,7 +112,7 @@ def iter_records(
     than `max_line` is reported to `on_error` and skipped; its bytes are still
     in the store, which copies them without parsing.
     """
-    with open(path, "rb") as f:
+    with open_untrusted(path) as f:
         line_start = 0
         lineno = 0
         while True:

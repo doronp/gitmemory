@@ -6,13 +6,13 @@ import contextlib
 import os
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 from gitmemory import index, store
 from gitmemory.adapters import claude_code as cc
 
 _MODEL = None
-_RANKER = None
 
 
 class GitMemoryRetriever:
@@ -74,21 +74,38 @@ def gitmemory_factory(
 def get_model():
     """Lazily loads and caches the model2vec StaticModel."""
     global _MODEL
-    if _MODEL is None:
-        from model2vec import StaticModel
+    with _LOAD:
+        if _MODEL is None:
+            from model2vec import StaticModel
 
-        _MODEL = StaticModel.from_pretrained("minishlab/potion-base-8M")
+            _MODEL = StaticModel.from_pretrained("minishlab/potion-base-8M")
     return _MODEL
 
 
-def get_ranker():
-    """Lazily loads and caches the flashrank Ranker."""
-    global _RANKER
-    if _RANKER is None:
-        from flashrank import Ranker
+_RANKERS: dict[str, object] = {}
+# [E9, review] qa.py retrieves from threads; two first calls must not both download.
+_LOAD = threading.Lock()
+TINY = "ms-marco-TinyBERT-L-2-v2"
+MINILM = "ms-marco-MiniLM-L-12-v2"
 
-        _RANKER = Ranker()
-    return _RANKER
+
+def get_ranker(model: str = TINY):
+    """Lazily loads and caches a flashrank Ranker per model.
+
+    [E9] Not flashrank's default cache: it is under /tmp, and flashrank takes an
+    existing directory as a finished download, so a cleaner that empties it
+    leaves every later run failing on a missing model file.
+    """
+    with _LOAD:
+        if model not in _RANKERS:
+            from flashrank import Ranker
+
+            cache = os.path.join(
+                os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"),
+                "gitmemory-bench",
+            )
+            _RANKERS[model] = Ranker(model_name=model, cache_dir=cache)
+    return _RANKERS[model]
 
 
 def dense_factory(session_id: str, transcript_bytes: bytes):
@@ -161,7 +178,9 @@ class RerankRetriever:
         self.first_stage.close()
 
 
-def rerank_factory(session_id: str, transcript_bytes: bytes, *, depth: int = FIRST_STAGE_DEPTH):
+def rerank_factory(
+    session_id: str, transcript_bytes: bytes, *, depth: int = FIRST_STAGE_DEPTH, model: str = TINY
+):
     """Exposes the reranking retriever arm using flashrank."""
     try:
         from flashrank import Ranker, RerankRequest  # noqa: F401
@@ -186,13 +205,54 @@ def rerank_factory(session_id: str, transcript_bytes: bytes, *, depth: int = FIR
         turn_map[turn.byte_offset] = text
 
     def retrieve(query: str, k: int) -> list[int]:
-        first = first_stage(query, depth)
+        first = first_stage(query, max(depth, k))
         if not first:
             return []
 
         passages = [{"id": offset, "text": turn_map.get(offset, "")} for offset in first]
-        ranker = get_ranker()
+        ranker = get_ranker(model)
         results = ranker.rerank(RerankRequest(query=query, passages=passages))
         return [res["id"] for res in results[:k]]
 
     return RerankRetriever(first_stage, retrieve)
+
+
+class HybridRetriever:
+    """RRF fusion of BM25 and Dense arms. Owns the BM25 stage. [E9]"""
+
+    def __init__(self, bm25_stage: GitMemoryRetriever, retrieve_func):
+        self.bm25_stage = bm25_stage
+        self.retrieve_func = retrieve_func
+
+    def __call__(self, query: str, k: int) -> list[int]:
+        return self.retrieve_func(query, k)
+
+    def close(self) -> None:
+        self.bm25_stage.close()
+
+
+def hybrid_factory(session_id: str, transcript_bytes: bytes) -> HybridRetriever:
+    """Exposes the hybrid retriever arm using Reciprocal Rank Fusion. [E9]"""
+    bm25_stage = gitmemory_factory(session_id, transcript_bytes)
+    dense_stage = dense_factory(session_id, transcript_bytes)
+
+    def retrieve(query: str, k: int) -> list[int]:
+        bm25_results = bm25_stage(query, k)
+        dense_results = dense_stage(query, k)
+
+        scores: dict[int, float] = {}
+        for rank, offset in enumerate(bm25_results, start=1):
+            scores[offset] = scores.get(offset, 0.0) + 1.0 / (60.0 + rank)
+        for rank, offset in enumerate(dense_results, start=1):
+            scores[offset] = scores.get(offset, 0.0) + 1.0 / (60.0 + rank)
+
+        # sort by score descending, then by byte offset ascending to break ties [E9]
+        sorted_offsets = sorted(scores.keys(), key=lambda offset: (-scores[offset], offset))
+        return sorted_offsets[:k]
+
+    return HybridRetriever(bm25_stage, retrieve)
+
+
+def rerank12_factory(session_id: str, transcript_bytes: bytes):
+    """[E9] The stronger cross-encoder over a deeper pool: chosen on LoCoMo's dev half."""
+    return rerank_factory(session_id, transcript_bytes, depth=200, model=MINILM)

@@ -585,6 +585,18 @@ def test_cli_verify_exits_nonzero_on_a_hole(tmp_path):
     assert main(["--home", home, "verify"]) == 1
 
 
+def test_a_non_positive_count_is_refused_at_the_command_line(tmp_path, capsys):
+    """`recall -k 0` returned nothing and exited 0, which reads as "no memory". [E9, review: 10]"""
+    from gitmemory.__main__ import main
+
+    for argv in (["recall", "-k", "0", "q"], ["recall", "-k", "-3", "q"],
+                 ["derive", "--ideas", "-5"]):
+        with pytest.raises(SystemExit) as exc:
+            main(["--home", str(tmp_path), *argv])
+        assert exc.value.code == 2, argv
+    assert "must be positive" in capsys.readouterr().err
+
+
 def test_cli_push_refuses_with_no_config(tmp_path, capsys):
     from gitmemory.__main__ import main
 
@@ -3243,3 +3255,138 @@ def test_the_refusal_does_not_print_the_path_the_link_points_at(tmp_path):
     with pytest.raises(RuntimeError) as exc:
         store.capture(src, "claude-code", "sess", home=home)
     assert "id_rsa" not in str(exc.value)
+
+
+def test_fifo_source_refused_promptly(tmp_path):
+    """A FIFO source is refused promptly without blocking.
+
+    [E9, review: 2]
+    """
+    import queue
+    import threading
+    home = str(tmp_path / "home")
+    os.mkdir(home)
+    fifo_path = str(tmp_path / "fifo.jsonl")
+    os.mkfifo(fifo_path)
+
+    q = queue.Queue()
+
+    # Use a thread/timeout guard so we don't block forever if it regresses
+    def run_capture():
+        try:
+            store.capture(fifo_path, "claude-code", "sess", home=home)
+            q.put(None)
+        except Exception as exc:
+            q.put(exc)
+
+    t = threading.Thread(target=run_capture)
+    t.start()
+    t.join(timeout=1.0)
+    assert not t.is_alive(), "capture blocked on FIFO source"
+
+    exc = q.get_nowait()
+    assert isinstance(exc, OSError), f"expected OSError, got {exc}"
+
+
+def test_leftover_empty_generation_does_not_disable_orphan_adoption(home, src):
+    """If an empty g01 directory exists, it is not treated as a fork that disables
+    orphan adoption in g00.
+
+    [E9, review: 3]
+    """
+    transcript(src, 5)
+    store.capture(src, "claude-code", "sess", home=home)
+    base = manifest(home)["size"]
+    end = transcript(src, 5, start=5)
+    with open(src, "rb") as fh:
+        fh.seek(base)
+        tail = fh.read()
+    # Create the orphan segment in g00
+    seg_dir = Path(home, "raw", "claude-code", "sess", "g00")
+    (seg_dir / f"{base:012d}-{end:012d}.jsonl").write_bytes(tail)
+
+    # Precondition: create an empty leftover g01 directory
+    forked_dir = Path(home, "raw", "claude-code", "sess", "g01")
+    forked_dir.mkdir(parents=True, exist_ok=True)
+
+    # Capture should still adopt the orphan from g00 and stay in g00
+    assert store.verify(home) != []
+    cap = store.capture(src, "claude-code", "sess", home=home)
+    assert cap.adopted == (f"{base:012d}-{end:012d}.jsonl",)
+    assert cap.generation == 0
+    assert store.verify(home) == []
+
+
+def test_manifest_citing_another_sessions_segment_is_rejected(home, src):
+    """A manifest citing a segment belonging to another session is rejected by verify
+    and sessions().
+
+    [E9, review: 4]
+    """
+    transcript(src, 5)
+    # Session A
+    store.capture(src, "claude-code", "sess-a", home=home)
+    # Session B
+    store.capture(src, "claude-code", "sess-b", home=home)
+
+    # Put a segment of sess-b into sess-a's manifest!
+    path_a = Path(home, "sessions", "claude-code", "sess-a", "g00.json")
+    man_a = json.loads(path_a.read_text())
+
+    path_b = Path(home, "sessions", "claude-code", "sess-b", "g00.json")
+    man_b = json.loads(path_b.read_text())
+    seg_b = man_b["segments"][0]
+
+    man_a["segments"][0]["path"] = seg_b["path"]
+    path_a.write_text(json.dumps(man_a))
+
+    # Verify must reject it
+    problems = store.verify(home)
+    assert any("outside session raw directory" in p for p in problems), problems
+
+    # sessions() must raise EscapingSegment
+    with pytest.raises(store.EscapingSegment, match="outside session raw directory"):
+        store.sessions(home)
+
+
+def test_push_allowed_rejects_credential_without_colon_and_non_dict(tmp_path):
+    """push_allowed rejects userinfo without colon (TOKEN@host) and handles non-dict
+    remote configuration. Also safe_url cleans http protocol.
+
+    [E9, review: 6, 9]
+    """
+    home = tmp_path / "h"
+    home.mkdir()
+
+    # 1. Non-dict remote configuration
+    (home / "config.toml").write_text('remote = "not-a-dict"\n')
+    allowed, why = redact.push_allowed(str(home), "origin")
+    assert allowed is False
+    assert "has no [remote.origin]" in why
+
+    # 2. Userinfo without colon (e.g., https://TOKEN@github.com/me/p.git)
+    (home / "config.toml").write_text(
+        '[remote.origin]\nurl = "https://TOKEN@github.com/me/p.git"\nallow_push = true\n'
+    )
+    allowed, why = redact.push_allowed(str(home), "origin")
+    assert allowed is False
+    assert "embeds a credential" in why
+
+    # 3. safe_url cleans http protocol
+    assert redact.safe_url("http://me:s3cr3t-pw@github.com/me/p.git") == "http://github.com/me/p.git"
+    assert redact.safe_url("http://TOKEN@github.com/me/p.git") == "http://github.com/me/p.git"
+
+
+def test_an_ssh_login_name_is_not_a_credential(tmp_path):
+    """Over ssh the userinfo is the login (`git@`, `deploy@`); the key is elsewhere.
+
+    The first draft of the TOKEN@ check refused every ssh user but `git`, which
+    turned away `ssh://deploy@host/p.git`. [E9, review: 6]
+    """
+    home = tmp_path / "h"
+    home.mkdir()
+    for url in ("ssh://deploy@host/p.git", "ssh://git@github.com/me/p.git"):
+        (home / "config.toml").write_text(
+            f'[remote.origin]\nurl = "{url}"\nallow_push = true\n')
+        allowed, why = redact.push_allowed(str(home), "origin")
+        assert allowed, (url, why)

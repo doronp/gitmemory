@@ -44,6 +44,7 @@ from dataclasses import dataclass
 from glob import glob
 from typing import IO
 
+from .jsonl import open_untrusted
 from .records import canonical_json
 
 __all__ = [
@@ -633,7 +634,14 @@ def _adopt_orphans(home: str, agent: str, session_id: str, session_dir: str) -> 
     # an existing segment`. Permanently: every capture after it repeats that,
     # or `verify` stays red for ever if the source went away.
     # [E4, review: store 1]
-    forked = bool(prior) and os.path.isdir(os.path.join(raw_dir, _gen_dir(gen + 1)))
+    forked = False
+    forked_dir = os.path.join(raw_dir, _gen_dir(gen + 1))
+    if bool(prior) and os.path.isdir(forked_dir):
+        try:
+            with os.scandir(forked_dir) as it:
+                forked = any(_SEG_RE.match(e.name) for e in it if e.is_file())
+        except OSError:
+            pass
     seg_dir = os.path.join(raw_dir, _gen_dir(gen + 1 if forked else gen))
     if not os.path.isdir(seg_dir):
         return ()
@@ -806,7 +814,7 @@ def _open_source(source_path: str) -> IO[bytes]:
     ever lives somewhere a stranger can rename directories.
     """
     try:
-        fd = os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW)
+        return open_untrusted(source_path)
     except OSError:
         if os.path.islink(source_path):
             raise RuntimeError(
@@ -817,7 +825,6 @@ def _open_source(source_path: str) -> IO[bytes]:
                 f"for one — pass the path it resolves to"
             ) from None
         raise
-    return os.fdopen(fd, "rb")
 
 
 def _capture(  # noqa: PLR0912, PLR0915 - one branch per failure mode; splitting hides the ordering
@@ -1056,7 +1063,9 @@ def _seg_start(seg: object) -> int:
     return _int(seg.get("start")) if isinstance(seg, dict) else -1
 
 
-def _segment_path(home: str, seg: object) -> str | None:
+def _segment_path(
+    home: str, seg: object, agent: str | None = None, session_id: str | None = None
+) -> str | None:
     """The absolute path a segment entry names, or None if it names none.
 
     None costs the whole generation rather than one entry. Dropping just the
@@ -1078,6 +1087,10 @@ def _segment_path(home: str, seg: object) -> str | None:
         # points outside the store would opt its own run out of the seam scan;
         # dropping the row quietly is the bypass, so the whole read fails. [E3]
         raise EscapingSegment(f"segment path escapes the store: {seg['path']!r}")
+    if agent and session_id:
+        raw_dir = os.path.realpath(os.path.join(home, "raw", agent, session_id))
+        if full != raw_dir and not full.startswith(raw_dir + os.sep):
+            raise EscapingSegment(f"segment path is outside session raw directory: {seg['path']!r}")
     return full
 
 
@@ -1132,7 +1145,10 @@ def sessions(home: str, *, strict: bool = False) -> list[Stored]:
             if not isinstance(raw_segments, list):
                 raise _Skip(f"'segments' is {type(raw_segments).__name__}, not a list")
             segs = sorted(raw_segments, key=_seg_start)
-            run = [_segment_path(home, s) for s in segs]
+            rel_parts = os.path.relpath(path, home).split(os.sep)
+            agent = rel_parts[1] if len(rel_parts) >= 3 else None
+            session_id = rel_parts[2] if len(rel_parts) >= 3 else None
+            run = [_segment_path(home, s, agent, session_id) for s in segs]
             if not all(run):
                 raise _Skip("a segment entry names no usable path")
         except EscapingSegment:
@@ -1755,6 +1771,10 @@ def _verify_declared(  # noqa: PLR0912 - one branch per failure mode
         full = _inside(home, seg["path"])
         if full is None:
             out.append(f"{rel}: segment path escapes the store: {seg['path']!r}")
+            return out, False
+        raw_dir = os.path.realpath(os.path.join(home, "raw", filed_agent, filed_session))
+        if full != raw_dir and not full.startswith(raw_dir + os.sep):
+            out.append(f"{rel}: segment path is outside session raw directory: {seg['path']!r}")
             return out, False
         listed.add(full)
         if not _regular(full):

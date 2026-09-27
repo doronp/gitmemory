@@ -41,7 +41,7 @@ import time
 import tomllib
 from dataclasses import dataclass, field
 
-from . import gitrepo, store
+from . import gitrepo, redact, store
 from .adapters import ADAPTERS
 from .adapters import get as get_adapter
 
@@ -709,7 +709,13 @@ def _recorded(home: str, now: float) -> dict[tuple[str, str], tuple[int, float]]
 
 
 def capture_one(
-    home: str, source: str, agent: str, *, parse: bool = True, log=None
+    home: str,
+    source: str,
+    agent: str,
+    *,
+    parse: bool = True,
+    log=None,
+    session_id: str | None = None,
 ) -> store.Capture:
     """Capture one transcript, collecting compaction boundaries if we can.
 
@@ -771,12 +777,15 @@ def capture_one(
             # the split by routing the second form through this function.
             # [E4, review: CLI 5]
             if log:
-                log(f"parse failed ({exc}); capturing bytes without boundaries")
+                log(
+                    f"parse failed ({redact.safe_path(str(exc))}); "
+                    "capturing bytes without boundaries"
+                )
             boundaries = None
     return store.capture(
         source,
         agent,
-        store.session_id_for(source),
+        session_id or store.session_id_for(source),
         home=home,
         boundaries=boundaries,
     )

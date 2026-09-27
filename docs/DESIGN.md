@@ -364,7 +364,7 @@ Not taken: every storage layer, every index, every pipeline. Those are where the
 |---|---|---|---|
 | Key ideas | `sumy` LexRank over prose blocks, each with its `block_id` | yes | shipped, E5 |
 | Timeline | fold over `Event` + `Turn`, with a tail so every turn is in a span | yes | shipped, E5 |
-| Decision graph | structural → **graphify** (`build_from_json` → cluster → export) | yes, **gated** | E5, gated |
+| Decision graph | structural → **graphify** (`build_from_json` → cluster → export) (opt-in only via `--graph`) | yes, **gated** | E5, gated |
 | Titles/labels | optional local model at an **explicit gate only**, named in config | no — marked | not built |
 
 **[E5 — the `Key phrases` row is gone.** It named `KeyBERT` + a Model2Vec backend. KeyBERT

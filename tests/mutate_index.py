@@ -586,8 +586,8 @@ MUTANTS = [
     (
         "a malformed segment entry is dropped instead of costing its generation",
         "store.py",
-        "            run = [_segment_path(home, s) for s in segs]",
-        "            run = [p for s in segs if (p := _segment_path(home, s)) is not None]",
+        "            run = [_segment_path(home, s, agent, session_id) for s in segs]",
+        "            run = [p for s in segs if (p := _segment_path(home, s, agent, session_id)) is not None]",  # noqa: E501
         "test_a_malformed_segment_entry_costs_its_generation_not_one_segment",
     ),
     (
@@ -985,8 +985,8 @@ MUTANTS = [
     (
         "an offset only matches a turn it starts exactly",
         "bench/score.py",
-        "        if turn is None or offset >= turn.byte_offset + turn.byte_len:",
-        "        if turn is None or offset != turn.byte_offset:",
+        "    if turn is None or offset >= turn.byte_offset + turn.byte_len:",
+        "    if turn is None or offset != turn.byte_offset:",
         "test_an_offset_inside_a_turn_matches_that_turn",
     ),
     (
@@ -1500,10 +1500,10 @@ MUTANTS = [
         # summary that churns is out of it now. [round 3, finding 3]
         "a skipped generation stops being reported",
         "__main__.py",
-        """    stats = derive.build(args.home, count=args.ideas)
+        """    stats = derive.build(args.home, count=args.ideas, graph=args.graph)
     for line in stats.skipped:
         print(f"skipped {line}", file=sys.stderr)""",
-        "    stats = derive.build(args.home, count=args.ideas)",
+        "    stats = derive.build(args.home, count=args.ideas, graph=args.graph)",
         "test_a_skipped_generation_is_reported_on_stderr",
     ),
     (
@@ -2704,7 +2704,7 @@ MUTANTS = [
         # to disagree with the file it describes.
         "the decision count is the number of transcripts, not of nodes",
         "derive.py",
-        '        stats.decisions += len(payload_graph["nodes"])',
+        "        stats.decisions += decisions_count",
         "        stats.decisions += 1",
         "test_the_decision_count_stats_reports_is_the_count_on_disk",
     ),
@@ -2714,8 +2714,8 @@ MUTANTS = [
         # of the other guards on this artifact pass with this mutant in place.
         "the published graph is not the one this session produced",
         "derive.py",
-        "            payload_graph = graph.extraction([session])",
-        '            payload_graph = {"nodes": [], "edges": []}',
+        "                payload_graph = graph_mod.extraction([session])",
+        '                payload_graph = {"nodes": [], "edges": []}',
         "test_the_decision_graph_is_published_beside_the_ideas",
     ),
     # --- the dashboard -------------------------------------------------------
@@ -3416,7 +3416,7 @@ MUTANTS = [
     (
         "an inline credential in a remote url is allowed through",
         "redact.py",
-        '    if ":" in userinfo:',
+        '    if ":" in userinfo or (userinfo and parts.scheme in ("http", "https")):',
         "    if False:",
         "test_a_remote_url_password_is_never_printed",
     ),
@@ -3638,9 +3638,9 @@ MUTANTS = [
         # The third call site, and the one that fires first: a missing source
         # prints the parse failure before the error. Both lines carried the path.
         "the parse-failure warning prints the path it could not read",
-        "__main__.py",
-        'f"parse failed ({_safe_exc(exc)}); capturing bytes without boundaries",',
-        'f"parse failed ({exc}); capturing bytes without boundaries",',
+        "daemon.py",
+        '                    f"parse failed ({redact.safe_path(str(exc))}); "',
+        '                    f"parse failed ({exc}); "',
         "test_a_credential_in_an_exception_message_is_masked_on_the_way_out",
     ),
     (
@@ -4529,9 +4529,9 @@ MUTANTS = [
     # --- E7 fs-F10 ---
     (
         "the capture reads the transcript through whatever the name points at",
-        "store.py",
-        "        fd = os.open(source_path, os.O_RDONLY | os.O_NOFOLLOW)",
-        "        fd = os.open(source_path, os.O_RDONLY)",
+        "jsonl.py",
+        "    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)",
+        "    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)",
         "test_a_transcript_swapped_for_a_symlink_is_not_captured",
     ),
     (
@@ -4595,7 +4595,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 5" + "89 mutants",
+        "a full pass is 6" + "06 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5360,6 +5360,144 @@ MUTANTS = [
         "        role = _ROLES.get(native_role.lower()) if isinstance(native_role, str) else None",
         "test_a_tool_result_is_not_indexed_as_prose",
     ),
+    (
+        "the --graph option on the derive command is not opt-in",
+        "derive.py",
+        "            if graph:",
+        "            if True:",
+        "test_derive_command_graph_option_is_opt_in",
+    ),
+    (
+        "the capture source open does not check for regular files",
+        "jsonl.py",
+        "        if not stat.S_ISREG(st.st_mode):",
+        "        if False:",
+        "test_fifo_source_refused_promptly",
+    ),
+    (
+        "leftover empty generation directory disables orphan adoption",
+        "store.py",
+        """    forked = False
+    forked_dir = os.path.join(raw_dir, _gen_dir(gen + 1))
+    if bool(prior) and os.path.isdir(forked_dir):
+        try:
+            with os.scandir(forked_dir) as it:
+                forked = any(_SEG_RE.match(e.name) for e in it if e.is_file())
+        except OSError:
+            pass""",
+        """    forked_dir = os.path.join(raw_dir, _gen_dir(gen + 1))
+    forked = bool(prior) and os.path.isdir(forked_dir)""",
+        "test_leftover_empty_generation_does_not_disable_orphan_adoption",
+    ),
+    (
+        "segment path is not checked to be inside this session raw directory",
+        "store.py",
+        """    if agent and session_id:
+        raw_dir = os.path.realpath(os.path.join(home, "raw", agent, session_id))
+        if full != raw_dir and not full.startswith(raw_dir + os.sep):
+            raise EscapingSegment(f"segment path is outside session raw directory: {seg['path']!r}")""",  # noqa: E501
+        """    if False:
+        pass""",
+        "test_manifest_citing_another_sessions_segment_is_rejected",
+    ),
+    (
+        "push_allowed does not check non-dict remote configuration",
+        "redact.py",
+        """    remote_cfg = cfg.get("remote")
+    if not isinstance(remote_cfg, dict):""",
+        """    remote_cfg = cfg.get("remote")
+    if False:""",
+        "test_push_allowed_rejects_credential_without_colon_and_non_dict",
+    ),
+    (
+        "the tag, invisible-operator and annotation ranges pass safe_text raw",
+        "records.py",
+        '    "\\u2061-\\u2064\\ufff9-\\ufffb"  # invisible operators, interlinear annotation [E9, review: 8]\n'  # noqa: E501
+        '    "\\U000e0000-\\U000e007f]"  # tag characters: invisible ASCII look-alikes\n',
+        '    "]"\n',
+        "test_the_other_invisible_ranges_are_escaped_too",
+    ),
+    (
+        "a zero or negative count is accepted at the command line",
+        "__main__.py",
+        "    if value <= 0:\n",
+        "    if False:\n",
+        "test_a_non_positive_count_is_refused_at_the_command_line",
+    ),
+    (
+        "every ssh login name but git is refused as a credential",
+        "redact.py",
+        '    if ":" in userinfo or (userinfo and parts.scheme in ("http", "https")):',
+        '    if userinfo and (parts.scheme in ("http", "https") or userinfo != "git" or ":" in userinfo):',  # noqa: E501
+        "test_an_ssh_login_name_is_not_a_credential",
+    ),
+    # E9 peer-protocol and QA harnesses: each protocol choice a reader of the
+    # numbers would ask about has a row. [E9]
+    (
+        "the LME judge picks the abstention rubric by question type",
+        "bench/qa.py",
+        '    kind = "abstention" if "_abs" in inst.question_id else inst.question_type\n'
+        "    return LME_JUDGE[kind]",
+        "    kind = inst.question_type if inst.question_type in LME_JUDGE else \"abstention\"\n"
+        "    return LME_JUDGE[kind]",
+        "test_abstention_is_chosen_by_question_id_not_type",
+    ),
+    (
+        "sessions sharing a date are compared by content, not kept in rank order",
+        "bench/qa.py",
+        "key=lambda c: c[0])",
+        "key=lambda c: (c[0], str(c[1])))",
+        "test_sessions_sharing_a_date_keep_rank_order",
+    ),
+    (
+        "the QA cache key ignores JSON mode",
+        "bench/qa.py",
+        "json.dumps([client.model, prompt, kw])",
+        "json.dumps([client.model, prompt])",
+        "test_cache_answers_a_repeat_without_calling",
+    ),
+    (
+        "a mem0 judge reply with no JSON counts as correct",
+        "bench/qa.py",
+        '        return json.loads(m.group(0))["label"] == "CORRECT" if m else False',
+        '        return json.loads(m.group(0))["label"] == "CORRECT" if m else "CORRECT" in text',
+        "test_verdict_parsing_follows_upstream",
+    ),
+    (
+        "the official NDCG ideal counts only the gold that was retrieved",
+        "bench/peer.py",
+        "        ideal = _dcg_official([1.0] * min(len(set(gold_ids)), k))",
+        "        ideal = _dcg_official(sorted(rels, reverse=True))",
+        "test_official_ideal_counts_every_gold_session_not_just_the_retrieved",
+    ),
+    (
+        "the official protocol keeps answer sessions with no user answer turn",
+        "bench/peer.py",
+        '        if sid in answer and any(t.role == "user" and t.has_answer for t in sess)',
+        "        if sid in answer",
+        "test_official_protocol_skips_abstention_and_answer_sessions_without_a_user_answer",
+    ),
+    (
+        "LoCoMo scores the adversarial category",
+        "bench/locomo.py",
+        "            if qa[\"category\"] not in SCORED_CATEGORIES:",
+        "            if False:",
+        "test_load_drops_category_five_and_unresolvable_evidence",
+    ),
+    (
+        "the MemPalace LoCoMo protocol reads every evidence id, not the leading one",
+        "bench/locomo.py",
+        '                f"D{m.group(1)}" for e in qa.get("evidence", []) if (m := _MP_SESSION.match(e))',  # noqa: E501
+        '                f"D{n}" for e in qa.get("evidence", []) for n in _MP_SESSION.findall(e)',  # noqa: E501
+        "test_mempalace_protocol_keeps_everything_and_reads_only_a_leading_id",
+    ),
+    (
+        "a model call that fails every retry ends the QA run",
+        "bench/qa.py",
+        "    except RuntimeError as e:",
+        "    except ZeroDivisionError as e:",
+        "test_a_call_that_fails_every_retry_scores_wrong_and_is_counted",
+    ),
 ]
 
 
@@ -5512,7 +5650,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 589 mutants × two suite runs —
+    The filter exists because a full pass is 606 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

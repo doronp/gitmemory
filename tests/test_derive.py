@@ -92,7 +92,7 @@ def stored(home: str, src: str, lines: list[dict], **kw):
     """Write, capture, derive. Returns the one `Stored` generation."""
     write(src, lines)
     store.capture(src, "claude-code", "sess", home=home, **kw)
-    derive.build(home)
+    derive.build(home, graph=True)
     return store.sessions(home)[0]
 
 
@@ -263,7 +263,7 @@ def test_deriving_twice_changes_nothing_in_git(home, src):
     stored(home, src, conversation())
     assert gitrepo.commit(home, "derived") is not None
 
-    derive.build(home)
+    derive.build(home, graph=True)
     proc = subprocess.run(
         ["git", "-C", home, "diff", "--exit-code", "--", "derived/"],
         capture_output=True,
@@ -902,7 +902,7 @@ def test_a_write_failure_costs_one_generation_and_leaves_nothing_torn(
         return real(path, payload)
 
     monkeypatch.setattr(derive, "_write", fail_on_the_second_write)
-    stats = derive.build(home)
+    stats = derive.build(home, graph=True)
 
     assert stats.generations == 1, "the failure took the other generation down with it"
     assert len(stats.skipped) == 1 and "sess-a" in stats.skipped[0], stats.skipped
@@ -1003,7 +1003,7 @@ def test_a_non_utf8_byte_in_a_transcript_does_not_reach_the_artifacts(home, src)
         ],
     )
     store.capture(src, "claude-code", "sess", home=home)
-    assert derive.build(home).skipped == []
+    assert derive.build(home, graph=True).skipped == []
 
     for name, blob in _artifact_strings(home).items():
         assert not any(0xD800 <= ord(c) <= 0xDFFF for c in blob), f"{name} carries a surrogate"
@@ -1023,7 +1023,7 @@ def test_a_terminal_escape_in_a_transcript_does_not_reach_the_artifacts(home, sr
     )
     write(src, [user("u1", PROSE[0]), assistant("a1", [text(hostile)]), user("u2", PROSE[2])])
     store.capture(src, "claude-code", "sess", home=home)
-    assert derive.build(home).skipped == []
+    assert derive.build(home, graph=True).skipped == []
 
     strings = _artifact_strings(home)
     assert any("esrever" in blob for blob in strings.values()), "the hostile block was dropped"
@@ -1051,7 +1051,7 @@ def test_the_two_gates_agree_on_what_invisible_means(home, src):
     hostile = f"We decided to drop{invisible} the cache and keep the index."
     write(src, [user("u1", PROSE[0]), assistant("a1", [text(hostile)]), user("u2", PROSE[2])])
     store.capture(src, "claude-code", "sess", home=home)
-    assert derive.build(home).skipped == []
+    assert derive.build(home, graph=True).skipped == []
 
     strings = _artifact_strings(home)
     assert any("drop" in blob for blob in strings.values()), "the block was dropped"
@@ -2010,7 +2010,7 @@ def test_the_decision_count_stats_reports_is_the_count_on_disk(home, src):
     """
     write(src, DECIDED)
     store.capture(src, "claude-code", "sess", home=home)
-    stats = derive.build(home)
+    stats = derive.build(home, graph=True)
     assert stats.decisions == len(loaded(home, "graph.json")["nodes"]) == 2
 
 
@@ -2680,7 +2680,7 @@ def test_a_deeply_nested_block_does_not_cost_the_generation_its_artifacts(home, 
     """
     rule = "From now on never commit straight to main."
     stored(home, src, [user("u1", "[" * 20000 + "]" * 20000), user("u2", rule)])
-    stats = derive.build(home)
+    stats = derive.build(home, graph=True)
     assert stats.skipped == [], stats.skipped
     written = sorted(p.name for p in Path(home, "derived").rglob("*") if p.is_file())
     assert written == ["graph.json", "ideas.json", "timeline.json"], written
@@ -3313,3 +3313,19 @@ def test_a_run_of_adverbs_in_the_citation_frame_does_not_go_exponential():
     assert derive._decision_kind(poison, "user") is None
     elapsed = time.monotonic() - started
     assert elapsed < 1.0, f"_MID went exponential again: {elapsed:.2f}s on {len(poison)} bytes"
+
+
+def test_derive_command_graph_option_is_opt_in(home, src):
+    """The --graph option is opt-in and defaults to False.
+
+    [E9, review: 1]
+    """
+    stored(home, src, conversation())
+    # First, run with --graph to ensure graph.json is generated
+    assert main(["--home", home, "derive", "--graph"]) == 0
+    out_dir = Path(home, "derived", "claude-code", "sess", "g00")
+    assert (out_dir / "graph.json").exists()
+
+    # Then, run without --graph to ensure graph.json is deleted
+    assert main(["--home", home, "derive"]) == 0
+    assert not (out_dir / "graph.json").exists()

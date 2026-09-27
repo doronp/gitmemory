@@ -184,6 +184,15 @@ def _deranged(instances: list[Instance], rng: random.Random) -> dict[str, str]:
     return mapping
 
 
+def map_offset_to_turn(offset: int, starts: list[int], turns: list[Any]) -> Any | None:
+    """Map a byte offset to its corresponding turn object, or None if unmatched. [E9]"""
+    idx = bisect.bisect_right(starts, offset) - 1
+    turn = turns[idx] if idx >= 0 else None
+    if turn is None or offset >= turn.byte_offset + turn.byte_len:
+        return None
+    return turn
+
+
 def _measure(
     offsets: list[int],
     starts: list[int],
@@ -207,9 +216,8 @@ def _measure(
     session_mrr = 0.0
     unmatched = 0
     for rank, offset in enumerate(offsets, start=1):
-        idx = bisect.bisect_right(starts, offset) - 1
-        turn = turns[idx] if idx >= 0 else None
-        if turn is None or offset >= turn.byte_offset + turn.byte_len:
+        turn = map_offset_to_turn(offset, starts, turns)
+        if turn is None:
             unmatched += 1
             continue
         if turn.byte_offset in evidence:

@@ -46,11 +46,24 @@ fourteen calibration gates, every arm including the ones that lost.
 
 ## Where this sits against other memory systems
 
+**Under the field's own protocols, a bench arm is first on one benchmark and
+second on two; the shipped arm is first on none.** Adding a local cross-encoder
+to the shipped BM25 index (`rerank12`, no LLM) reads LongMemEval-S session
+R@5 **99.2** and R@10 **99.8** — first among no-LLM retrievers — and is second on
+all-evidence@10 (96.0 to Total Recall's 97.73) and on LoCoMo session R@10 (91.3
+to MemPalace's 92.4). End-to-end QA with a Gemini reader and judge is 94.2 on
+LongMemEval-S (5th of 10) and 85.5 on LoCoMo (last of 8); neither judge matches the
+leaderboard's. [E9 rankings](docs/benchmarks/E9-peer-protocols.md) — every
+table sourced, the shipped arm in each, dev/test splits for every choice.
+
+What follows is the E8 comparison, on E3's harness (noisy corpus, ten-turn
+budget), kept because its caveats still hold for the shipped arm.
+
 **We do not beat the leaders on the numbers as each side publishes them.** On
 session-level retrieval on LongMemEval-S — the one axis where a shape-matched
 comparison exists — the shipped arm reads **S-Hit@10 0.9660** and **S-All@10
 0.8298**, against Total Recall's self-reported 0.9940 and 0.9773 and
-Recallium's 0.9840 and 0.9630. Those are the session-level columns; the
+Recallium's 0.9840 and 0.9360. Those are the session-level columns; the
 turn-level `Hit@10` and `All@10` in the table above are different quantities
 and are lower.
 
@@ -64,9 +77,6 @@ Our own ground-truth oracle scores 0.9319 on S-All@10, and our shipped arm sits
 `k = 10` selects ten sessions where ours selects ten turns, which is a real
 difference we have **not** measured the size of and should not lean on.
 
-The gap that matters more: most of the field leads with LLM-judged answer
-accuracy, and **we have no number on that axis at all.**
-
 [Full comparison](docs/benchmarks/E8-where-we-stand.md) — three tables split by
 measurement axis, what every cell is sourced to, and the ordered work that would
 make the comparison real.
@@ -75,7 +85,8 @@ make the comparison real.
 
 The raw bytes, copied out at every compaction, tiled by byte offset so the
 record either **proves it is contiguous or names the hole**. Everything
-derived — the index, decision graphs, key ideas — is rebuilt from those bytes,
+derived — the index, key ideas, decision graphs (opt-in: `derive --graph`) —
+is rebuilt from those bytes,
 so a derivation is never the only copy of anything.
 
 **Contiguous, not complete.** The proof is that the captured bytes tile
@@ -106,13 +117,13 @@ gitmemory dashboard             # serve the index, read-only, on loopback, behin
 | The same extractor on text nobody wrote for a benchmark | a census of every distinct human turn in a third-party MIT corpus of real sessions — 140 items, labelled blind by three annotators at 139/140 agreement | **precision 0.0000, recall 0.0000**. Seven fixes later, 0.1250 / 0.5000 — one true positive, and the set is a regression floor from the first fix onward |
 | …and the assistant side of the same sessions | the 61 blocks it called `reversal`, adjudicated by three more | 9 of 61 — precision 0.15. After the two fixes: **54 withdrawn, all 7 left are reversals** — and read the caveat below before quoting that |
 | Hook cost in the agent's critical path | timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | on a fresh checkout, no downloads | **988 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **589** negative controls |
+| The suite | on a fresh checkout, no downloads | **1,020 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | every fix mutated to remove the behaviour, the named test must fail | **606** negative controls |
 
 Those two numbers do not add up, and should not: switching the corpus on
-collects 1313, not 1316. Three of the conformance cases fill parametrisations
+collects 1345, not 1348. Three of the conformance cases fill parametrisations
 that collect as one empty placeholder each while the corpus is absent, so they
-replace three of the 988 rather than joining them. The row used to read "plus",
+replace three of the 1020 rather than joining them. The row used to read "plus",
 which quietly asserted the sum. These figures were the only ones on the page no
 test pinned, and that is exactly why they were the ones that drifted — they
 read 1300, 1303 and 975 against a board already saying 984. Pinned now.
@@ -418,7 +429,8 @@ The design answer is that `raw/` stays on your machine and the gate stands at
 1. **Rotate the credential.** Do this first and do not wait for anything below.
    The store is append-only and local, so the blob is in your history whatever
    you do next, and a rotated key is worth nothing to anyone holding it.
-2. **`gitmemory push` will refuse, and that is working.** It scans the files git
+2. **`gitmemory push` will refuse, and that is working.** Note that `push` runs
+   the redaction gate only and does not send yet. It scans the files git
    would ship, the segment seams, *and* the object graph a push transmits —
    deleting the file does not make the push clean, because `git push` does not
    send the working tree.

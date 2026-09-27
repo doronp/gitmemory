@@ -26,7 +26,9 @@ def deterministic_uuid(content: str) -> str:
     return f"{h[:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
 
 
-def to_transcript(instance: Instance, *, seed: int, compaction: str | None) -> Transcript:
+def to_transcript(
+    instance: Instance, *, seed: int, compaction: str | None, plain: bool = False
+) -> Transcript:
     """Replay one LongMemEval instance as a Claude-Code-shaped JSONL transcript.
 
     Timestamps come from haystack_dates and question_date.
@@ -154,7 +156,10 @@ def to_transcript(instance: Instance, *, seed: int, compaction: str | None) -> T
                 model = rng.choice(["claude-3-5-sonnet-20241022", "claude-3-opus-20240229"])
 
                 # With 20% probability, let's inject a tool_use in the assistant turn
-                if rng.random() < 0.2:
+                # [E9] drawn even when `plain`, so the rng stream, and every
+                # non-plain transcript, stays byte-identical.
+                has_tool = rng.random() < 0.2
+                if has_tool and not plain:
                     tool_use_id = f"tu_{s_idx}_{t_idx}"
                     content_blocks = [
                         {"type": "text", "text": turn.content},

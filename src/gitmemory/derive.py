@@ -1795,7 +1795,7 @@ def _sweep_temps(home: str) -> None:
             os.unlink(stray)
 
 
-def build(home: str | None = None, *, count: int = DEFAULT_IDEAS) -> Stats:
+def build(home: str | None = None, *, count: int = DEFAULT_IDEAS, graph: bool = False) -> Stats:
     """Rebuild `derived/` from the store. Full rebuild, every generation.
 
     One bad generation costs its own artifacts and nothing else — same rule as
@@ -1810,7 +1810,7 @@ def build(home: str | None = None, *, count: int = DEFAULT_IDEAS) -> Stats:
     # module-scope import here is a cycle. Only the emitter is used, never
     # `graph.build`, so `derived/` stays buildable without the graphify extra:
     # the artifact is the extraction dict graphify consumes, not a drawing.
-    from gitmemory import graph
+    from gitmemory import graph as graph_mod
 
     _sweep_temps(resolved)
     stats = Stats()
@@ -1820,13 +1820,20 @@ def build(home: str | None = None, *, count: int = DEFAULT_IDEAS) -> Stats:
             session = parse_generation(stored)
             payload_ideas = ideas(session, count=count)
             payload_timeline = timeline(session)
-            payload_graph = graph.extraction([session])
             # Inside the try, all three. Outside, a failure on a later write
             # aborted the whole build with no skip entry and left the generation
             # torn: a fresh ideas.json beside a stale timeline.json. [E5:7]
             _write(os.path.join(out, "ideas.json"), payload_ideas)
             _write(os.path.join(out, "timeline.json"), payload_timeline)
-            _write(os.path.join(out, "graph.json"), payload_graph)
+            if graph:
+                payload_graph = graph_mod.extraction([session])
+                _write(os.path.join(out, "graph.json"), payload_graph)
+                decisions_count = len(payload_graph["nodes"])
+            else:
+                stale_graph_path = os.path.join(out, "graph.json")
+                with contextlib.suppress(OSError):
+                    os.unlink(stale_graph_path)
+                decisions_count = 0
         except Exception as exc:  # noqa: BLE001 - a segment run is untrusted data
             # Leave nothing behind that still asserts facts about a generation
             # this run could not read or could not finish writing. A stale
@@ -1853,5 +1860,5 @@ def build(home: str | None = None, *, count: int = DEFAULT_IDEAS) -> Stats:
         stats.generations += 1
         stats.ideas += len(payload_ideas["ideas"])
         stats.marks += len(payload_timeline["marks"])
-        stats.decisions += len(payload_graph["nodes"])
+        stats.decisions += decisions_count
     return stats

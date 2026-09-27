@@ -1,4 +1,4 @@
-# E6 — Where gitmemory stands against published memory systems
+# E8 — Where gitmemory stands against published memory systems
 
 **Verdict: we do not beat Total Recall on the numbers as each side publishes
 them, and on the axis carrying most of the field's headline numbers we have no
@@ -57,11 +57,13 @@ session thresholds are new columns over the same retrieval.
 The two new columns exist because the field's published numbers are
 session-level and ours were not. `S-Hit@10` is "at least one answer session in
 the top k" — the same quantity other systems call `recall_any@10` or `Hit@10`.
-`S-All@10` is "every answer session in the top k", which is what Total Recall
-and Recallium call `Recall@10`. The fractional `session_recall` we had before
-is a mean of per-instance fractions and is **not** any of these; comparing it
-against a published `Recall@10` compares two different quantities, which is the
-error this page exists to avoid making.
+`S-All@10` is "every answer session in the top k", which Recallium calls
+`all-evidence@10`. Recallium's `recall@10` is the *fraction* of evidence
+sessions retrieved — the same quantity as our fractional `session_recall`,
+not S-All. [E9 correction: this page first listed Recallium's fractional
+0.963 in the S-All column.] Total Recall does not say which of the two its
+`Recall@10` is. Comparing a fraction against an all-or-nothing score compares
+two different quantities, which is the error this page exists to avoid making.
 
 ## Table 1 — the retrieval axis, session-level, LongMemEval-S
 
@@ -71,7 +73,7 @@ approximately the same thing. Sorted by the strict metric where published.
 | System | S-Hit@10 | S-All@10 | MRR | Source | Self-reported | Comparable? |
 |---|---|---|---|---|---|---|
 | Total Recall | 0.9940 | **0.9773** | 0.8672 | [total-recall.dev/benchmarks](https://total-recall.dev/benchmarks) (last updated 2026-09-12) | yes | partly — session budget, no artifact |
-| Recallium | 0.9840 | **0.9630** | 0.946 | [recallium.ai/benchmarks](https://recallium.ai/benchmarks) | yes | partly — includes all 500 incl. abstention |
+| Recallium | 0.9840 | **0.9360** | 0.946 | [recallium.ai/benchmarks](https://recallium.ai/benchmarks) | yes | partly — includes all 500 incl. abstention |
 | agentmemory (BM25 + vector) | 0.9860 | — | 0.882 | [LONGMEMEVAL.md](https://github.com/rohitg00/agentmemory/blob/main/benchmark/LONGMEMEVAL.md) | yes | **yes — identical dataset file** |
 | **gitmemory `rerank`** | **0.9787** | **0.8872** | 0.9289 | this run | yes | — |
 | **gitmemory `dense`** | **0.9723** | **0.8702** | 0.9033 | this run | yes | — |
@@ -276,10 +278,12 @@ Ordered by ratio of information gained to work required.
   reconstructing ranking, retrieval, or scoring algorithms or evaluation
   methodology; §5(k) permits publishing independent benchmark results, which is
   what this page does.
-- **No LoCoMo number computed by us appears here.** LoCoMo is CC BY-NC 4.0 and
-  publication of our own numbers on it is blocked pending a human ruling. The
-  LoCoMo figures referenced above are third-party published results cited with
-  attribution, which is ordinary citation, not redistribution.
+- **No LoCoMo number computed by us appears here.** LoCoMo is CC BY-NC 4.0; at
+  the time of this page publishing our own numbers awaited a human ruling. The
+  owner has since ruled to publish scores while never vendoring the data, and
+  our LoCoMo numbers are in [E9](E9-peer-protocols.md). The LoCoMo figures
+  referenced above are third-party published results cited with attribution,
+  which is ordinary citation, not redistribution.
 - Third-party numbers are reproduced as published. Where a verifier found a
   cited number unsupported by its source, it was dropped rather than
   footnoted — including a Letta LoCoMo figure and a Zep LongMemEval figure that

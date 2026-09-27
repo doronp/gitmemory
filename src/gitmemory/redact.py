@@ -319,8 +319,9 @@ def gate(
 
 def safe_url(url: str) -> str:
     """`https://user:pw@host/x` -> `https://host/x`.
+    `http://user:pw@host/x` -> `http://host/x`.
 
-    The only userspace HTTPS push form without an SSH key puts the credential in
+    The only userspace HTTPS/HTTP push form without an SSH key puts the credential in
     the URL, and this module's own docstring says a gate that prints the secret
     it found has published it. That applies to the secret it was handed. Printed
     output goes to a terminal an agent transcribes into the transcript this
@@ -351,7 +352,10 @@ def push_allowed(home: str, remote: str) -> tuple[bool, str]:
         return False, f"no {path}; push is opt-in per remote"
     except (OSError, tomllib.TOMLDecodeError) as exc:
         return False, f"{path} is unreadable ({exc})"
-    entry = (cfg.get("remote") or {}).get(remote)
+    remote_cfg = cfg.get("remote")
+    if not isinstance(remote_cfg, dict):
+        return False, f"{path} has no [remote.{remote}]"
+    entry = remote_cfg.get(remote)
     if not isinstance(entry, dict):
         return False, f"{path} has no [remote.{remote}]"
     if entry.get("allow_push") is not True:
@@ -363,7 +367,8 @@ def push_allowed(home: str, remote: str) -> tuple[bool, str]:
     # Only the userinfo, and only when there is any: `https://host:8443/p.git`
     # is a port, and `ssh://git@host:22/p` is a port behind a username.
     userinfo = parts.netloc.rsplit("@", 1)[0] if "@" in parts.netloc else ""
-    if ":" in userinfo:
+    # [E9, review: 6] Over HTTP(S) a bare username is the token; over ssh it is a login.
+    if ":" in userinfo or (userinfo and parts.scheme in ("http", "https")):
         # `safe_url` goes to trouble never to *print* this credential, and the
         # same argument one boundary over was never made: `config.toml` sits at
         # the root of the store, `gitrepo.commit` runs `git add --all`, and the
