@@ -861,13 +861,15 @@ def test_the_refusal_masks_a_session_id_that_is_itself_a_credential(tmp_path, ca
     sid = GHP.decode()
     assert main(["--home", str(home), "capture", str(source), "--session-id", sid]) == 0
     gitrepo.init(str(home))
-    Path(home, "sessions", "claude-code", sid, "g00.json").write_text("{trunc")
+    # The store case-folds ids (`store._safe`); macOS resolves either spelling,
+    # a case-sensitive filesystem only the stored one.
+    Path(home, "sessions", "claude-code", sid.lower(), "g00.json").write_text("{trunc")
     capsys.readouterr()
 
     assert main(["--home", str(home), "push"]) == 1
     err = capsys.readouterr().err
     assert "refusing to push" in err
-    assert sid not in err, "the gate published the credential it refused over"
+    assert sid.lower() not in err, "the gate published the credential it refused over"
     # Masked, not swallowed: the mask leaves the prefix and the byte count, and
     # the rest of the path readable, so the operator can still find the file.
     assert "ghp_…[40 bytes]" in err and "g00.json" in err

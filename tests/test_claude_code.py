@@ -1541,7 +1541,9 @@ def test_a_root_of_slash_does_not_reject_every_path():
     [review: paths F8]
     """
     assert cc._contained("/etc/hosts", "/") is True
-    assert cc._contained("/etc/hosts", "/etc") is False, "still rejects a sibling of the root"
+    # A sibling, not a parent: `/etc` is a symlink on macOS, so `/etc/hosts`
+    # against `/etc` answered False there and True on Linux.
+    assert cc._contained("/etc/hosts", "/usr") is False, "accepts a sibling of the root"
 
 
 # --- E7 parsing-F1: a turn id the input could choose ---

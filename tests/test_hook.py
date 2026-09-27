@@ -37,6 +37,18 @@ def run_shim_cmd() -> list[str]:
     return [str(SHIM_PATH)]
 
 
+def _sh_reads_shellopts() -> bool:
+    """Whether `/bin/sh` imports `SHELLOPTS` from the environment.
+
+    bash does, even in posix mode, which is what `/bin/sh` is on macOS. dash,
+    `/bin/sh` on Debian and Ubuntu, ignores it, so there is no verbose door to
+    measure there and the line count below has nothing to count.
+    """
+    env = {"PATH": os.environ.get("PATH", ""), "SHELLOPTS": "verbose"}
+    res = subprocess.run(["/bin/sh", "-c", ":"], env=env, capture_output=True)
+    return bool(res.stderr)
+
+
 @pytest.fixture
 def clean_env(tmp_path):
     """An isolated environment, including `HOME`.
@@ -669,6 +681,7 @@ def test_the_shim_is_silent_under_xtrace_and_does_not_echo_the_home_it_was_given
     assert len(list((home / "spool").glob("*.json"))) == 1
 
 
+@pytest.mark.skipif(not _sh_reads_shellopts(), reason="/bin/sh ignores SHELLOPTS (dash)")
 def test_under_verbose_the_shim_echoes_two_lines_because_the_guard_is_the_second(clean_env):
     r"""`set +v` narrows the verbose door; *where* it sits is what closes it.
 

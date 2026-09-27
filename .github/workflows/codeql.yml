@@ -12,8 +12,14 @@ permissions:
 
 jobs:
   analyze:
+    # Code scanning needs a public repository (or GitHub Code Security).
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
+    # Job-level permissions replace the workflow-level block, so restate
+    # `contents: read`; without it checkout cannot see a private repository.
     permissions:
+      contents: read
+      actions: read
       security-events: write
     strategy:
       fail-fast: false
