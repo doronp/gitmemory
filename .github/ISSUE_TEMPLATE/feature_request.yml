@@ -1,0 +1,22 @@
+name: Feature request
+description: Propose a change or a new adapter.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What do you propose?
+      description: If it changes a locked decision in docs/DESIGN.md, name the section.
+    validations:
+      required: true
+  - type: textarea
+    id: measure
+    attributes:
+      label: How would we know it worked?
+      description: What number would move, or what test would go green?

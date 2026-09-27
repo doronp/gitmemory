@@ -429,7 +429,7 @@ The cost is five class items on probes A and B, whose floors drop to 23 and 25.
 Three are the trade — bare substitution, the exact shape adjudicated as
 narration 31 times — and two are collateral withdrawals the new evidence list
 does not reach. A and B are spent, so re-pinning them is bookkeeping rather than
-evidence; **what settles fix 2 is a blind probe E, unwritten.** Both rounds are
+evidence; **what settles fix 2 is a blind probe E** — since run: 19/32, 12/12 non-decisions held, 2/12 assistant reversals (`docs/benchmarks/E5-probe-E.md`). Both rounds are
 written up in `docs/benchmarks/E5-secondary-set.md`, and **the set is a
 regression floor from fix 1 onward, not a generalisation measure.**
 

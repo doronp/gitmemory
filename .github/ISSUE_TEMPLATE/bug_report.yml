@@ -1,0 +1,40 @@
+name: Bug report
+description: Something gitmemory does is wrong.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security problem?** Do not file it here. See SECURITY.md.
+        **Never paste real session history.** It is yours, and it very likely contains credentials. Reproduce with a synthetic transcript.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands you ran, and a minimal synthetic transcript if the bug is in capture or parsing.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: verify
+    attributes:
+      label: Output of `gitmemory verify`
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "0.1.0, or the output of git rev-parse --short HEAD"
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: OS, Python version, agent and agent version
+      placeholder: "macOS 15, Python 3.13.1, Claude Code 2.x"
