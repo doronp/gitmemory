@@ -54,7 +54,7 @@ dependencies.
 
 ## Quickstart
 
-<p align="center"><img src="docs/assets/demo.gif" width="100%" alt="Terminal recording of a synthetic Claude Code session. The user tells the agent not to add a retry loop to uploads, and gitmemory capture copies out the transcript's 4800 bytes. The session is compacted, the summary the agent continues from does not carry the instruction, and after an upload times out the agent proposes a retry loop. A second capture copies the 5580 new bytes, verify reports 0 problems, the manifest shows two segments meeting at byte 4800 and a compaction boundary at byte 7094, and after index, recall for retry loop returns the user's turn at byte 3758 as its first result."></p>
+<p align="center"><img src="docs/assets/demo.gif" width="100%" alt="Terminal recording of a synthetic Claude Code session. The user tells the agent not to add a retry loop to uploads, and gitmemory capture copies out the transcript's 5348 bytes. The session is compacted, the summary the agent continues from does not carry the instruction, and after an upload times out the agent proposes a retry loop. A second capture copies the 6202 new bytes, verify reports 0 problems, the manifest shows two segments meeting at byte 5348 and a compaction boundary at byte 8190, and after index, recall for retry loop returns the user's turn at byte 4306 as its first result."></p>
 
 Requires Python 3.13+ and git.
 

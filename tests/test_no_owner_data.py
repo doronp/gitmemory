@@ -127,12 +127,13 @@ PLACEHOLDERS = {"/Users/x"}
 
 # Binaries that ship, each by name, and each read by `_scan` as bytes decoded
 # with `errors="replace"` (the way `_history_scan` reads every blob) instead of
-# being skipped by `_is_text`. That sees what a file carries as bytes: a GIF's
-# comment and application blocks, a PNG's text chunks, the places a tool that
-# knows a path would write it. It does not see text the picture *shows*, which
-# is compressed pixels. For `docs/assets/demo.gif` that half was checked on the
-# asciicast it was rendered from, before rendering. Named rather than inferred
-# from a file extension, so the next binary is still a deliberate edit here.
+# being skipped by `_is_text`. That sees a string the file stores contiguously
+# and uncompressed: a GIF comment that fits in one sub-block, a PNG `tEXt`
+# chunk. It does not see a string split across GIF sub-blocks (each at most 255
+# bytes, behind a length byte), a deflated PNG chunk (`zTXt`, a compressed
+# `iTXt`), or text the picture *shows*, which is compressed pixels. Nothing in
+# this repository checks those. Named rather than inferred from a file
+# extension, so the next binary is still a deliberate edit here.
 SCANNED_AS_BYTES = {"docs/assets/demo.gif"}
 
 # The two lines of a commit object that are a git identity rather than content.
