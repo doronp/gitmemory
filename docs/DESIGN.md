@@ -750,7 +750,7 @@ Public + synthetic only. **Never this machine's history.**
 | E4 | Hook shim + watcher + git daemon | p50/p99 published; `kill -9` mid-write loses nothing; concurrent spool proven |
 | E5 | Derivation (+ decision graph behind its gate) | Every node has a `source_ref`; build twice = identical bytes |
 | E6 | Dashboard | Runs offline from one command |
-| E7 | RC1: full security review, README + graphic, Apache-2.0, private repo | No unresolved findings |
+| E7 | RC1: full security review, README + graphic, Apache-2.0 | No unresolved findings |
 
 This table is the plan as it was locked. Where each epoch stands now, E7b to E9 included, is kept
 in [ROADMAP.md](../ROADMAP.md).

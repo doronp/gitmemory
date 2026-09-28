@@ -118,29 +118,49 @@ each number and how closely a rerun should match.
 | gitmemory, `rerank` bench arm (BM25 top 50, reranked) | 0.8295 | `hybrid` extra |
 | *Opposite arrangement: evidence ahead of the boundary* | *live window 0.7893 beats the index's 0.7456* | Walling off the past also walls off the distractors. The reported mode was pre-registered |
 
-**Against other memory systems, under their own protocols** ([E9](docs/benchmarks/E9-peer-protocols.md)). Every row is a self-report, ours included.
+**Against open-source memory products, under their own protocols** ([E9](docs/benchmarks/E9-peer-protocols.md)). The peers are systems with an OSI-licensed engine in a public repository. Every row is a self-report, ours included, and every peer figure links to its source in E9.
 
-| Benchmark (metric) | gitmemory | Rank | Leader | Shipped BM25 alone |
+*Retrieval, no LLM in the loop.* The open-source systems that publish these are MemPalace and agentmemory.
+
+| Benchmark (metric) | gitmemory | MemPalace | agentmemory | Shipped BM25 alone |
 |---|---|---|---|---|
-| LongMemEval-S, session R@5, no LLM | **99.2** | **1st** | next: MemPalace 98.4 | 95.8 |
-| LongMemEval-S, session R@10, no LLM | **99.8** | **1st** (tied) | MemPalace 99.8 (450 held-out) | 97.2 |
-| LongMemEval-S, all-evidence@10 | 96.0 | 2nd | Total Recall 97.73 | 86.4 |
-| LoCoMo, session R@10 (MemPalace protocol) | 91.3 | 2nd | MemPalace 92.4 | 86.5 |
-| LongMemEval-S, QA accuracy (reader + judge) | 94.2 | 5th of 10 | Total Recall 98.0 | — |
-| LoCoMo categories 1–4, QA accuracy | 85.5 | 8th of 8 | ByteRover 96.1 | — |
+| LongMemEval-S, session R@5 | **99.2** | 98.4 (450 held-out) | 95.2 | 95.8 |
+| LongMemEval-S, session R@10 | **99.8** | **99.8** (450 held-out) | 98.6 | 97.2 |
+| LongMemEval-S, all-evidence@10 | **96.0** | not published | not published | 86.4 |
+| LoCoMo, session R@10 | 91.3 | **92.4** | not published | 86.5 |
+
+*End-to-end QA accuracy (reader + judge).* Each system uses its own reader and judge, so ranks are approximate.
+
+| System | LongMemEval-S | LoCoMo cats 1–4 |
+|---|---|---|
+| Mastra Observational Memory | **94.87** | not published |
+| Mem0 (Platform) | 94.8 | 92.5 |
+| Hindsight | 94.6 | 92.01 |
+| **gitmemory** | 94.2 (4th of 8) | 85.5 (7th of 9) |
+| Honcho | 92.6 | 89.9 |
+| Zep (engine open as Graphiti) | 90.2 | **94.7** |
+| MemOS | 89.2 | 88.83 |
+| EverOS (EverMemOS) | 83.0 | 93.05 |
+| Memobase | not published | 75.78 |
+| Letta | not published | 74.0 |
+
+Closed or source-available systems that publish only their own numbers (Total
+Recall, Recallium, Backboard, ByteRover) are listed at the end of E9 and not
+ranked against. Total Recall reports the highest QA figure anyone publishes,
+98.0 on LongMemEval-S, with no public artifact behind it.
 
 The gitmemory column is the `rerank12` bench arm: BM25 retrieves 200 turns and a
 local MiniLM-L-12 cross-encoder reorders them. The exception is LoCoMo QA,
 which used the `rerank` arm. `rerank12` was chosen on the LoCoMo dev half and
 run unchanged everywhere else. **The product ships BM25 alone, which is first
 on nothing.** The QA rows use Gemini 3.1 Pro as reader and judge, which is not
-any leaderboard's judge, so read those ranks as approximate.
+any leaderboard's judge. Mastra's 94.87 is a mean of per-type scores; pooled as
+ours is, it reads 93.6.
 
 **On E3's harness** ([E8](docs/benchmarks/E8-where-we-stand.md)): the shipped
-arm reads session Hit@10 **0.9660** and All@10 **0.8298**. Total Recall
-self-reports 0.9940 and 0.9773, and Recallium 0.9840 and 0.9360. Against
-agentmemory, which runs the identical dataset file, we beat its BM25
-configuration (0.9460) and trail its hybrid configuration (0.9860).
+arm reads session Hit@10 **0.9660**, All@10 **0.8298**. Against agentmemory,
+which runs the identical dataset file, it beats agentmemory's BM25 configuration
+(0.9460) and trails its hybrid configuration (0.9860).
 
 **Decision extraction** (opt-in, `derive --graph`). It is close to useless on
 real text, and that is a measurement rather than a suspicion.
@@ -232,10 +252,10 @@ that happen to write such files.
 | Claude Code | **shipped** |
 | pi / oh-my-pi | **shipped**, one adapter for two dialects |
 | Kimi Code CLI, OpenAI Codex CLI, Gemini CLI, DeepSeek Harness, Cline (`hooks.jsonl`), Cursor Agent CLI | planned |
-| Hermes, OpenClaw, opencode, Goose, Cline's transcript, Continue.dev, Aider, Amp, and others | cannot be adapted: each rewrites history in place, keeps it in SQLite or on a server, or writes records that cannot be told apart |
+| Hermes, OpenClaw, opencode, Goose, Cline's transcript, Continue.dev, Aider, Amp, and others | not supported yet: each rewrites history in place, keeps it in SQLite or on a server, or writes records that are hard to tell apart. Most could be supported through a materializer (not built), an export the agent already has, or a small upstream change |
 
-The four properties, a survey of twenty-nine agents read at source, and why each
-one that fails does so: [docs/agents.md](docs/agents.md).
+The four properties, a survey of twenty-nine agents read at source, and what
+each of the rest would need: [docs/agents.md](docs/agents.md).
 
 ## Documentation
 

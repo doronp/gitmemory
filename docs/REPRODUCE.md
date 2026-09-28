@@ -287,9 +287,8 @@ There is no separate run. E8 reads the `S-Hit@10` and `S-All@10` columns of its
 0.9723 / 0.8702; `rerank` 0.9787 / 0.8872; `reference` 1.0000 / 0.9319;
 `live_context` 0.8894 / 0.3128. All reproduced exactly while writing this guide.
 
-The peers' figures in the same README sentence (Total Recall 0.9940 / 0.9773,
-Recallium 0.9840 / 0.9360, agentmemory 0.9460 and 0.9860) are their own
-self-reports, cited in E8. They are not produced by anything in this
+agentmemory's figures in the same README sentence (0.9460 and 0.9860) are its
+own self-reports, cited in E8, as are the closed systems' figures in E8's table. They are not produced by anything in this
 repository and cannot be reproduced from it.
 
 ## 4. Decision extraction

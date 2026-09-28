@@ -7,7 +7,7 @@ developer's published Claude Code sessions, the decision extractor produced 32
 `directive` nodes and **not one of them was a directive**, while missing both of
 the two that were there.
 
-Seven fixes later it produces 7 and one of them is a directive, which is the
+Seven fixes later it produces 8 and one of them is a directive, which is the
 first non-zero numerator this page has had. The headline above is the number as
 measured, and it stays the headline: fixes 1 to 7 were all tuned against this
 corpus after it was scored, so 0.1250 is a regression floor and 0.0000 is the

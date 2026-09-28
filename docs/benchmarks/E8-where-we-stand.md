@@ -1,5 +1,12 @@
 # E8 — Where gitmemory stands against published memory systems
 
+*Note, 2026-09-28.* This page predates E9 and measured on E3's harness. Its
+verdict is framed against Total Recall, a closed system that publishes only its
+own figures; the project now compares against open-source memory products, in
+[E9](E9-peer-protocols.md). Checked on that date, Total Recall's page labels its
+97.73 "Recall@10" rather than all-evidence, shows no 0.9940, and calls its
+LoCoMo 91.17 retrieval. The page is otherwise kept as written.
+
 **Verdict: we do not beat Total Recall on the numbers as each side publishes
 them, and on the axis carrying most of the field's headline numbers we have no
 number at all. Where a like-for-like comparison genuinely exists, we are ahead

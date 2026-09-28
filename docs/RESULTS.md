@@ -40,24 +40,26 @@ fourteen calibration gates, every arm including the ones that lost.
 
 ## Where this sits against other memory systems
 
-**Under the field's own protocols, a bench arm is first on one benchmark and
-second on two; the shipped arm is first on none.** Adding a local cross-encoder
-to the shipped BM25 index (`rerank12`, no LLM) reads LongMemEval-S session
-R@5 **99.2** and R@10 **99.8** — first among no-LLM retrievers — and is second on
-all-evidence@10 (96.0 to Total Recall's 97.73) and on LoCoMo session R@10 (91.3
-to MemPalace's 92.4). End-to-end QA with a Gemini reader and judge is 94.2 on
-LongMemEval-S (5th of 10) and 85.5 on LoCoMo (last of 8); neither judge matches the
-leaderboard's. [E9 rankings](benchmarks/E9-peer-protocols.md) — every
+**Against open-source memory products under the field's own protocols, a bench
+arm leads on retrieval; the shipped arm leads on nothing.** Adding a local
+cross-encoder to the shipped BM25 index (`rerank12`, no LLM) reads LongMemEval-S
+session R@5 **99.2** and R@10 **99.8** — first among open-source no-LLM
+retrievers, tied with MemPalace at R@10 — and all-evidence@10 96.0, which no
+open-source peer publishes. It is second on LoCoMo session R@10 (91.3 to
+MemPalace's 92.4). End-to-end QA with a Gemini reader and judge is 94.2 on
+LongMemEval-S (4th of 8 open-source products) and 85.5 on LoCoMo (7th of 9);
+neither judge matches the leaderboard's. Closed systems that publish only their
+own numbers, Total Recall among them, are listed in E9 but not ranked against. [E9 rankings](benchmarks/E9-peer-protocols.md) — every
 table sourced, the shipped arm in each, dev/test splits for every choice.
 
 What follows is the E8 comparison, on E3's harness (noisy corpus, ten-turn
 budget), kept because its caveats still hold for the shipped arm.
 
-**We do not beat the leaders on the numbers as each side publishes them.** On
-session-level retrieval on LongMemEval-S — the one axis where a shape-matched
-comparison exists — the shipped arm reads **S-Hit@10 0.9660** and **S-All@10
-0.8298**, against Total Recall's self-reported 0.9940 and 0.9773 and
-Recallium's 0.9840 and 0.9360. Those are the session-level columns; the
+**On E3's harness the shipped arm sits between agentmemory's two
+configurations.** On session-level retrieval on LongMemEval-S it reads
+**S-Hit@10 0.9660** and **S-All@10 0.8298**, against agentmemory's 0.9460 (BM25)
+and 0.9860 (hybrid) on the identical dataset file. The closed systems E8 also
+cited, Total Recall and Recallium, self-report higher figures. Those are the session-level columns; the
 turn-level figures (turn recall in the first table on this page, and turn
 `Hit@10` 0.8362 and `All@10` 0.6617 in [E3](benchmarks/E3-longmemeval.md)) are
 different quantities and are lower.
@@ -226,8 +228,8 @@ as rows on the page, not as omissions:
   other arms exist only in `bench/`, behind the `hybrid` extra, so every install
   gets the arm that came last.
 - **The decision graph is close to useless on real sessions**, and that is
-  measured rather than suspected. Precision 0.0000 on the user side — 14 nodes,
-  none of them a directive — and 0.15 on the assistant side, since lifted by
+  measured rather than suspected. Precision 0.0000 on the user side — 32 `directive`
+  nodes, none of them a directive — and 0.15 on the assistant side, since lifted by
   emitting 54 fewer nodes, which leaves seven and is not a precision claim. Four projects and one developer is not a
   population, and recall rests on two gold items; the false-positive count does
   not. Seven rounds of fixes later the user side emits 8 nodes and **1** of them

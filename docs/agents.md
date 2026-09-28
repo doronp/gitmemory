@@ -2,7 +2,7 @@
 
 gitmemory captures any agent whose history meets four properties. This page
 defines the four and lists what exists today: which adapters ship, which are
-planned, and which agents cannot be adapted and why. The survey behind it read
+planned, and what the rest would need before they can be supported. The survey behind it read
 twenty-nine agents at source in September 2026.
 
 ## The four properties
@@ -83,7 +83,7 @@ state:
 | DeepSeek Harness | y | y | ~ | y | planned — plain JSONL only under `compression: 'none'`; the shipped default is zstd-framed |
 | Cline (`hooks.jsonl` audit stream) | y | y | y | y | planned — one global file for all sessions; the store pins one session to one path |
 | Cursor Agent CLI | y | ? | y | **n** | planned — no vendor schema, two on-disk layouts, two record dialects |
-| Hermes, OpenClaw, Kilo Code, opencode, Goose, Cline's own transcript, Cline's ancestor Roo Code, OpenHands, Freebuff, Continue.dev, CodeGPT | | | | | **not adaptable** — see below |
+| Hermes, OpenClaw, Kilo Code, opencode, Goose, Cline's own transcript, Cline's ancestor Roo Code, OpenHands, Freebuff, Continue.dev, CodeGPT | | | | | **not supported yet** — each needs a materializer or an upstream change; see below |
 
 `~` means the append-only property holds with a bounded, named exception:
 oh-my-pi rewrites a fixed-width 256-byte title slot at the head of a live file
@@ -93,31 +93,48 @@ corruption); Codex replaces whole rollout files on a startup migration. `?` is
 not a weaker `~`: nothing in Cursor's public source settles the question either
 way, and the honest cell for an unread property is not a guess.
 
-### What does not work, and why that is the useful half
+### What the rest would need, and why
 
-- **Hermes Agent** is the largest agent on the OpenRouter board and its
-  transcript is `~/.hermes/state.db`, a SQLite file whose rows are rewritten in
-  place at every compaction (`UPDATE messages SET active = 0, compacted = 1`).
-  It does emit a JSONL file in exactly the shape this project's Claude Code
-  adapter parses — and that export mints a fresh uuid per line on every run, so
-  two exports of one session never agree on a single id.
+None of these is ruled out. Each fails one of the four properties *as it
+stands*, and supporting it would take one of three things: a **materializer**
+(not built) that reads the agent's own store and writes an append-only stream
+for gitmemory to capture; a **hook or export** the agent already offers, used
+as the source instead of its transcript; or an **upstream change** in the agent.
+
+- **Hermes Agent** is the largest agent on the OpenRouter board. Its transcript
+  is `~/.hermes/state.db`, a SQLite file whose rows are rewritten in place at
+  every compaction (`UPDATE messages SET active = 0, compacted = 1`), so there
+  is no append-only file to tail. It does emit a JSONL export in exactly the
+  shape the Claude Code adapter parses, but the export mints a fresh uuid per
+  line on every run, so two exports of one session never agree on an id.
+  Supporting it may need either a materializer over `state.db` that keeps the
+  rows a compaction marks inactive, or stable ids in the export, which is a
+  small upstream change and would make the existing adapter usable almost as is.
+- **OpenClaw** used to write JSONL transcripts; today only its own Doctor
+  importer reads them. Supporting it may need a materializer over the store it
+  moved to, or an export of that store.
+- **opencode** and **Goose** keep sessions in SQLite. Both would need a
+  materializer. Goose still ships the JSONL reader it used before the move,
+  which is a useful map of the record shape.
 - **Cline** rewrites its whole transcript with `writeFileSync` on every agent
-  loop *iteration* — not every turn — and the key that changes sits about
-  thirty bytes into the file, so there is no stable prefix at all. It is the
-  cleanest citable instance of a P2 failure: local, open source, and
-  unadaptable.
+  loop *iteration*, not every turn, and the key that changes sits about thirty
+  bytes into the file, so no prefix stays stable. Its `hooks.jsonl` audit
+  stream is append-only and is already on the planned list above; that is the
+  likely route, and [issue #8](https://github.com/doronp/gitmemory/issues/8)
+  is the store change it needs.
 - **Continue.dev** is local, human-readable, Apache-2.0, and re-serialises the
-  whole session on every save. It is the proof that "local" and "append-only"
-  are two requirements and not one stated twice.
-- **Aider** writes its history *into the git working tree*, which is the
-  closest anything in the field comes to this project's own premise — and it
-  prefixes every user line with `#### ` while writing assistant output with no
-  prefix at all, so an assistant reply containing a heading is byte-identical
-  to a user turn.
-- **Amp** fails one level above format: the thread of record lives on the
-  vendor's servers. There is nothing to reverse-engineer, because the user is
-  not the data controller of their own history.
+  whole session on every save. A materializer that diffs successive saves
+  would work, with the caveat below.
+- **Aider** writes its history into the git working tree, which is the closest
+  anything in the field comes to this project's own premise. It prefixes every
+  user line with `#### ` and writes assistant output with no prefix, so an
+  assistant reply containing a heading looks exactly like a user turn.
+  Supporting it may need a second signal to tell the roles apart, or an
+  unambiguous assistant prefix upstream.
+- **Amp** keeps the thread of record on the vendor's servers. Supporting it
+  would need an export or API from the vendor, then a materializer over that.
 
-A capture of an agent in that list is still possible — the bytes copy — but it
-would be a snapshot-and-commit, and this project's whole claim is the thing a
-snapshot cannot make: that nothing was elided between one commit and the next.
+The caveat for every materializer route: the contiguity proof would then cover
+the materialized stream, not the agent's own bytes. Anything the agent rewrote
+between two reads of its store is invisible to it. That is weaker than the
+guarantee for the agents above, and the page for each such agent should say so.
