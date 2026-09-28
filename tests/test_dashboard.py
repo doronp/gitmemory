@@ -970,3 +970,56 @@ def test_a_digest_that_cannot_be_read_says_why(capsys, tmp_path):
     assert str(not_a_db) in err, err
     assert "could not read the content digest" in err, err
     assert "not a database" in err, err
+
+
+def test_the_sign_in_cookie_is_made_httponly_and_nothing_else_is_touched(monkeypatch):
+    """[SEC-2] Datasette sets `ds_actor` readable from script; the plugin fixes that."""
+    import asyncio
+    import types
+
+    monkeypatch.setitem(sys.modules, "datasette", types.SimpleNamespace(hookimpl=lambda f: f))
+    ns: dict = {}
+    exec(dashboard._PLUGIN, ns)  # noqa: S102 - our own module-level literal
+
+    async def app(scope, receive, send):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 302,
+                "headers": [
+                    (b"set-cookie", b"ds_actor=abc; Path=/; SameSite=lax"),
+                    (b"set-cookie", b"other=1; Path=/"),
+                    (b"location", b"/"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": b""})
+
+    sent: list = []
+
+    async def send(event):
+        sent.append(event)
+
+    wrapped = ns["asgi_wrapper"](None)(app)
+    asyncio.run(wrapped({"type": "http"}, None, send))
+    assert sent[0]["headers"] == [
+        (b"set-cookie", b"ds_actor=abc; Path=/; SameSite=lax; HttpOnly"),
+        (b"set-cookie", b"other=1; Path=/"),
+        (b"location", b"/"),
+    ]
+    assert sent[1] == {"type": "http.response.body", "body": b""}
+
+
+def test_serve_hands_datasette_the_cookie_plugin(home, src, monkeypatch):
+    seen = {}
+
+    def call(argv):
+        plugins = argv[argv.index("--plugins-dir") + 1]
+        seen["plugin"] = Path(plugins, "gitmemory_cookie.py").read_text()
+        return 0
+
+    built(home, src, [user("u1", "hello")])
+    monkeypatch.setattr(dashboard.shutil, "which", lambda name: "/bin/datasette")
+    monkeypatch.setattr(dashboard.subprocess, "call", call)
+    assert dashboard.serve(home) == 0
+    assert seen["plugin"] == dashboard._PLUGIN

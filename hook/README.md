@@ -104,7 +104,10 @@ sends the payload on stdin and no arguments of its own:
 }
 ```
 
-Replace `/absolute/path/to/gitmemory` with wherever you cloned this.
+Replace `/absolute/path/to/gitmemory` with wherever you cloned this. The shim is
+not part of the installed package: if you installed with `uv tool install`,
+clone the repository or download `hook/gitmemory-hook.sh` to a stable absolute
+path and `chmod +x` it.
 
 `Stop` is accepted by the shim but deliberately left out of the example: it
 fires after every assistant turn, and the watcher does not force a capture on

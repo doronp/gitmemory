@@ -2233,3 +2233,15 @@ def test_the_pass_counter_counts_passes_and_not_every_sleep(monkeypatch):
         time.sleep(delay)
     assert fired == [0.0], "a subprocess wait was counted as a pass"
     assert slept == [0.0005, 0.001, 0.002]
+
+
+def test_a_symlinked_transcript_is_refused_without_a_parse_failure_line(tmp_path):
+    """[E4-L1] It said "parse failed … capturing bytes without boundaries" first."""
+    real = tmp_path / "real.jsonl"
+    real.write_text('{"type":"user","uuid":"u1","message":{"role":"user","content":"hi"}}\n')
+    link = tmp_path / "link.jsonl"
+    link.symlink_to(real)
+    said: list[str] = []
+    with pytest.raises(RuntimeError, match="is a symlink"):
+        daemon.capture_one(str(tmp_path / "h"), str(link), "claude-code", log=said.append)
+    assert said == []

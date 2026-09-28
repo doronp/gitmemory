@@ -8,7 +8,14 @@
 set -eu
 
 DEST_DIR="${1:-${TMPDIR:-/tmp}/gitmemory-longmemeval}"
+# The default is a predictable name in a shared TMPDIR: refuse a directory
+# somebody else created, or `curl -o` follows their symlink.
+umask 077
 mkdir -p "$DEST_DIR"
+if [ ! -O "$DEST_DIR" ]; then
+  echo "Error: $DEST_DIR is not owned by you; pass a directory as the first argument." >&2
+  exit 1
+fi
 
 REV="98d7416c24c778c2fee6e6f3006e7a073259d48f"
 FILE="longmemeval_s_cleaned.json"

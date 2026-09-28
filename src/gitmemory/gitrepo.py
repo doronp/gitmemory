@@ -272,7 +272,10 @@ def tracked(home: str) -> list[str]:
     right by construction. [E7]
     """
     out = _git(home, "ls-files", "-z", "--cached", "--others", "--exclude-standard").stdout
-    return [os.path.join(home, p) for p in out.split("\0") if p]
+    # `--cached` still lists a file deleted but not yet committed. Its bytes are
+    # history now, which `pushable_objects` covers; reading it here crashed. [SEC-4]
+    paths = (os.path.join(home, p) for p in out.split("\0") if p)
+    return [p for p in paths if os.path.lexists(p)]
 
 
 def pushable_objects(home: str) -> Iterator[tuple[str, bytes]]:

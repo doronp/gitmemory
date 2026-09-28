@@ -8,7 +8,14 @@
 set -eu
 
 DEST_DIR="${1:-${TMPDIR:-/tmp}/gitmemory-locomo}"
+# The default is a predictable name in a shared TMPDIR: refuse a directory
+# somebody else created, or `curl -o` follows their symlink.
+umask 077
 mkdir -p "$DEST_DIR"
+if [ ! -O "$DEST_DIR" ]; then
+  echo "Error: $DEST_DIR is not owned by you; pass a directory as the first argument." >&2
+  exit 1
+fi
 
 REV="3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376"
 FILE="locomo10.json"

@@ -742,7 +742,9 @@ def capture_one(
     boundaries, and boundaries are the thing we are allowed to lose.
     """
     boundaries = None
-    if parse:
+    # A symlink is refused by `store.capture`; parsing it first only printed a
+    # misleading "parse failed" line ahead of the refusal. [E4-L1]
+    if parse and not os.path.islink(source):
         try:
             # The parse and the copy are two reads of one file, and a rewrite
             # between them attaches the old content's offsets to the new

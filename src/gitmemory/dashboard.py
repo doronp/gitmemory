@@ -26,6 +26,15 @@ single-use sign-in URL at start-up. That cookie is scoped to the host in the
 URL, which is what closes the rebinding route: a page at `attacker.example`
 does not get it. [E7 dashboard-F1/F2]
 
+A host, not a port: browsers send a `127.0.0.1` cookie to every port on
+`127.0.0.1`, and Datasette sets it readable from script and with no expiry. So
+`_PLUGIN` adds `HttpOnly`, which keeps a page served by some other local dev
+server from reading it through `document.cookie`. It does not stop that other
+server receiving the cookie with a request the browser makes to it; nothing
+cookie-shaped can, and that server is a local process which could connect to
+this one anyway. The cookie dies with the process: Datasette signs it with a
+secret generated at start-up, so a restart revokes it. [SEC-2]
+
 **The metadata is generated, not shipped.** Datasette keys table descriptions by
 database *name*, and the name carries the schema version (`gitmemory-v2.db`), so
 a checked-in YAML would silently stop matching on the next schema bump and the
@@ -164,6 +173,41 @@ in this system injects anything yet. Both are named in
 """
 
 
+# Loaded by Datasette through `--plugins-dir`, so it runs inside Datasette's own
+# environment (which may be a `uvx` one) and this package never imports
+# datasette. Adds `HttpOnly` to the sign-in cookie; see the module docstring.
+_PLUGIN = """\
+from datasette import hookimpl
+
+
+def _httponly(headers):
+    for name, value in headers:
+        if (
+            bytes(name).lower() == b"set-cookie"
+            and bytes(value).startswith(b"ds_actor=")
+            and b"httponly" not in bytes(value).lower()
+        ):
+            value = bytes(value) + b"; HttpOnly"
+        yield name, value
+
+
+@hookimpl
+def asgi_wrapper(datasette):
+    def wrap(app):
+        async def inner(scope, receive, send):
+            async def patched(event):
+                if event["type"] == "http.response.start":
+                    event = dict(event, headers=list(_httponly(event.get("headers", []))))
+                await send(event)
+
+            await app(scope, receive, patched)
+
+        return inner
+
+    return wrap
+"""
+
+
 def metadata(db_name: str) -> dict:
     """Datasette metadata for one database, by name.
 
@@ -213,7 +257,14 @@ def metadata(db_name: str) -> dict:
 UVX_SPEC = "datasette>=0.65,<1"
 
 
-def command(db: str, *, host: str = HOST, port: int = PORT, metadata_path: str) -> list[str]:
+def command(
+    db: str,
+    *,
+    host: str = HOST,
+    port: int = PORT,
+    metadata_path: str,
+    plugins_dir: str | None = None,
+) -> list[str]:
     """The argv Datasette is run with. A list, never a shell string.
 
     A `datasette` already on PATH first, `uvx` as a fallback, an error if
@@ -255,6 +306,8 @@ def command(db: str, *, host: str = HOST, port: int = PORT, metadata_path: str) 
         "--port",
         str(port),
     ]
+    if plugins_dir:
+        args += ["--plugins-dir", plugins_dir]
     if shutil.which("datasette"):
         return args
     if shutil.which("uvx"):
@@ -276,7 +329,11 @@ def serve(home: str | None = None, *, db: str | None = None, host: str = HOST, p
         meta = os.path.join(tmp, "metadata.json")
         with open(meta, "w", encoding="utf-8") as fh:
             json.dump(metadata(name), fh, indent=2)
-        argv = command(path, host=host, port=port, metadata_path=meta)
+        plugins = os.path.join(tmp, "plugins")
+        os.mkdir(plugins)
+        with open(os.path.join(plugins, "gitmemory_cookie.py"), "w", encoding="utf-8") as fh:
+            fh.write(_PLUGIN)
+        argv = command(path, host=host, port=port, metadata_path=meta, plugins_dir=plugins)
         if argv[0] == "uvx":
             print(f"datasette is not on PATH; uvx may fetch `{UVX_SPEC}` from PyPI first")
         # Which build is on the page. Datasette holds the file open and
@@ -287,6 +344,7 @@ def serve(home: str | None = None, *, db: str | None = None, host: str = HOST, p
         # against `gitmemory index`'s own output. [E6 review]
         print(f"content {_digest(path)} — restart after a rebuild; the page will not notice one")
         print("open the one-time sign-in URL datasette prints below, not the bare address")
+        print("the sign-in cookie reaches every port on this host; stop the server to revoke it")
         # No `http://host:port/` line of our own any more. It was printed
         # *before* `subprocess.call`, so a local process squatting the port —
         # 8081 is a published constant above 1024, so no scanning is needed —

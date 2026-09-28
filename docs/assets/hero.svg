@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 410" width="1160" height="410" role="img" aria-label="An agent is told not to add a retry loop; compaction drops that turn and the agent forgets it. gitmemory has committed the transcript bytes to git as contiguous segments, verify reports no hole, and recall returns the original turn with its byte offset.">
+<style>
+@keyframes c0{0%,3%{opacity:0} 6%{opacity:1} 37%{opacity:1} 41%,95%{opacity:0.18} 99%,100%{opacity:0}}
+@keyframes c1{0%,11%{opacity:0} 14%{opacity:1} 37%{opacity:1} 41%,95%{opacity:0.18} 99%,100%{opacity:0}}
+@keyframes c2{0%,19%{opacity:0} 22%{opacity:1} 37%{opacity:1} 41%,95%{opacity:0.18} 99%,100%{opacity:0}}
+@keyframes c3{0%,25%{opacity:0} 28%{opacity:1} 37%{opacity:1} 41%,95%{opacity:0.18} 99%,100%{opacity:0}}
+@keyframes cmp{0%,33%{opacity:0} 36%{opacity:1} 44%{opacity:1} 48%,95%{opacity:0.55} 99%,100%{opacity:0}}
+@keyframes q{0%,47%{opacity:0} 50%{opacity:1} 95%{opacity:1} 99%,100%{opacity:0}}
+@keyframes lost{0%,52%{opacity:0} 55%{opacity:1} 95%{opacity:1} 99%,100%{opacity:0}}
+@keyframes s0{0%,7%{opacity:0} 10%{opacity:1} 95%{opacity:1} 99%,100%{opacity:0}}
+@keyframes s1{0%,15%{opacity:0} 18%{opacity:1} 95%{opacity:1} 99%,100%{opacity:0}}
+@keyframes s2{0%,40%{opacity:0} 44%{opacity:1} 95%{opacity:1} 99%,100%{opacity:0}}
+@keyframes ok{0%,57%{opacity:0} 61%{opacity:1} 95%{opacity:1} 99%,100%{opacity:0}}
+@keyframes cmd{0%,63%{opacity:0} 64%{opacity:1} 95%{opacity:1} 99%,100%{opacity:0}}
+@keyframes type{0%,64%{transform:scaleX(1)} 72%,100%{transform:scaleX(0)}}
+@keyframes r0{0%,75%{opacity:0} 78%{opacity:1} 95%{opacity:1} 99%,100%{opacity:0}}
+@keyframes r1{0%,80%{opacity:0} 83%{opacity:1} 95%{opacity:1} 99%,100%{opacity:0}}
+.c0{animation:c0 16s linear infinite}
+.c1{animation:c1 16s linear infinite}
+.c2{animation:c2 16s linear infinite}
+.c3{animation:c3 16s linear infinite}
+.cmp{animation:cmp 16s linear infinite}
+.q{animation:q 16s linear infinite}
+.lost{animation:lost 16s linear infinite}
+.s0{animation:s0 16s linear infinite}
+.s1{animation:s1 16s linear infinite}
+.s2{animation:s2 16s linear infinite}
+.ok{animation:ok 16s linear infinite}
+.cmd{animation:cmd 16s linear infinite}
+.type{transform-box:fill-box;transform-origin:right;animation:type 16s steps(24,end) infinite}
+.r0{animation:r0 16s linear infinite}
+.r1{animation:r1 16s linear infinite}
+@media (prefers-reduced-motion: reduce){*{animation:none!important}}
+</style>
+<rect width="1160" height="410" rx="14" fill="#0d1117"/>
+<text x="40" y="42" fill="#9198a1" font-size="12" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="600" xml:space="preserve" text-anchor="start">GITMEMORY</text>
+<text x="40" y="72" fill="#e6edf3" font-size="20" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="normal" xml:space="preserve" text-anchor="start">What your agent forgets at compaction, gitmemory keeps: byte for byte, provably, locally.</text>
+<rect x="30" y="100" width="340" height="262" rx="10" fill="#161b22" stroke="#30363d"/>
+<text x="50" y="130" fill="#9198a1" font-size="13" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="600" xml:space="preserve" text-anchor="start">1  The agent's context window</text>
+<rect x="410" y="100" width="340" height="262" rx="10" fill="#161b22" stroke="#30363d"/>
+<text x="430" y="130" fill="#9198a1" font-size="13" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="600" xml:space="preserve" text-anchor="start">2  gitmemory commits the bytes</text>
+<rect x="790" y="100" width="340" height="262" rx="10" fill="#161b22" stroke="#30363d"/>
+<text x="810" y="130" fill="#9198a1" font-size="13" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="600" xml:space="preserve" text-anchor="start">3  Recalled verbatim, with its address</text>
+<path d="M374 219 l12 12 l-12 12" fill="none" stroke="#4493f8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M754 219 l12 12 l-12 12" fill="none" stroke="#4493f8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="c0">
+<text x="50" y="165" fill="#4493f8" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">you</text>
+<text x="100" y="165" fill="#e6edf3" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">Don't add a retry loop.</text>
+</g>
+<g class="c1">
+<text x="50" y="191" fill="#3fb950" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">agent</text>
+<text x="100" y="191" fill="#e6edf3" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">Dropped it; pass a request id.</text>
+</g>
+<g class="c2">
+<text x="50" y="217" fill="#4493f8" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">you</text>
+<text x="100" y="217" fill="#e6edf3" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">Now wire up the upload UI.</text>
+</g>
+<g class="c3">
+<text x="50" y="243" fill="#3fb950" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">agent</text>
+<text x="100" y="243" fill="#e6edf3" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">Done. 14 files changed.</text>
+</g>
+<g class="cmp"><rect x="44" y="258" width="312" height="24" rx="5" fill="#f0883e" fill-opacity="0.16" stroke="#f0883e" stroke-opacity="0.6"/>
+<text x="200.0" y="275" fill="#f0883e" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="middle">context compacted: 4 turns &#8594; 1 summary</text>
+</g>
+<g class="q">
+<text x="50" y="310" fill="#4493f8" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">you</text>
+<text x="100" y="310" fill="#e6edf3" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">Why no retry loop?</text>
+</g>
+<g class="lost">
+<text x="50" y="336" fill="#3fb950" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">agent</text>
+<text x="100" y="336" fill="#f0883e" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">I have no record of that.</text>
+</g>
+<text x="430" y="158" fill="#9198a1" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">~/.claude/projects/.../0f3a9c2e.jsonl</text>
+<rect x="430" y="170" width="300" height="34" rx="4" fill="none" stroke="#30363d"/>
+<line x1="430" y1="270" x2="730" y2="270" stroke="#30363d" stroke-width="2"/>
+<g class="s0"><rect x="431" y="171" width="82" height="32" fill="#4493f8" fill-opacity="0.28"/>
+<text x="472.0" y="222" fill="#9198a1" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="middle">0-288</text>
+<path d="M472.0 228 L460 262" stroke="#4493f8" stroke-opacity="0.45" stroke-dasharray="3 3"/>
+<circle cx="460" cy="270" r="7" fill="#0d1117" stroke="#4493f8" stroke-width="2.5"/>
+<text x="460" y="292" fill="#9198a1" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="middle">commit</text>
+</g>
+<g class="s1"><rect x="515" y="171" width="130" height="32" fill="#4493f8" fill-opacity="0.42"/>
+<text x="580.0" y="222" fill="#9198a1" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="middle">288-1167</text>
+<path d="M580.0 228 L580 262" stroke="#4493f8" stroke-opacity="0.45" stroke-dasharray="3 3"/>
+<circle cx="580" cy="270" r="7" fill="#0d1117" stroke="#4493f8" stroke-width="2.5"/>
+<text x="580" y="292" fill="#9198a1" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="middle">commit</text>
+</g>
+<g class="s2"><rect x="647" y="171" width="82" height="32" fill="#4493f8" fill-opacity="0.28"/>
+<text x="688.0" y="222" fill="#9198a1" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="middle">1167-1602</text>
+<path d="M688.0 228 L700 262" stroke="#4493f8" stroke-opacity="0.45" stroke-dasharray="3 3"/>
+<circle cx="700" cy="270" r="7" fill="#0d1117" stroke="#4493f8" stroke-width="2.5"/>
+<text x="700" y="292" fill="#9198a1" font-size="11" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="middle">commit</text>
+</g>
+<g class="ok">
+<text x="430" y="318" fill="#9198a1" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">$ gitmemory verify</text>
+<text x="430" y="340" fill="#3fb950" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">0 problem(s)  no hole, no overlap</text>
+</g>
+<rect x="806" y="146" width="308" height="200" rx="6" fill="#0d1117" stroke="#30363d"/>
+<g class="cmd">
+<text x="820" y="174" fill="#e6edf3" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">$ gitmemory recall "retry loop"</text>
+<rect class="type" x="834" y="160" width="276" height="20" fill="#0d1117"/></g>
+<g class="r0">
+<text x="820" y="208" fill="#4493f8" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">claude-code/0f3a&#8230;/g00@0</text>
+<text x="1100" y="208" fill="#9198a1" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="end">user</text>
+<text x="820" y="227" fill="#e6edf3" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">Don't add a retry loop around the</text>
+<text x="820" y="244" fill="#e6edf3" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">upload; the API is idempotent&#8230;</text>
+</g>
+<g class="r1">
+<text x="820" y="280" fill="#4493f8" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">claude-code/0f3a&#8230;/g00@288</text>
+<text x="1100" y="280" fill="#9198a1" font-size="11.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="end">assistant</text>
+<text x="820" y="299" fill="#e6edf3" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">Understood. I dropped the retry</text>
+<text x="820" y="316" fill="#e6edf3" font-size="12" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-weight="normal" xml:space="preserve" text-anchor="start">loop and pass a request id&#8230;</text>
+</g>
+<text x="580.0" y="392" fill="#9198a1" font-size="12.5" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="normal" xml:space="preserve" text-anchor="middle">gitmemory watch &#8594; verify &#8594; recall   &#183;   local git &#183; no LLM &#183; no network</text>
+</svg>

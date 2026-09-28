@@ -26,8 +26,9 @@ Two properties, and they are the whole product:
 
 ### Hard constraints
 
-- Touches **nothing** existing on this machine. `~/.claude/settings.json`, `~/memory`,
-  `~/work/memory-daemon` and napkin were read as *reference architecture* — system shape only.
+- Touches **nothing** existing on this machine. `~/.claude/settings.json` and the author's
+  existing local notes and memory tooling were read as *reference architecture* — system shape
+  only.
   **No data from this machine is ingested, copied, or committed. Ever.**
 - Test corpora are synthetic or public-benchmark-derived.
 - Userspace only: no `crontab`, no `sudo`, no Docker. LaunchAgent is the keep-alive.
@@ -634,7 +635,10 @@ nothing is injected; injection cost is carried as `NOT BUILT` on the dashboard (
 `allow: {id: root}` metadata block so that nothing reads it without the single-use sign-in URL
 Datasette prints at start-up. Loopback alone is not a boundary: a socket has no owner check, and
 a page the user visits can reach one by re-resolving its own name to 127.0.0.1, at which point
-the request is same-origin and CORS never applies. A non-loopback `--host` is refused rather
+the request is same-origin and CORS never applies. The sign-in cookie is scoped to a host, not
+a port, so every other server on 127.0.0.1 receives it too; a small `--plugins-dir` plugin makes
+it `HttpOnly` so pages those servers serve cannot read it, and a restart revokes it. A
+non-loopback `--host` is refused rather
 than warned about, and `--expose` is the way past it. Vega is vendored in the wheel, so it is
 genuinely offline.
 

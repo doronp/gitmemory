@@ -257,10 +257,18 @@ def scan_group(paths: list[str]) -> list[Finding]:
     the rest are already reported per file. [E2]
     """
     found: list[Finding] = []
-    tail, first = b"", ""  # bytes carried across the cut, and the file they start in
+    edges = []
     for path in paths:
         found += scan_path(path)
-        head, new_tail = _edge(path, SEAM)
+        edges.append((path, *_edge(path, SEAM)))
+    return found + _seams(edges)
+
+
+def _seams(edges: list[tuple[str, bytes, bytes]]) -> list[Finding]:
+    """Findings that span a cut, over ordered `(label, head, tail)` edges."""
+    found: list[Finding] = []
+    tail, first = b"", ""  # bytes carried across the cut, and the file they start in
+    for path, head, new_tail in edges:
         if tail:
             # Both halves masked: a seam label names two paths, so it leaks a
             # credential-shaped filename twice over. [E7]
@@ -280,6 +288,10 @@ def scan_group(paths: list[str]) -> list[Finding]:
         else:
             tail, first = new_tail, path
     return found
+
+
+# A segment blob's path in history: `raw/<agent>/<session>/gNN/<start>-<end>.jsonl`.
+_SEGMENT = re.compile(r"^(raw/.+/g\d+)/(\d{12})-\d{12}\.jsonl$")
 
 
 def gate(
@@ -311,9 +323,22 @@ def gate(
     # below sees the object graph too: a store whose worktree was emptied still
     # pushes its history, and that is not nothing to attest to.
     seen_objects = False
+    runs: dict[str, list[tuple[int, str, bytes, bytes]]] = {}
     for label, data in objects or ():
         seen_objects = True
         findings += scan_bytes(data, f"history:{safe_path(label)}")
+        if m := _SEGMENT.match(label):
+            runs.setdefault(m[1], []).append(
+                (int(m[2]), f"history:{label}", data[:SEAM], data[-SEAM:])
+            )
+    # Segments deleted from the checkout are still pushed as history blobs, so
+    # the seams between them need the same scan `groups` gives the worktree:
+    # otherwise a credential cut in two by a segment boundary passes the moment
+    # the segments are `git rm`ed.
+    # ponytail: one label per blob sha, so two byte-identical segments in
+    # different runs are seamed in only one of them.
+    for run in runs.values():
+        findings += _seams([(label, head, tail) for _, label, head, tail in sorted(run)])
     if not paths and not groups and not seen_objects and not allow_empty:
         raise ValueError("the redaction gate was given nothing to scan; refusing to attest")
     return not any(f.tier == "high" for f in findings), findings

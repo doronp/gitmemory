@@ -68,7 +68,9 @@ enforced by tests, so a PR that breaks one goes red.
    [THIRD_PARTY.md](THIRD_PARTY.md), its licence into `licenses/`, and its
    notice into [NOTICE](NOTICE).
 8. **New source files carry an SPDX header:**
-   `# SPDX-License-Identifier: Apache-2.0`.
+   `# SPDX-License-Identifier: Apache-2.0`. The one exception is
+   `bench/probe_e_cases.py`, a blind probe pinned by digest to its author's
+   bytes; it is Apache-2.0 like the rest of the repository.
 
 ## Adding an adapter
 

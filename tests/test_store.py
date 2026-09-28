@@ -875,6 +875,23 @@ def test_the_refusal_masks_a_session_id_that_is_itself_a_credential(tmp_path, ca
     assert "ghp_…[40 bytes]" in err and "g00.json" in err
 
 
+def test_a_split_credential_in_deleted_segments_is_still_refused(home, src):
+    """[SEC-1] `git rm` of the segments leaves them in history, which is pushed.
+
+    Each history blob alone holds half the key, so a per-blob scan passed; the
+    seams between a generation's segment blobs are scanned as in the worktree.
+    """
+    _straddling(home, src)
+    gitrepo.init(home)
+    gitrepo.commit(home, "captured")
+    shutil.rmtree(os.path.join(home, "raw"))
+    gitrepo.commit(home, "deleted the segments")
+
+    ok, findings = redact.gate([], objects=gitrepo.pushable_objects(home))
+    assert ok is False
+    assert [f.detector for f in findings if " + " in f.path] == ["aws_access_key_id"]
+
+
 def test_a_seam_finding_is_not_reported_twice(home, src):
     """Only matches that genuinely span a cut belong to the seam."""
     transcript(src, 4)

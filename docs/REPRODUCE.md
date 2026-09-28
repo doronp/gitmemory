@@ -249,8 +249,8 @@ how many did; the published run had 1 of 500.
 
 **Cost and runtime:** not recorded. Every response is cached in a JSONL file
 keyed by sha256 of (model, prompt, options), by default
-`gitmemory-qa/cache.jsonl` under the system temp directory (`--cache` moves
-it), so a rerun or a resume makes no new calls.
+`gitmemory-qa/cache.jsonl` under `$XDG_CACHE_HOME` or `~/.cache` (`--cache`
+moves it), so a rerun or a resume makes no new calls.
 
 ### 2e. LoCoMo categories 1–4 QA accuracy
 
@@ -484,11 +484,11 @@ uv run pytest -q --collect-only -p no:cacheprovider | tail -1
 uv run pytest -q --collect-only -p no:cacheprovider | grep -c '\.jsonl\]$'
 ```
 
-**Expected:** `1020/1021 tests collected (1 deselected)`, then
-`1345/1346 tests collected (1 deselected)`, then `328`. The deselected test is
+**Expected:** `1025/1026 tests collected (1 deselected)`, then
+`1350/1351 tests collected (1 deselected)`, then `328`. The deselected test is
 the LongMemEval corpus test, which is opt-in:
 `uv run pytest -q -m corpus` after `bench/fetch_longmemeval.sh`. The README's
-paragraph on why 1,020 + 328 is 1,345 and not 1,348 is the arithmetic of these
+paragraph on why 1,025 + 328 is 1,350 and not 1,353 is the arithmetic of these
 three numbers. All three were run while writing this guide.
 
 `tests/test_docs.py` holds the README to the first and third numbers, so a

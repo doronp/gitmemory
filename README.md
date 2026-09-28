@@ -7,6 +7,8 @@
 
 <p align="center"><strong>Memory for AI agents: what your agent loses at compaction, kept byte for byte, provably, on your own machine.</strong></p>
 
+<p align="center"><img src="docs/assets/hero.svg" width="100%" alt="An agent is told not to add a retry loop; compaction drops that turn and the agent forgets it. gitmemory has committed the transcript bytes to git as contiguous segments, verify reports no hole, and recall returns the original turn with its byte offset."></p>
+
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
   <a href="pyproject.toml"><img alt="Python 3.13+" src="https://img.shields.io/badge/python-3.13%2B-blue.svg"></a>
@@ -177,13 +179,13 @@ real text, and that is a measurement rather than a suspicion.
 | What | How it was measured | Result |
 |---|---|---|
 | Hook cost in the agent's critical path | Timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | On a fresh checkout, no downloads | **1,020 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| The suite | On a fresh checkout, no downloads | **1,025 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
 | Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **606** negative controls |
 
 The two suite counts do not add up, and should not. Switching the corpora on
-collects 1345, not 1348. Three conformance cases fill parametrisations that
+collects 1350, not 1353. Three conformance cases fill parametrisations that
 collect as one empty placeholder each while the corpora are absent, so they
-replace three of the 1020 rather than joining them. Every figure on this board
+replace three of the 1025 rather than joining them. Every figure on this board
 is pinned by a test, which is how it stays true.
 
 **What is not measured**, and is shown as a row on the dashboard rather than

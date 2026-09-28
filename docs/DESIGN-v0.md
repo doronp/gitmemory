@@ -32,7 +32,7 @@ Two properties follow, and they are the whole product:
 ### Hard constraints (from the owner)
 
 - **Does not touch any existing system on this machine.** Not `~/.claude/settings.json`, not
-  `~/memory`, not `~/work/memory-daemon`, not napkin. Those were read as *reference
+  the author's existing local notes or memory tooling. Those were read as *reference
   architecture* — system shape only. **No data from this machine is ingested, copied, or
   committed. Ever.** Test corpora are synthetic or public-benchmark-derived.
 - Userspace only. No `crontab`, no `sudo`, no Docker.

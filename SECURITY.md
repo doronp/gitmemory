@@ -10,7 +10,8 @@ is in scope, and what to do when a credential ends up in the store.
 
 - **Preferred:** report it privately through GitHub:
   [Security → Report a vulnerability](https://github.com/doronp/gitmemory/security/advisories/new).
-- **Or email** the maintainer at the address on [their GitHub profile](https://github.com/doronp), with `gitmemory security` in the subject.
+- **If that form is unavailable,** open an issue titled `security contact`
+  with no details in it, and the maintainer will reply with a private channel.
 
 Include the version or commit, what you did, what happened, and a proof of
 concept if you have one. Use a synthetic transcript: never send real session

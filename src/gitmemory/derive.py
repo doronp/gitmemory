@@ -14,7 +14,7 @@ Three rules, and the whole module is downstream of them:
    the only copy of anything. Delete it and `gitmemory derive` puts it back,
    byte for byte — that is what the determinism test checks.
 
-`sumy` is an optional dependency (`pip install -e ".[derive]"`) and is imported
+`sumy` is an optional dependency (the `derive` extra) and is imported
 lazily, so `capture`, `verify` and `recall` stay dependency-free. It is also the
 one place `nltk` could sneak a network fetch into an offline product: sumy's
 default tokenizer downloads `punkt` on first use. `_Tok` below is why we never
@@ -139,7 +139,9 @@ def _sumy():
         from sumy.utils import get_stop_words
     except ImportError as exc:  # pragma: no cover - exercised by hand, not in CI
         raise RuntimeError(
-            "derivation needs the `derive` extra: pip install -e '.[derive]'"
+            "derivation needs the `derive` extra: "
+            'uv tool install "gitmemory[derive] @ git+https://github.com/doronp/gitmemory"'
+            " (from a clone: uv sync --extra derive)"
         ) from exc
 
     class LexRank(LexRankSummarizer):

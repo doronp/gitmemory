@@ -21,11 +21,13 @@ are about the hand-off, not about extraction quality:
 from __future__ import annotations
 
 import pytest
-from graphify.validate import validate_extraction
 
 from gitmemory import derive, graph
 from gitmemory.derive import Decision
 from gitmemory.records import Block, Session, Turn
+
+# The `derive` extra; skip rather than fail collection without it. CI installs it.
+validate_extraction = pytest.importorskip("graphify.validate").validate_extraction
 
 
 def _session(session_id: str, texts: list[tuple[str, str]], path: str = "/t/a.jsonl"):

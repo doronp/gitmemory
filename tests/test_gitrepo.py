@@ -1064,3 +1064,14 @@ def test_a_home_whose_parents_already_exist_is_left_as_the_user_had_it(tmp_path)
     gitrepo.init(str(parent / "store"))
 
     assert oct(os.stat(parent).st_mode & 0o777) == "0o755"
+
+
+def test_a_tracked_file_deleted_but_not_committed_is_not_listed(tmp_path):
+    """[SEC-4] `ls-files --cached` still names it, and `push` crashed reading it."""
+    home = gitrepo.init(str(tmp_path / "store"))
+    with open(os.path.join(home, "note.txt"), "w", encoding="utf-8") as fh:
+        fh.write("x")
+    gitrepo.commit(home, "add")
+    os.remove(os.path.join(home, "note.txt"))
+    assert os.path.join(home, "note.txt") not in gitrepo.tracked(home)
+    assert os.path.join(home, ".gitignore") in gitrepo.tracked(home)

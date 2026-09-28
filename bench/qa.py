@@ -406,8 +406,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--reader", default="gemini-3.1-pro-preview")
     ap.add_argument("--judge", default="gemini-3.1-pro-preview")
-    ap.add_argument("--cache", default=os.path.join(tempfile.gettempdir(), "gitmemory-qa",
-                                                    "cache.jsonl"))
+    # Not the shared temp dir: a cache there can be pre-seeded by another user. [SEC-3]
+    cache_home = os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache")
+    ap.add_argument("--cache", default=os.path.join(cache_home, "gitmemory-qa", "cache.jsonl"))
     ap.add_argument("--json")
     args = ap.parse_args(argv)
     reader, judge, cache = Vertex(args.reader), Vertex(args.judge), Cache(args.cache)
