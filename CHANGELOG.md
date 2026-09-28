@@ -8,7 +8,9 @@ tell you.
 
 ## [Unreleased]
 
-The first public release, 0.1.0. What it contains:
+## [0.1.0] - 2026-09-28
+
+The first public release. What it contains:
 
 ### Added
 
@@ -17,7 +19,10 @@ The first public release, 0.1.0. What it contains:
   `gitmemory capture`, `gitmemory verify`.
 - **Watcher and hook.** `gitmemory watch` tails configured roots and commits
   what grew. An optional POSIX `sh` hook shim makes capture happen at the
-  compaction boundary.
+  compaction boundary. The repository is also a Claude Code plugin
+  (`/plugin install gitmemory@gitmemory`) that registers the shim on
+  `PreCompact` and `SessionEnd`, passing the event name in `args` (Claude Code
+  2.1.139 and later).
 - **Adapters.** Claude Code, and pi / oh-my-pi (one format family, two
   dialects). They pass 328 conformance cases drawn from three third-party MIT
   corpora.
@@ -39,4 +44,5 @@ The first public release, 0.1.0. What it contains:
 - Two review rounds before publication: E7 (68 findings) and E7b (22 findings).
   See [SECURITY.md](SECURITY.md).
 
-[Unreleased]: https://github.com/doronp/gitmemory/commits/main
+[Unreleased]: https://github.com/doronp/gitmemory/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/doronp/gitmemory/releases/tag/v0.1.0
