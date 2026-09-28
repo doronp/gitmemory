@@ -211,7 +211,7 @@ One claim in the report did not survive reproduction and is recorded here rather
 than silently dropped: the newline-split `Authorization:\nBearer` case was
 reported as disagreeing between the raw and canonical scans in `derive._write`.
 Reproduced independently, the two scans **agree**. The `ensure_ascii` hole next
-to it is real and was fixed separately (`f50b629`): `\uXXXX` ends in a hex
+to it is real and was fixed separately (`4036a94`): `\uXXXX` ends in a hex
 digit, so a non-ASCII character immediately before a token annihilates the
 leading `\b` the rule anchors on, and the door now scans both the canonical and
 the raw UTF-8 form.

@@ -1,7 +1,7 @@
 # E6 — standalone code review of the dashboard
 
 One reviewing agent, its own git worktree, no part in writing the dashboard. It
-was given `1fa6eb6` "E6: the dashboard" and asked for everything the commit
+was given `75deb8f` "E6: the dashboard" and asked for everything the commit
 touched: the two new tables, the six views, `src/gitmemory/dashboard.py`, the
 tests written for them, and the mutation rows claimed for them.
 
@@ -219,7 +219,7 @@ cache writes were in the denominator. Changed to `input 100 / write 100 / read
 
 Recorded, not fixed; the commit is pushed.
 
-`1fa6eb6` says "Ten new rows: the two Gemini fixes from 607e585, and eight for
+`75deb8f` says "Ten new rows: the two Gemini fixes from 86b0f80, and eight for
 E6", then lists seven. An AST diff of `MUTANTS` across the commit gives **nine**
 new rows, 191 → 200. The same paragraph calls it "the 186-row index"; it was
 191 before the commit and 200 after.

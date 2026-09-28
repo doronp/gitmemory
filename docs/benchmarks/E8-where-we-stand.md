@@ -122,7 +122,7 @@ An earlier draft of this page said the opposite — that 0.9319 was "the most an
 retriever can score here" and that Total Recall's 0.9773 therefore sat above
 our apparatus ceiling. That was wrong, and it was wrong in the flattering
 direction: it turned a loss into an artefact. It is also the second time this
-repository has made that mistake; `334f922` retracted the same claim at the
+repository has made that mistake; `3b8aef1` retracted the same claim at the
 `session_recall` level one commit series earlier. Recorded here rather than
 quietly deleted.
 

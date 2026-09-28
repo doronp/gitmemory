@@ -1,6 +1,6 @@
 # E7b — the RC1 security review's delta
 
-The full security review of the E7 gate ran at `9cf95db` and is recorded in
+The full security review of the E7 gate ran at `fd264c2` and is recorded in
 `docs/reviews/E7-security-*.md`. **4,966 lines landed after it** — 723 of them
 in `src/` and `hook/` — and the gate for this epoch is *no unresolved
 findings*, which is a claim about the code being pushed and not about the code
@@ -8,7 +8,7 @@ that was reviewed. This round is the difference.
 
 ## What is in scope
 
-Commit range `9cf95db..HEAD`. The files that moved under `src/` and `hook/`:
+Commit range `fd264c2..HEAD`. The files that moved under `src/` and `hook/`:
 
 | File | Delta | What landed |
 |---|---|---|

@@ -35,16 +35,16 @@ section).
 
 | | Reviewer's grade | Finding | Outcome |
 |---|---|---|---|
-| F1 | HIGH | A refused `gitrepo.init` does not stop the commit | **fixed** — `96b33cc`, found unfixed while writing this report |
-| F2 | MEDIUM-HIGH | `.git` holds the transcripts and is world-readable | **fixed** — `6fa58fe`, two chmods per start |
-| F3 | MEDIUM | One non-regular file in the spool wedges the watcher, silently | **fixed** — `3b81789`, `O_NONBLOCK` + `O_NOFOLLOW` + `S_ISREG` |
-| F4 | MEDIUM | Orphan adoption launders an unattested file into the proof | **fixed** — `7394a09`, the proof names what it only found |
-| F5 | LOW-MEDIUM | Nothing below the home is re-validated on the way back in | **fixed** — `3f1aae6`; two of the four variants already closed |
-| F6 | LOW | `verify` has a third answer: it hangs | **fixed twice** — `7a07c46` bounded the wait, `7622748` stopped the bound from lying |
-| F7 | LOW | A symlinked directory hides unattested files from the sweep | **fixed** — `8f2ebb9`, plus a second hole not in the report |
-| F8 | LOW | `git` is resolved through the inherited `PATH` | **documented** — `a41aeb7`, on the reviewer's own argument |
-| F9 | **INFO** | `init`'s `makedirs` leaves intermediates at the ambient umask | **fixed, upgraded** — `a41aeb7`; INFO is right only at umask 022 |
-| F10 | **LOW, PLAUSIBLE** | TOCTOU between `discover` and the read | **fixed, upgraded** — `6422a83`; reproduced both arms |
+| F1 | HIGH | A refused `gitrepo.init` does not stop the commit | **fixed** — `570bcb3`, found unfixed while writing this report |
+| F2 | MEDIUM-HIGH | `.git` holds the transcripts and is world-readable | **fixed** — `c7102b8`, two chmods per start |
+| F3 | MEDIUM | One non-regular file in the spool wedges the watcher, silently | **fixed** — `0ab1536`, `O_NONBLOCK` + `O_NOFOLLOW` + `S_ISREG` |
+| F4 | MEDIUM | Orphan adoption launders an unattested file into the proof | **fixed** — `b46f105`, the proof names what it only found |
+| F5 | LOW-MEDIUM | Nothing below the home is re-validated on the way back in | **fixed** — `d7c98aa`; two of the four variants already closed |
+| F6 | LOW | `verify` has a third answer: it hangs | **fixed twice** — `efa34c8` bounded the wait, `b605b80` stopped the bound from lying |
+| F7 | LOW | A symlinked directory hides unattested files from the sweep | **fixed** — `567976a`, plus a second hole not in the report |
+| F8 | LOW | `git` is resolved through the inherited `PATH` | **documented** — `fce0536`, on the reviewer's own argument |
+| F9 | **INFO** | `init`'s `makedirs` leaves intermediates at the ambient umask | **fixed, upgraded** — `fce0536`; INFO is right only at umask 022 |
+| F10 | **LOW, PLAUSIBLE** | TOCTOU between `discover` and the read | **fixed, upgraded** — `fceb0b2`; reproduced both arms |
 
 ---
 
@@ -290,7 +290,7 @@ process held the session lock for more than 5s
 
 A degraded answer that is legible as one. README's "no third answer" is better
 served by this than by the bound alone: `verify` still returns a list of
-problems, and a sweep it could not run is one of them. [`7622748`]
+problems, and a sweep it could not run is one of them. [`b605b80`]
 
 This also closed an fs-F5 gap. The lock file had a *second* open, in `verify`,
 and it did not have `O_NOFOLLOW` — so the file-creation-through-a-symlink

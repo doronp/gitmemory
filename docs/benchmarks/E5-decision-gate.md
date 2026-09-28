@@ -115,7 +115,7 @@ evidence of anything by itself.
 
 **The gate is met: 1.0000 ≥ 0.85 and 1.0000 ≥ 0.60.**
 
-> *Since (2026-09-22, E5 fix 2, `d97e6ab`):* tightening the extractor against
+> *Since (2026-09-22, E5 fix 2, `dbd1aef`):* tightening the extractor against
 > real sessions took this held-out split to **1.0000 / 0.7428** (257 of 346).
 > It still clears the bar. The trade is priced in
 > [E5-secondary-set.md](E5-secondary-set.md); the run above is kept as scored.

@@ -552,7 +552,7 @@ pasted logs.
 
 A dense arm (Model2Vec, RRF at k=60) and a rerank arm (FlashRank on top-50) were planned, shipped as
 the **optional `hybrid` extra**. This paragraph used to say they had never been run, and
-`docs/benchmarks/E3-longmemeval.md` recorded both as *"arm not available"*. **[E3 rerun, `b2cd00b`:
+`docs/benchmarks/E3-longmemeval.md` recorded both as *"arm not available"*. **[E3 rerun, `734a9ff`:
 both have now run on the 470-instance gate, and both beat BM25** — `dense` (Model2Vec alone) 0.8215
 and `rerank` (FlashRank over BM25's top 50) 0.8295 turn recall, against FTS5's 0.7456. E9 added an
 RRF `hybrid` arm (BM25 + dense, k=60) and `rerank12` (a MiniLM-L-12 cross-encoder over BM25's top
@@ -728,7 +728,7 @@ Public + synthetic only. **Never this machine's history.**
   measured**: the E3 gate ran 470 instances against FTS5 and skipped the other three, which need the
   `hybrid` **extra** the environment does not install — the report says so, in the arm list, as
   *"arm not available"*. Planning to measure is not measuring, and this bullet read as though the
-  comparison had happened. [E4, review: docs — the unrun arms] **[Since then (E3 rerun `b2cd00b`,
+  comparison had happened. [E4, review: docs — the unrun arms] **[Since then (E3 rerun `734a9ff`,
   E9): BM25, Model2Vec (`dense`) and FlashRank over BM25's top 50 (`rerank`) are measured on E3's
   harness; an RRF `hybrid` of BM25 and dense, and `rerank12`, under the peer protocols in E9.
   RRF+FlashRank as written here was not run. The shipped BM25 arm scores below every other arm

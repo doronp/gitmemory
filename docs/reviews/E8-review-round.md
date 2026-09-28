@@ -1,6 +1,6 @@
 # E8 review round — the comparison page
 
-Two independent reviews of `630a50c`, run after the commit landed: a standalone
+Two independent reviews of `d574462`, run after the commit landed: a standalone
 code review with no prior context, and the standing Gemini 3.1 cross-review in
 a detached worktree. They agreed on the two findings that mattered and
 disagreed on the reason for one of them, which is the useful part.
@@ -20,7 +20,7 @@ and that Total Recall's 0.9773 therefore sat "above our apparatus ceiling" —
 That is false, and `docs/benchmarks/E3-longmemeval.md` §1 already said so in
 plain text one commit series earlier: "nothing structurally forbids it: the
 oracle retrieves by turn offset and a text retriever can return a session the
-offsets cannot reach." `334f922` exists solely to retract the same claim at the
+offsets cannot reach." `3b8aef1` exists solely to retract the same claim at the
 `session_recall` level. The page reintroduced it one metric over, at `S-All`,
 and promoted it to the README.
 

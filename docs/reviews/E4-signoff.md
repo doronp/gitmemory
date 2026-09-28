@@ -1,7 +1,7 @@
 # E4 sign-off
 
 The [standalone review](E4-standalone-review.md) closed its fix list at
-`f409ff8` but recorded no sign-off, because the round's own rule is that a
+`960394b` but recorded no sign-off, because the round's own rule is that a
 sign-off follows a clean pass, not a closed list. This is that pass, run on
 2026-09-28 as part of the pre-release review, and the sign-off it supports.
 

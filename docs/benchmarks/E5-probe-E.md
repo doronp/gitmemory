@@ -1,6 +1,6 @@
 # E5 probe E — does fix 2 generalise?
 
-**19 of 32**, scored once, on 2026-09-22 at `76fa9e2`. The number is not the
+**19 of 32**, scored once, on 2026-09-22 at `c0a0805`. The number is not the
 finding. The split inside it is:
 
 | | probe E — COBOL batch on an IBM mainframe |

@@ -1,6 +1,6 @@
 # E5 — standalone review of fix 2, the assistant reversal narrowing
 
-One reviewing agent in its own worktree, asked for one commit: `d97e6ab`, the
+One reviewing agent in its own worktree, asked for one commit: `dbd1aef`, the
 fix that stopped a bare substitution from counting as a reversal in the
 assistant role. It is the largest single behavioural change the extractor has
 had — 61 assistant nodes on real third-party sessions down to 9 — and it was
@@ -21,7 +21,7 @@ Baseline at the start of the round: 847 tests offline, 462 mutation rows. At
 the end of the seven items: 854 tests offline, 1176 with the conformance
 corpus, 474 mutation rows. Four more entries were added to this register after
 that, each with its own commit, and the round closes at **864 tests offline,
-1186 with the corpus, 486 mutation rows** (`7283a08`), `ruff check` clean.
+1186 with the corpus, 486 mutation rows** (`e3c1ce2`), `ruff check` clean.
 
 ## Status
 
@@ -32,12 +32,12 @@ after the round, in their own section; and seven recorded and not fixed.
 
 | # | what it was | closed by | pinned by |
 |---|---|---|---|
-| — | fix 2 moved held-out recall 1.0000 → 0.7428 and no test scored the extractor against the gate at all, so five write-ups still quoted the old figure | `12f6de1` | `test_the_shipped_extractor_still_scores_what_the_write_ups_claim` |
-| F3 | the conjunction was scoped to the block, so a concession three paragraphs above an unrelated `instead of` read as a reversal | `d419187` | 3 rows; `test_a_concession_three_paragraphs_from_a_substitution_licenses_nothing`, `…_offered_with_the_substitution_is_still_a_reversal`, `test_cutting_an_attitude_out_does_not_reflow_the_message` |
-| F5 | `_RECANT` listed `my (mistake|bad|error)`, which `_REPAIR` shadows — no input could reach it | `e03447d` | no row is possible; the test says why |
-| F7 | two recorded diagnoses named the wrong mechanism | `22703b7` | 4 assertions naming which predicate is responsible |
-| F6 | `_ABANDON`'s object list admitted the `scratches the surface` idiom and had silently lost `them/those/these` | `4de1f57` | 2 new rows + 1 repointed |
-| F4 | eight `_RECANT` alternatives were held by no test; the synthetic corpus contains none of the class | `38ca928` | 8 rows, `test_every_recant_alternative_is_held_by_something` |
+| — | fix 2 moved held-out recall 1.0000 → 0.7428 and no test scored the extractor against the gate at all, so five write-ups still quoted the old figure | `f074406` | `test_the_shipped_extractor_still_scores_what_the_write_ups_claim` |
+| F3 | the conjunction was scoped to the block, so a concession three paragraphs above an unrelated `instead of` read as a reversal | `fef5ba4` | 3 rows; `test_a_concession_three_paragraphs_from_a_substitution_licenses_nothing`, `…_offered_with_the_substitution_is_still_a_reversal`, `test_cutting_an_attitude_out_does_not_reflow_the_message` |
+| F5 | `_RECANT` listed `my (mistake|bad|error)`, which `_REPAIR` shadows — no input could reach it | `2de081e` | no row is possible; the test says why |
+| F7 | two recorded diagnoses named the wrong mechanism | `79a97bf` | 4 assertions naming which predicate is responsible |
+| F6 | `_ABANDON`'s object list admitted the `scratches the surface` idiom and had silently lost `them/those/these` | `ba9f83d` | 2 new rows + 1 repointed |
+| F4 | eight `_RECANT` alternatives were held by no test; the synthetic corpus contains none of the class | `06f3419` | 8 rows, `test_every_recant_alternative_is_held_by_something` |
 | F9 | the commit's "eight hits" for the two deleted `_ABANDON` branches is not a number any population gives | this file | — (see below) |
 
 The three that are worth reading past the table are F7, F4 and F9, because none
@@ -85,7 +85,7 @@ and only the first is a fact about the program.
 
 ## F9 — "eight hits", measured
 
-`d97e6ab`'s message says the two deleted `_ABANDON` branches had *"eight hits on
+`dbd1aef`'s message says the two deleted `_ABANDON` branches had *"eight hits on
 real sessions and never an abandonment"*. Re-measured on the pinned corpus, over
 the 559 distinct assistant prose blocks the secondary set uses:
 
@@ -157,7 +157,7 @@ lives.
   on 726 real blocks in both roles or either gate split except the two items the
   change is about: probe E 19 → 20 and probe A's aside 2/5 → 3/5. F7's
   correction is what made it visible — while A's item was believed to fail in
-  the guard order, the repair looked like a reordering. `409cb36`.
+  the guard order, the repair looked like a reordering. `cda2980`.
 - **A rule can say that a thing stays as it is.** One corner of root cause 4,
   the largest item on the list and the one probes C, D and E all report: nothing
   in `derive.py` claimed a *positive* standing rule, because every user-side rule
