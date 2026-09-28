@@ -125,6 +125,16 @@ ALLOWED = {"tests/test_no_owner_data.py"}
 # well would blind the scanner everywhere for nothing. [E7 S13]
 PLACEHOLDERS = {"/Users/x"}
 
+# Binaries that ship, each by name, and each read by `_scan` as bytes decoded
+# with `errors="replace"` (the way `_history_scan` reads every blob) instead of
+# being skipped by `_is_text`. That sees what a file carries as bytes: a GIF's
+# comment and application blocks, a PNG's text chunks, the places a tool that
+# knows a path would write it. It does not see text the picture *shows*, which
+# is compressed pixels. For `docs/assets/demo.gif` that half was checked on the
+# asciicast it was rendered from, before rendering. Named rather than inferred
+# from a file extension, so the next binary is still a deliberate edit here.
+SCANNED_AS_BYTES = {"docs/assets/demo.gif"}
+
 # The two lines of a commit object that are a git identity rather than content.
 # Matched at the start, so a message line reading "author of the patch" is not
 # one of them. [E7b L4-F6]
@@ -224,9 +234,13 @@ def _scan(root: Path, files: list[str], pattern: re.Pattern, allowed: set[str]) 
             if _hits(pattern, os.readlink(path)):
                 hits.append(f"{rel}:link")
             continue
-        if not path.is_file() or not _is_text(path):
+        if rel in SCANNED_AS_BYTES and path.is_file():
+            text = path.read_bytes().decode("utf-8", "replace")
+        elif path.is_file() and _is_text(path):
+            text = path.read_text(encoding="utf-8")
+        else:
             continue
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        for n, line in enumerate(text.splitlines(), 1):
             if _hits(pattern, line):
                 hits.append(f"{rel}:{n}")
     return hits
@@ -381,8 +395,11 @@ def test_nothing_tracked_is_a_file_the_scanner_cannot_read(tmp_path):
     by making the class empty rather than by reading the files: adding the first
     binary to this repository becomes a deliberate act with this assertion in
     the diff. [E7 S2]
+
+    The first one is `docs/assets/demo.gif`, and it is read another way rather
+    than excused: see `SCANNED_AS_BYTES`, and its plant in the positive control.
     """
-    opaque = _opaque(ROOT, _tracked())
+    opaque = _opaque(ROOT, [rel for rel in _tracked() if rel not in SCANNED_AS_BYTES])
     assert not opaque, (
         f"the owner-data scan cannot read {opaque}; if these must ship, scan them "
         "another way in the same commit"
@@ -433,11 +450,12 @@ def test_the_scanner_finds_leaks_that_are_really_there(tmp_path):
 
     The floor test below checks that the scan *enumerated* something. This checks
     that it *reads, matches and reports* — the three things enumeration does not
-    cover. Seven planted entries, one per property:
+    cover. Eight planted entries, one per property:
 
     - untracked, outside `src/`  — the two scope holes, and matching itself
     - staged but never committed — `--cached` still counts
     - binary containing the bytes — `_is_text` skips it rather than crashing
+    - the same bytes in a binary named in `SCANNED_AS_BYTES` — read, and found
     - allowlisted                — the allowlist is honoured, not ignored
     - the leak in the *filename*, with a clean body [E7 S13]
     - a dangling symlink whose target string is the leak [E7 S12]
@@ -458,6 +476,9 @@ def test_the_scanner_finds_leaks_that_are_really_there(tmp_path):
     # Invalid UTF-8 around a real match, so a scanner that stops gating on
     # `_is_text` raises `UnicodeDecodeError` here instead of quietly passing.
     (tmp_path / "icon.bin").write_bytes(b"\xff\xfe" + leak.encode() + b"\x00\xff")
+    listed = min(SCANNED_AS_BYTES)
+    (tmp_path / listed).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / listed).write_bytes(b"\xff\xfe" + leak.encode() + b"\x00\xff")
     # The leak in a path *component*, which is the only way a name can hold one:
     # a fixture tree mirroring a real machine. Body deliberately clean.
     named = tmp_path / "fixtures" / "Users" / "someone"
@@ -483,6 +504,7 @@ def test_the_scanner_finds_leaks_that_are_really_there(tmp_path):
         "staged_leak.txt:1",
         "fixtures/Users/someone/notes.md:name",
         "dangling.md:link",
+        f"{listed}:1",
     }, hits
     # Redundant with the set above, and kept for the one line it says out loud:
     # this is what a scanner that followed the link out of the repository would
