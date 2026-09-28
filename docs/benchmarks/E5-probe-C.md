@@ -166,6 +166,6 @@ and are queued rather than done here because the security round is in flight:
 python -m bench.probes
 ```
 
-Scored on `831ef6e` + the E6 round, 2026-09-21. The frozen probe is `CASES_C` in
+Scored on `045d1b0` + the E6 round, 2026-09-21. The frozen probe is `CASES_C` in
 `bench/probes.py`; the splice was verified byte-identical to the author's file
 by `ast.literal_eval` round-trip before it was committed.

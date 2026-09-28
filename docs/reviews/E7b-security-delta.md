@@ -1,6 +1,6 @@
 # E7b — the delta the RC1 security review did not read
 
-The E7 security round ran at `8ce0cc3`. **4,966 lines landed after it**, 723 of
+The E7 security round ran at `9cf95db`. **4,966 lines landed after it**, 723 of
 them in `src/` and `hook/`. The gate for this epoch is *no unresolved findings*,
 which is a claim about the code being pushed and not about the code that was
 reviewed, so this round is the difference. The brief the four lenses were given
@@ -48,9 +48,9 @@ scans one string and publishes another (L3), and the guard blind to Claude
 Code's flattened path (L4) — **one per lens**, which is the argument for having
 run four rather than one.
 
-Three commits carry the earlier half: `810b9e3` (L2 F1–F5, L4 F1 and F6),
-`2bd6392` (L3-F1, L3-F4), `cf5320c` (L4 F3–F5). The rest landed with this
-document in `3a3b144`: L2-F6 (the shim's tracing guard) and L2-F7
+Three commits carry the earlier half: `cfd11c8` (L2 F1–F5, L4 F1 and F6),
+`96d4a5a` (L3-F1, L3-F4), `0e57499` (L4 F3–F5). The rest landed with this
+document in `6b82831`: L2-F6 (the shim's tracing guard) and L2-F7
 (`hook/README.md`), L3-F2 (`safe_text` on the index path), L3-F3 (`MAX_CHARS`),
 and all three of L1 — F1's two-token deletion in `_MID`, and F2 and F3 as
 comments.
@@ -107,7 +107,7 @@ decision, the two spellings of it are a defect waiting for an input.
 
 ## L2 — the store, index and hook delta
 
-Eight findings: five fixed in `810b9e3`, two fixed here, one recorded.
+Eight findings: five fixed in `cfd11c8`, two fixed here, one recorded.
 
 ### F1 — a case-variant manifest name (High, fixed)
 
@@ -115,29 +115,29 @@ The attested-generation gate calls `os.path.exists` on the manifest path and the
 sweep enumerates with `glob`. On APFS the first is case-insensitive and the
 second is not, so `G00.json` beside `raw/…/g00/` attests a directory the sweep
 never names: unattested transcript bytes, spoken for by nobody. Reproduced and
-fixed in `810b9e3`.
+fixed in `cfd11c8`.
 
 ### F2 — `_abandoned` discards `timed_out` (Medium-High, fixed)
 
 A slow capture made `verify` accuse a sound store, and said nothing about the
-lock it had failed to take. Fixed in `810b9e3`.
+lock it had failed to take. Fixed in `cfd11c8`.
 
 ### F3 — the lock was taken per file (Medium, fixed)
 
 One `flock` held by any same-uid process cost `verify` 5 s per manifest and per
 stray candidate. Measured before: **15.01 s at n=2, 25.05 s at n=4**. After:
 **5.02 s and 5.01 s** — flat, which is the property, not the number. Fixed in
-`810b9e3`.
+`cfd11c8`.
 
 ### F4 — `$` matches before a trailing newline (Medium, fixed)
 
 `_GEN_RE`'s `$` accepted `g00.json\n`; `fnmatch` in the sweep did not. `\Z`.
-Fixed in `810b9e3`.
+Fixed in `cfd11c8`.
 
 ### F5 — every lock error read as "not timed out" (Medium-Low, fixed)
 
 `verify` ran fully lockless and reported nothing. The errnos are now
-distinguished and `ELOOP` is named. Fixed in `810b9e3`.
+distinguished and `ELOOP` is named. Fixed in `cfd11c8`.
 
 ### F6 — the verbose guard's position (Low, fixed here)
 
@@ -204,7 +204,7 @@ so the blast radius is one generation's `ideas.json`, `timeline.json` and
 whole generation lost to a key that was never in the bytes, which is why it
 stays High.
 
-Fixed in `2bd6392`: the scan runs on the raw text *and* on the collapsed text.
+Fixed in `96d4a5a`: the scan runs on the raw text *and* on the collapsed text.
 Both, not just the collapsed one — whitespace is only ever narrowed and never
 removed, so no high-tier shape can be *hidden* by the collapse today, but that
 is a fact about the current detector table and not a property of the collapse.
@@ -275,7 +275,7 @@ at 29,821. A test asserts the ratio rather than the constant, so lowering
 
 `records.UNSAFE` did not hold U+00AD, U+180E, U+2060 or U+FEFF, which
 `derive._INVISIBLE` has enumerated since E5 for exactly the reason `safe_text`
-exists. They agree now. Fixed in `2bd6392`.
+exists. They agree now. Fixed in `96d4a5a`.
 
 ---
 
@@ -293,7 +293,7 @@ not an exotic encoding; it is the name of every directory under
 `~/.claude/projects`, which is to say the single most likely spelling for an
 owner path to arrive here by accident.
 
-Fixed in `810b9e3` by asking the question directly instead of through a spelling
+Fixed in `cfd11c8` by asking the question directly instead of through a spelling
 of it: `_account()` reads the account name off `~` at run time and is never
 written down, `GENERIC_ACCOUNTS` turns the scan off on a CI runner rather than
 letting it fire on prose, and `test_the_account_name_scan_is_on_or_says_why_it_is_not`
@@ -330,7 +330,7 @@ that holds the line normalises before it counts.
 out of the prose and matches the quotes against the real clone, so the sentence
 and the count cannot drift apart. It is corpus-gated and skips when the clone is
 absent, so it has **no mutation row**; the negative control was run by hand, by
-flipping the number in the doc and watching it fail. Fixed in `cf5320c`.
+flipping the number in the doc and watching it fail. Fixed in `0e57499`.
 
 ### F4 — the corpus walk follows a symlink out of the corpus (Low-Medium, fixed)
 
@@ -343,7 +343,7 @@ this machine's own history. Python 3.13's `rglob` does not descend symlinked
 Both walks now resolve and bound: `path.resolve().is_relative_to(base)`. The
 three identical loops in `bench/secondary.py` became one `transcripts()` helper,
 which is also where the subagent-transcript rule now lives instead of in
-triplicate. Fixed in `cf5320c`.
+triplicate. Fixed in `0e57499`.
 
 ### F5 — an exported-but-empty corpus variable (Low, fixed)
 
@@ -352,7 +352,7 @@ triplicate. Fixed in `cf5320c`.
 script whose variable did not expand looks like. Measured: **410 collected cases
 became 88**, the same silent disappearance the comment above `CC_FIXTURES`
 already warns about, reached through a different door. `or`, not a `get`
-default. Fixed in `cf5320c`.
+default. Fixed in `0e57499`.
 
 ### F6 — the account name is already in the object graph (Informational, implemented)
 

@@ -21,11 +21,11 @@ Two rules governed the round, and both of them changed the outcome:
 
 | Report | Findings | Fixed here | Not a fix | Commit |
 |---|---|---|---|---|
-| git layer + CLI | 6 | 5 | 1 stale, pinned instead | `a9ad664` |
-| store | 8 | 8 | — | `201bda2` |
-| watcher | 10 | 9 | 1 already closed by a store fix | `5d38582` |
-| documentation | 16 | 16 | — | `b28c5ad`, `ad14979` |
-| vacuity audit | 24 | 7 | 15 mis-attributed, 1 equivalent, 2 false positives | `b6ccd87`, `3f1d1bf`, `8477339`, `6f427ad` |
+| git layer + CLI | 6 | 5 | 1 stale, pinned instead | `ccfafdd` |
+| store | 8 | 8 | — | `74626f1` |
+| watcher | 10 | 9 | 1 already closed by a store fix | `38b1f59` |
+| documentation | 16 | 16 | — | `a52b0b4`, `727789a` |
+| vacuity audit | 24 | 7 | 15 mis-attributed, 1 equivalent, 2 false positives | `45362f3`, `004315d`, `f957657`, `018252c` |
 
 Negative controls: **24 tests were written against unfixed production code and
 21 of them failed.** The three that passed are each accounted for —
@@ -38,7 +38,7 @@ change by construction; and daemon 5, which is the interesting one and is below.
 ## The findings that did not survive verification
 
 **gitrepo 1 — pinned, not fixed.** The report described a `.gitignore` pattern
-problem that the boundary round (`a9ad664`) had already closed two commits
+problem that the boundary round (`ccfafdd`) had already closed two commits
 earlier. The finding was real when the agent read the tree and stale by the time
 it was reported. Closed as stale, with a test added so it stays closed.
 
@@ -52,7 +52,7 @@ address. Same defect, different door.
 **daemon 5 — already closed by store fix 6.** Its test
 (`test_an_empty_transcript_does_not_bypass_the_interval_gate`) passed against
 unfixed daemon code, which is exactly the signal that says *stop and find out
-why*. Reverting `store.sessions()` to its pre-`201bda2` form made the test fail,
+why*. Reverting `store.sessions()` to its pre-`74626f1` form made the test fail,
 which proves the finding was real and that the store round had closed it from
 the other side. The test is kept as a pin and its docstring records the control.
 
@@ -111,7 +111,7 @@ run **the whole suite**. Three outcomes are interesting and one is not:
 - **nothing fails** → the claim is decorative.
 
 Two rules made the results usable. The audit ran in an isolated worktree pinned
-at `a9ad664`, three commits behind HEAD, so **every finding was re-verified
+at `ccfafdd`, three commits behind HEAD, so **every finding was re-verified
 against HEAD before it was believed** — and two of them could not be, because
 the code they mutated had since been rewritten and their anchors no longer
 matched anything. Those two were re-derived by hand at HEAD and re-run. And
@@ -123,16 +123,16 @@ They are not twenty-four defects. They sort into four kinds, and only the first
 two cost anything:
 
 **Nothing at all failed — 7.** The suite went green with the behaviour removed.
-Six are fixed: the manifest no-op (`b6ccd87`, an inode witness, because the byte
+Six are fixed: the manifest no-op (`45362f3`, an inode witness, because the byte
 comparison it replaced was identical by construction); the never-seen-session
 bypass, whose test used an interval smaller than the age of the Unix epoch so
 the wrong clause answered; and three of `gitrepo`'s four hardening settings —
 `--template=`, `--no-verify`, `commit.gpgSign = false` — each of which is
 *unobservable while the config isolation in `_env` holds*, which it does in
-every other test in the file (`8477339`). Defence in depth that nothing
+every other test in the file (`f957657`). Defence in depth that nothing
 distinguishes is defence in depth nobody will notice losing, so each is now
 pinned by a test that switches the outer lock off first. The seventh is
-`sqlite3.Error` in `main`'s handler (`6f427ad`): the test that claimed to pin it
+`sqlite3.Error` in `main`'s handler (`018252c`): the test that claimed to pin it
 corrupts the database file outright, and `_check_schema` converts that to a
 `ValueError` several frames earlier, so the clause was never reached.
 
@@ -210,7 +210,7 @@ is about a third-party fixture's presence and has no production line to mutate.
 > distinction matters because "unfalsifiable" and "redundant" are different
 > verdicts, and only one of them is an argument for leaving a test alone.
 
-A second pass covers the 48, at HEAD rather than at `a9ad664`. **E4 is not
+A second pass covers the 48, at HEAD rather than at `ccfafdd`. **E4 is not
 signed off until it returns** — the audited files gave up seven silent findings,
 so declaring the unaudited ones clean on the strength of the audited ones is the
 inference this whole round exists to distrust.

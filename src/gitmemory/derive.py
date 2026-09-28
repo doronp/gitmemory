@@ -1159,7 +1159,7 @@ _PROHIBIT = re.compile(
 # done, this names what may not be changed.
 #
 # It is one narrow corner of a wide hole. Probes C, D and E between them miss
-# 16 user directives — 18 across all five, measured on 4027f25; the 24 this line
+# 16 user directives — 18 across all five, measured on 2da5046; the 24 this line
 # said for a while was the five-probe total taken before this rule closed six of
 # them — and most of them are positive standing rules with nothing
 # lexical to match on at all — "Every task card carries the AMM reference",

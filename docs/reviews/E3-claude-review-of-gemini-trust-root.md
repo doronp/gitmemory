@@ -11,7 +11,7 @@ follows is the review of the *fixes*, which is a different question from the rev
 findings.
 
 Two of them shipped a regression that was worse than the bug being fixed. Both are fixed
-now; the batch as committed in `b4aa82c` is Gemini's findings with my fixes.
+now; the batch as committed in `16b7c6b` is Gemini's findings with my fixes.
 
 ## BLOCKING 1 — S2's fix made one bad manifest cost the whole store
 
@@ -102,4 +102,4 @@ Every fix here is covered by a test that fails without it *and* by a mutant in
 `tests/mutate_index.py` attributed to that test — the second half matters, because a mutant
 caught by some unrelated test means the intended test is decorative.
 
-47/47 at the time of `b4aa82c`, 49 mutants now.
+47/47 at the time of `16b7c6b`, 49 mutants now.

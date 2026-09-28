@@ -3022,7 +3022,7 @@ def test_a_rule_can_say_a_thing_stays_the_way_it_is(home, src):
     The user branch reads a substitution frame and a prohibition, so every rule
     it sees is one that names something rejected. A rule stated positively —
     what a thing *is*, and goes on being — had no home, and probes C, D and E
-    miss 16 user directives between them mostly of that shape (4027f25; this rule
+    miss 16 user directives between them mostly of that shape (2da5046; this rule
     is what took it down from 22, and the 24 both sites used to say was the
     total across all five probes rather than these three).
 

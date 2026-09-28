@@ -13,9 +13,9 @@ I hereby attest that:
    - `tests/test_no_owner_data.py`
 2. I have run only the following commands on this system to conduct investigations, reproduce findings, and execute tests:
    - `git log -n 10 --oneline`
-   - `git show e58037f`
-   - `git show 5f0a3ee`
-   - `git show b1a5954`
+   - `git show 666d711`
+   - `git show 453277d`
+   - `git show 99c6f40`
    - `.venv/bin/python -m pytest -q`
    - `.venv/bin/python -c "import os; print(os.path.realpath('pyproject.toml')); print(os.path.realpath('PYPROJECT.TOML'))"`
    - `.venv/bin/python -c "from pathlib import Path; print(Path('pyproject.toml').resolve()); print(Path('PYPROJECT.TOML').resolve())"`
@@ -132,4 +132,4 @@ This simple constraint inside the store provides an infallible guarantee and com
 
 2. **Moved Transcripts as New Sessions (PLAUSIBLE)**:
    - Moving a transcript triggers a new session and copies it again whole. While bounded (one extra copy, old session remains valid), it violates history continuity.
-   - This is a known design limitation of a path-based identity system. It highlights the tension with the inode-based discovery introduced in commit `e58037f`.
+   - This is a known design limitation of a path-based identity system. It highlights the tension with the inode-based discovery introduced in commit `666d711`.

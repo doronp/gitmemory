@@ -14,9 +14,9 @@ history, and `tests/test_no_owner_data.py` enforces it.
 ## What to review
 
 ```
-b1a5954 daemon: a rewrite between the parse and the copy loses the boundaries
-5f0a3ee gitrepo: the user's global git config cannot reach a store
-e58037f daemon: discover by inode, and fix the CLI-9 flake at its real cause
+99c6f40 daemon: a rewrite between the parse and the copy loses the boundaries
+453277d gitrepo: the user's global git config cannot reach a store
+666d711 daemon: discover by inode, and fix the CLI-9 flake at its real cause
 ```
 
 Read them with `git show <sha>` and read the surrounding code, not just the diff.

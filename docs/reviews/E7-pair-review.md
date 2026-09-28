@@ -17,19 +17,19 @@ And one the review did not make, which the suite made for it.
 
 | # | Run | Claim | Disposition |
 |---|---|---|---|
-| A1 | A | a placeholder span is not a placeholder path | **fixed** — `a591644` |
-| A2 | A | the object graph cannot see through a gitlink or an LFS pointer | **fixed** as a tripwire — `a591644` |
+| A1 | A | a placeholder span is not a placeholder path | **fixed** — `7622748` |
+| A2 | A | the object graph cannot see through a gitlink or an LFS pointer | **fixed** as a tripwire — `7622748` |
 | A3 | A | `_verify_one`'s blanket `except Exception` hides logic errors | **refuted** |
 | A4 | A | `clean_env`'s `HOME` is redundant with the conftest's | **refuted** |
 | B1 | B | owner-data scanner blinded under username `x` | **duplicate of A1**, arrived at independently |
 | B2 | B | `pushable_objects` misses a detached `HEAD` | **refuted by its own script** |
-| B3 | B | `g-1.json` hides a generation from both sweeps | **confirmed smaller than reported**, fixed — `6f879e6` |
+| B3 | B | `g-1.json` hides a generation from both sweeps | **confirmed smaller than reported**, fixed — `d842723` |
 | B4 | B | `g001.json` leaves the real generation directory unswept | **refuted** |
-| B5 | B | an inherited `xtrace` traces the shim into the agent's stderr | **confirmed worse than reported**, fixed — `6f879e6` |
+| B5 | B | an inherited `xtrace` traces the shim into the agent's stderr | **confirmed worse than reported**, fixed — `d842723` |
 | B6 | B | the spool's mode should be re-applied per tick, not per start | **declined with reasoning** |
 | B7 | B | a `/tmp` sentinel buys a once-per-boot write warning for free | **declined with reasoning** |
-| B8 | B | a symlink-isolation test was vacuous before `798ab48` | not a finding — it agrees with the fix |
-| — | suite | a `verify` that gave up on the lock swept anyway | **fixed** — `a591644` |
+| B8 | B | a symlink-isolation test was vacuous before `266d1e3` | not a finding — it agrees with the fix |
+| — | suite | a `verify` that gave up on the lock swept anyway | **fixed** — `7622748` |
 
 ## The two that were real and are in the code
 

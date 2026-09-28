@@ -10,8 +10,8 @@ compromise `E5-fix2-derive-standalone-review.md` records and for the same
 reason — reconstructing a reviewer's prose from memory is the failure F7 of that
 round is about, so nothing here is quoted that is not also in the code.
 
-Baseline at the start of the round, `568f768`: 864 tests offline, 1,186 with the
-conformance corpus, 486 mutation rows. At the end, `e5de9a5`: **888 tests
+Baseline at the start of the round, `7283a08`: 864 tests offline, 1,186 with the
+conformance corpus, 486 mutation rows. At the end, `34974a6`: **888 tests
 offline, 1,210 with the corpus, 502 mutation rows**, `ruff check` clean.
 
 **Every board is identical at both ends and at every commit between them.**
@@ -52,15 +52,15 @@ disposition.
 >
 > ## Scope
 >
-> `git log --oneline 7992914..HEAD -- src/gitmemory/derive.py` — four commits:
+> `git log --oneline 4de1f57..HEAD -- src/gitmemory/derive.py` — four commits:
 >
-> - `53c6464` price the concession-plus-abandonment pair at zero, and decline it
-> - `d97ec06` the cancel marker takes a noun phrase, not only a pronoun (`_PIVOT`)
-> - `7a0834d` `don't` is how a person says something is broken (`_PROHIBIT`)
-> - `568f768` a rule can say that a thing stays as it is (`_PERSIST`, plus repairs
+> - `76fa9e2` price the concession-plus-abandonment pair at zero, and decline it
+> - `409cb36` the cancel marker takes a noun phrase, not only a pronoun (`_PIVOT`)
+> - `6d007eb` `don't` is how a person says something is broken (`_PROHIBIT`)
+> - `7283a08` a rule can say that a thing stays as it is (`_PERSIST`, plus repairs
 >   to `_BACKREF` and `_DELIBERATION`)
 >
-> Read `git diff 7992914..HEAD` in full: the module, `tests/test_derive.py`, the
+> Read `git diff 4de1f57..HEAD` in full: the module, `tests/test_derive.py`, the
 > mutation rows in `tests/mutate_index.py`, the pins in `bench/test_probes.py` and
 > `bench/test_secondary.py`, and the prose in `docs/benchmarks/E5-secondary-set.md`
 > and `docs/reviews/E5-fix2-derive-standalone-review.md`.
@@ -109,22 +109,22 @@ recorded and not fixed.
 
 | # | what it was | closed by | pinned by |
 |---|---|---|---|
-| G1–G3 | three patterns model one typed space and the input carries whitespace: `_PERSIST`'s fixed-width lookbehinds miss `I  keep`, `_PROHIBIT` allows three characters after a coordinator so `please    don't` is missed, `_PARAGRAPH` does not split CRLF at all | `9bf08ff` | 4 rows; `test_two_spaces_do_not_get_a_report_past_the_persistence_guard`, `…_extra_spaces_is_still_a_directive`, the CRLF paragraph test |
-| G6 | `bench/test_bench.py` passed the whole `Instance` where the factory contract takes a session id — a branch that only runs with the hybrid extras installed | `c75a4f5` | 2 rows; `test_an_arm_whose_dependency_is_absent_is_skipped_with_a_reason` + sibling |
-| S1 | a character in front of the first word turns four of the seven `\A`-anchored guards off, and a guard that stops firing is a **false positive** — BOM, zero-width space, soft hyphen, and every list marker a client renders | `2a49e50` | 5 rows; `test_a_bullet_does_not_turn_a_restatement_back_into_a_rule`, `test_the_verdict_does_not_depend_on_the_formatting_layer` (17 variations × 184 probe items) |
-| S2 | `(?! surface\b)` — `\b` is a boundary before a hyphen, so the idiom exclusion swallowed `surface-level`, in `_ABANDON` and in `_PIVOT` | `4027f25` | 2 rows, one per rule, on inputs only that rule reaches |
-| S3 | `_PROHIBIT`'s clause head had the paren and the em dash but neither the comma nor the en dash, so a rule after a comma was a report | `4027f25` | 1 row; extended `test_a_contracted_dont_needs_the_imperative_…` |
-| S4 | the `_PERSIST` lookbehind claim: three sites said "a subject in front", the guard is six pronouns immediately in front | `0b4be81` | prose; the four counterexamples are named in the source |
-| S5 | the `in mind` claim: "the particle is the whole disambiguation" | `0b4be81` | prose; the counterexample is named in the source |
-| S6 | "probes C, D and E miss 24 user directives" — it is 16, and 18 across all five; the 24 was the five-probe total from before fix 7 closed six of them | `0b4be81` | prose, two sites |
-| S7 | "21 times in 20 blocks" — 19 blocks, re-derived over the same non-injected population of 89 | `0b4be81` | prose |
-| S8 | the fix-2 register's end-of-round header was the count at the time it was written; four entries were added to it afterwards | `0b4be81` | prose |
-| S9 | the secondary set's one true positive is credited to a clause that is not the one that fires | `0b4be81` | prose |
-| S10 | "the other three are imperatives and **all three are real prohibitions**" — in four places, and the same document listed one of the three among its false positives twenty lines earlier | `64a7dd4` | prose in all four; a comment in the test tuple |
-| — | `_BACKREF` opens on `\n`, so a run of blank lines is a run of start positions and the scan is quadratic in the run: 10,000 newlines, 17.3 s | `e5de9a5` | 2 rows; `test_a_run_of_blank_lines_does_not_make_the_scan_quadratic` |
+| G1–G3 | three patterns model one typed space and the input carries whitespace: `_PERSIST`'s fixed-width lookbehinds miss `I  keep`, `_PROHIBIT` allows three characters after a coordinator so `please    don't` is missed, `_PARAGRAPH` does not split CRLF at all | `9ff3fb0` | 4 rows; `test_two_spaces_do_not_get_a_report_past_the_persistence_guard`, `…_extra_spaces_is_still_a_directive`, the CRLF paragraph test |
+| G6 | `bench/test_bench.py` passed the whole `Instance` where the factory contract takes a session id — a branch that only runs with the hybrid extras installed | `83a7ac0` | 2 rows; `test_an_arm_whose_dependency_is_absent_is_skipped_with_a_reason` + sibling |
+| S1 | a character in front of the first word turns four of the seven `\A`-anchored guards off, and a guard that stops firing is a **false positive** — BOM, zero-width space, soft hyphen, and every list marker a client renders | `dd4aaf0` | 5 rows; `test_a_bullet_does_not_turn_a_restatement_back_into_a_rule`, `test_the_verdict_does_not_depend_on_the_formatting_layer` (17 variations × 184 probe items) |
+| S2 | `(?! surface\b)` — `\b` is a boundary before a hyphen, so the idiom exclusion swallowed `surface-level`, in `_ABANDON` and in `_PIVOT` | `2da5046` | 2 rows, one per rule, on inputs only that rule reaches |
+| S3 | `_PROHIBIT`'s clause head had the paren and the em dash but neither the comma nor the en dash, so a rule after a comma was a report | `2da5046` | 1 row; extended `test_a_contracted_dont_needs_the_imperative_…` |
+| S4 | the `_PERSIST` lookbehind claim: three sites said "a subject in front", the guard is six pronouns immediately in front | `e610ac6` | prose; the four counterexamples are named in the source |
+| S5 | the `in mind` claim: "the particle is the whole disambiguation" | `e610ac6` | prose; the counterexample is named in the source |
+| S6 | "probes C, D and E miss 24 user directives" — it is 16, and 18 across all five; the 24 was the five-probe total from before fix 7 closed six of them | `e610ac6` | prose, two sites |
+| S7 | "21 times in 20 blocks" — 19 blocks, re-derived over the same non-injected population of 89 | `e610ac6` | prose |
+| S8 | the fix-2 register's end-of-round header was the count at the time it was written; four entries were added to it afterwards | `e610ac6` | prose |
+| S9 | the secondary set's one true positive is credited to a clause that is not the one that fires | `e610ac6` | prose |
+| S10 | "the other three are imperatives and **all three are real prohibitions**" — in four places, and the same document listed one of the three among its false positives twenty lines earlier | `002e74a` | prose in all four; a comment in the test tuple |
+| — | `_BACKREF` opens on `\n`, so a run of blank lines is a run of start positions and the scan is quadratic in the run: 10,000 newlines, 17.3 s | `34974a6` | 2 rows; `test_a_run_of_blank_lines_does_not_make_the_scan_quadratic` |
 
 The first two fixes landed before the reviewer's report was committed, which is
-why `c75a4f5` and `9bf08ff` sit under `e971d8f` in the log rather than above it.
+why `83a7ac0` and `9ff3fb0` sit under `8d11793` in the log rather than above it.
 
 The entries worth reading past the table are the unanswered categories, S1, S10,
 and the four recorded-and-not-fixed.
@@ -145,11 +145,11 @@ newlines, and it is quadratic: 2,000 took 0.71 s and 10,000 took 17.3 s. Ten
 kilobytes. `_BACKREF` admits `\n` as the start of an assertion, so every newline
 in the run is a start position for the whole alternation behind it — the run is
 squared, not the block, which is why realistic pasted output never shows it and
-a paste that ends in a wall of blank lines does. Fixed in `e5de9a5` by
+a paste that ends in a wall of blank lines does. Fixed in `34974a6` by
 collapsing the run in `_flatten` to the one blank line `_PARAGRAPH` reads:
 17.3 s → 0.5 ms, no split and no verdict moves.
 
-**BOM.** Closed by `2a49e50`, which the standalone reviewer reached
+**BOM.** Closed by `dd4aaf0`, which the standalone reviewer reached
 independently: a byte order mark in front of the first word turns off every
 guard anchored on `\A`. The sweep that holds it is stronger than the finding —
 all 184 probe items under 17 formatting variations, asserting the verdict does
@@ -164,7 +164,7 @@ The expensive direction. `_BACKREF` opens
 of the block — which the client renders and the person never typed — turn the
 guard off, and the restatement or question it was suppressing comes back as a
 new rule. A leading *space* does not do it, because both anchors tolerate `\s*`,
-which is why `9bf08ff` did not cover it.
+which is why `9ff3fb0` did not cover it.
 
 Two things came out of writing it down. The first is that the class of invisible
 characters has to be written as escapes: `re.compile(r"[]")` with the codepoints

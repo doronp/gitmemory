@@ -34,7 +34,7 @@ import pytest
 from bench.probes import PROBES, score
 from gitmemory.derive import _decision_kind
 
-# Measured 2026-09-21 on 831ef6e, after guard round 3. Before that round:
+# Measured 2026-09-21 on 045d1b0, after guard round 3. Before that round:
 # A 23/32, B 26/32. The dev fixture read 1.0000/1.0000 both times.
 #
 # C is 14 and that is not a typo. A and B each set the brief for a round and
@@ -44,7 +44,7 @@ from gitmemory.derive import _decision_kind
 # convert an honest measurement into a fourth piece of training data. Don't.
 # `docs/benchmarks/E5-probe-C.md` and `E5-probe-D.md` are the records.
 #
-# D is 14 as well, measured 2026-09-22 on b63f4f7, and the coincidence is the
+# D is 14 as well, measured 2026-09-22 on d674061, and the coincidence is the
 # finding: same total as C, same split inside it — 10/10 non-decisions, 4/11
 # directives, 0/11 reversals — in a domain (aviation line maintenance) chosen
 # with no knowledge of C's (theatrical show control). C's shape was not its
@@ -79,7 +79,7 @@ from gitmemory.derive import _decision_kind
 # (0.1475 -> 0.7778) against recall on fiction, and it is stated as a trade
 # rather than as a win.
 #
-# **E is 19, measured 2026-09-22 on 53c6464, and it settles that paragraph.**
+# **E is 19, measured 2026-09-22 on 76fa9e2, and it settles that paragraph.**
 # Written blind in COBOL batch maintenance, aimed at the one boundary fix 2
 # moved. Ten of its twelve non-decisions are substitution narration and **all
 # twelve came back clean** — fix 2's claim is not an overfit to the corpus it

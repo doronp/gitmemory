@@ -363,7 +363,7 @@ touching your checkout, and the environment from [Setup](#setup) runs it:
 
 ```sh
 repo=$PWD
-for rev in d0f9596 95f4d18 d87b638; do
+for rev in 538e9d9 05b8275 07e353a; do
   dir=$(mktemp -d)
   git archive "$rev" | tar -x -C "$dir"
   (cd "$dir" && PYTHONPATH=src:. "$repo/.venv/bin/python" -m bench.probes | grep '^probe')
@@ -373,15 +373,15 @@ done
 
 | Commit | What it is | Prints |
 |---|---|---|
-| `d0f9596` | Probe C, scored | A 26/32, B 27/32, **C 14/32** |
-| `95f4d18` | Probe D, scored | as above, and **D 14/32** |
-| `d87b638` | Probe E, scored | A 23/32, B 25/32, C 14/32, D 14/32, **E 19/32** |
+| `538e9d9` | Probe C, scored | A 26/32, B 27/32, **C 14/32** |
+| `05b8275` | Probe D, scored | as above, and **D 14/32** |
+| `07e353a` | Probe E, scored | A 23/32, B 25/32, C 14/32, D 14/32, **E 19/32** |
 
 All three were run while writing this guide and printed exactly those scores.
 D's 14 counts a reversal labelled `directive` as a miss; scored kind-blind it
-is 16, as the D report explains. The E report names `53c6464` as the
+is 16, as the D report explains. The E report names `76fa9e2` as the
 extractor it scored; that commit predates the probe's cases, which landed in
-`d87b638` with the score, and the extractor code is unchanged between them.
+`07e353a` with the score, and the extractor code is unchanged between them.
 
 The claim "no false positive on any non-decision" is the non-decision rows in
 each probe's miss list: none of them appear there.
@@ -424,7 +424,7 @@ extractor at the commit the set was first scored at:**
 
 ```sh
 repo=$PWD; dir=$(mktemp -d)
-git archive 020fd0e | tar -x -C "$dir"
+git archive 4de7dbe | tar -x -C "$dir"
 (cd "$dir" && GITMEMORY_CC_FIXTURES="$repo/.conformance/claude-code-log/test/test_data" \
     PYTHONPATH=src:. "$repo/.venv/bin/python" -m bench.secondary | head -5)
 rm -rf "$dir"
@@ -591,7 +591,7 @@ Run offline, with the datasets already cached at their pinned digests and
   identical to E9's shipped-arm rows.
 - `bench.fixture` and `bench.gate` on the dev and held-out splits;
   `bench.probes` at the current tree and at the three scoring commits;
-  `bench.secondary` at the current tree and at `020fd0e`: all identical.
+  `bench.secondary` at the current tree and at `4de7dbe`: all identical.
 - `bench.qa` with `--limit 0` only, which touches no model.
 - The collection counts, the mutant count, `tools/hook_latency.py 50`, and
   `--help` for `bench`, `bench.peer`, `bench.locomo` and `bench.qa`.
