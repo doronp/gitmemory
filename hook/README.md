@@ -97,15 +97,19 @@ gitmemory is correct without the plugin, as it is without the hook. The hook
 runs with Claude Code's environment, so a `GITMEMORY_HOME` you set for the
 watcher has to be set there too, and be absolute, as above.
 
-This keeps the rule at the top of this section. You opt in with `/plugin`,
-Claude Code records the change in its own settings, and `/plugin uninstall`
-takes it out; gitmemory itself edits nothing.
+This keeps the rule at the top of [Install](#install): gitmemory never edits
+another program's configuration. You opt in with `/plugin`, and Claude Code
+records the change in its own settings. `/plugin uninstall gitmemory@gitmemory`
+takes the plugin out but leaves the marketplace declared;
+`/plugin marketplace remove gitmemory` removes the marketplace too, and
+uninstalls the plugin with it. gitmemory itself edits nothing.
 
 Use the plugin or the `settings.json` hook below, not both. Claude Code does not
-merge a plugin's hook with one in your settings, so with both installed the shim
-fires twice per event and writes two records for the same transcript. That is
-harmless, since a record only asks the watcher to look and the capture tiles
-either way, but it doubles the work in the agent's critical path.
+deduplicate a plugin's hook against one in your settings, so with both
+installed the shim fires twice per event and writes two records for the same
+transcript. That is harmless, since a record only asks the watcher to look and
+the capture tiles either way, but it starts a second shim process for every
+event.
 
 ### By hand, in `settings.json`
 

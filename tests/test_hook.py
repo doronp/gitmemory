@@ -784,18 +784,28 @@ def test_the_claude_code_plugin_runs_this_shim_with_the_event_it_registers(clean
     `args` and no shell. Run, not compared, because what the watcher needs is the
     event arriving in the record name; one that does not arrive is filed as
     `unknown` and forces nothing. The events are exactly the two that force a
-    capture, so `Stop` stays out for the reason `hook/README.md` gives. The git
-    mode is checked because a plugin install is a clone: the executable bit it
-    gets is git's, not this working tree's. And `plugin.json` pins installed
-    copies to its version until that changes, so it moves with `pyproject.toml`
-    or a release reaches nobody who installed the plugin.
+    capture, so `Stop` stays out for the reason `hook/README.md` gives, and no
+    group has a matcher that could skip one. The git mode is checked because a
+    plugin installed from GitHub comes from a clone: the executable bit it gets
+    is git's, not this working tree's. `plugin.json` pins installed copies to
+    its version until that changes, so it moves with `pyproject.toml` or a
+    release reaches nobody who installed the plugin. And the marketplace entry
+    is pinned twice over: its `source` of `./` is what makes the repository
+    root the plugin root substituted below, and its name and the marketplace's
+    make the install id both READMEs tell you to type.
     """
     env, home = clean_env
     root = SHIM_PATH.parent.parent
     hooks = json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]
     manifest = json.loads((root / ".claude-plugin" / "plugin.json").read_text())
+    market = json.loads((root / ".claude-plugin" / "marketplace.json").read_text())
     with open(root / "pyproject.toml", "rb") as fh:
         assert manifest["version"] == tomllib.load(fh)["project"]["version"]
+    assert market["plugins"] == [{"name": manifest["name"], "source": "./"}]
+    install_id = f"{manifest['name']}@{market['name']}"
+    assert install_id == "gitmemory@gitmemory"
+    for readme in (root / "README.md", root / "hook" / "README.md"):
+        assert install_id in readme.read_text(), readme
     staged = subprocess.run(
         ["git", "-C", str(root), "ls-files", "-s", "--", "hook/gitmemory-hook.sh"],
         capture_output=True,
@@ -807,6 +817,8 @@ def test_the_claude_code_plugin_runs_this_shim_with_the_event_it_registers(clean
     assert set(hooks) == daemon.FORCING
     for event, groups in hooks.items():
         ((handler,),) = [group["hooks"] for group in groups]
+        assert groups == [{"hooks": [handler]}], "a matcher would skip some events"
+        assert handler["type"] == "command"
         command = handler["command"].replace("${CLAUDE_PLUGIN_ROOT}", str(root))
         assert Path(command) == SHIM_PATH
         res = subprocess.run([command, *handler["args"]], env=env, input=b"{}")
