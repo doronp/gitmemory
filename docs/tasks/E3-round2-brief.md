@@ -10,7 +10,7 @@ Before anything else, read these, in this order:
 
 The six hard constraints, restated because G1 broke the first one:
 
-1. Never read, copy, or reference `~/.claude/projects`, `~/memory`, or any other data
+1. Never read, copy, or reference `~/.claude/projects`, the author's private notes, or any other data
    belonging to this machine's owner. This includes their absolute paths in fixtures.
 2. No LLM anywhere in the scored path.
 3. Deterministic: same seed, byte-identical output.

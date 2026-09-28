@@ -63,7 +63,7 @@ own file fails, that is a signal you changed something you should not have.
 Update `docs/reviews/E5-gemini-corpus.md` in place. Keep the attestation
 format — the files you read and the commands you ran, and the statement that you
 read nothing outside this repository, in particular nothing under `~/.claude/`
-or `~/memory/`.
+or the author's private notes.
 
 Report **measured** occurrence counts per distractor family over a generated
 split, not the `rng.random()` thresholds from the source. Report the leak-check

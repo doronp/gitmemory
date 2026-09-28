@@ -4,7 +4,7 @@ Standalone pair round on `src/gitmemory/derive.py`, `bench/gate.py`,
 `bench/fixture.py`, `bench/probes.py`, `bench/test_probes.py`. The reviewer ran
 in its own git worktree with `--yolo` confined to it, read nothing outside the
 repository, and opened its report with that attestation — in particular nothing
-under `~/.claude/` or `~/memory/`, which is the standing rule for every agent
+under `~/.claude/` or the author's private notes, which is the standing rule for every agent
 on this project.
 
 Report: `.claude/worktrees/gemini-derive/REVIEW-derive.md` (267 lines, five

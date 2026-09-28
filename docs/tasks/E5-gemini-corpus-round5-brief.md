@@ -126,4 +126,4 @@ anonymised or adapted. dev and test stay disjoint in seed, vocabulary and
 template. Do not commit; leave the changes in the working tree. Open your report
 with the attestation: the files you read, the commands you ran, and that nothing
 outside this repository was read — in particular nothing under `~/.claude/` or
-`~/memory/`.
+the author's private notes.

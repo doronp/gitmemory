@@ -7,7 +7,7 @@ not to approve them.
 Write your review to `docs/reviews/E4-gemini-round3.md`. Open it with an
 attestation naming exactly which files you read and which commands you ran, and
 stating that you did not read, list, or reference anything outside this
-repository — in particular nothing under `~/.claude/` or `~/memory/`. That
+repository — in particular nothing under `~/.claude/` or the author's private notes. That
 constraint is absolute: this product must never touch its author's own machine
 history, and `tests/test_no_owner_data.py` enforces it.
 

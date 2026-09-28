@@ -16,7 +16,7 @@ working retriever from a broken one:
 > leave all 8 tests green — including deleting the derangement, making
 > `shuffled` query its own question, and making the oracle arm return nothing.
 
-**Constraint check: clean.** Nothing in `bench/` reads `~/.claude`, `~/memory`,
+**Constraint check: clean.** Nothing in `bench/` reads `~/.claude`, the author's private notes,
 `$HOME`, or any local corpus. `arms.gitmemory_factory` passes an explicit
 `home=tempfile.mkdtemp()`; `fetch_longmemeval.sh` writes to `$TMPDIR` and pins a
 HuggingFace revision plus a sha256. This is the hard constraint on the whole

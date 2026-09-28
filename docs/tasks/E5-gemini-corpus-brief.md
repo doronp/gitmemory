@@ -12,7 +12,7 @@ committed, and nothing in it moves because of what the numbers turn out to be.
 **Attestation.** Open your deliverable with a paragraph naming exactly which
 files you read and which commands you ran, and stating that you did not read,
 list, or reference anything outside this repository — in particular nothing
-under `~/.claude/` or `~/memory/`. That constraint is absolute. This product
+under `~/.claude/` or the author's private notes. That constraint is absolute. This product
 must never touch its author's own machine history; `tests/test_no_owner_data.py`
 enforces it over tracked *and* untracked files and is not to be weakened,
 skipped, or worked around. Every session in the corpus is **written by you**.

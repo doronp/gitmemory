@@ -40,7 +40,7 @@ caller's environment.
 
 `bench/synth.py:138`, `:185`, `:239` — `"cwd": "/Users/<owner>/work/gitmemory"`, three times.
 
-Brief constraint #1: *"Never read, copy, or reference `~/.claude/projects`, `~/memory`, or
+Brief constraint #1: *"Never read, copy, or reference `~/.claude/projects`, the author's private notes, or
 any other data belonging to this machine's owner."* This is a generic product; a fixture
 that names one developer's home directory is both a constraint violation and a bug that
 would survive into the repo we publish. Replace with a neutral constant.

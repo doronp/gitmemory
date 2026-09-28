@@ -42,3 +42,9 @@ credible as the process behind it.
 - [`reviews/`](reviews/): every review round, including disputed findings, the
   findings that were refuted, and the reasons.
 - [`tasks/`](tasks/): the briefs each round was given.
+
+One edit was made to these records before the repository went public: the path
+of the author's private notes directory, which briefs named as off-limits, is
+written as "the author's private notes". Nothing else in them was changed.
+`benchmarks/E5-probe-D-items.md` keeps the original path, because its bytes are
+digest-pinned as the scored probe.

@@ -18,7 +18,7 @@ I have executed exactly the following commands during this task:
 - `.venv/bin/ruff format --check .`
 - `.venv/bin/ruff format .`
 
-I did not read, list, or reference anything outside this repository — in particular, nothing under `~/.claude/` or `~/memory/`. Every session in the generated corpus is written from templates and a seeded RNG, and none is harvested, sampled, anonymised, or adapted from any real transcript.
+I did not read, list, or reference anything outside this repository — in particular, nothing under `~/.claude/` or the author's private notes. Every session in the generated corpus is written from templates and a seeded RNG, and none is harvested, sampled, anonymised, or adapted from any real transcript.
 
 ---
 
@@ -187,7 +187,7 @@ I have executed exactly the following commands during this task:
 - `.venv/bin/ruff check --fix . && .venv/bin/ruff format .`
 - `.venv/bin/python -c ...` (inline python snippets to verify baseline metrics, post-failure ratios, and set distinct values)
 
-I did not read, list, or reference anything outside this repository — in particular, nothing under `~/.claude/` or `~/memory/`. Every session in the generated corpus is written from templates and a seeded RNG, and none is harvested, sampled, anonymised, or adapted from any real transcript.
+I did not read, list, or reference anything outside this repository — in particular, nothing under `~/.claude/` or the author's private notes. Every session in the generated corpus is written from templates and a seeded RNG, and none is harvested, sampled, anonymised, or adapted from any real transcript.
 
 ---
 
@@ -285,7 +285,7 @@ I have run the following commands on this system:
 - `.venv/bin/ruff check . && .venv/bin/ruff format --check .`
 - `.venv/bin/ruff format .`
 
-No files or directories outside this repository were read. In particular, nothing under `~/.claude/` or `~/memory/` was accessed.
+No files or directories outside this repository were read. In particular, nothing under `~/.claude/` or the author's private notes was accessed.
 
 ---
 

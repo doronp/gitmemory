@@ -7,7 +7,7 @@ to break them.
 Two runs, each in its own git worktree, each opening with an attestation naming
 the files it read, the commands it ran, and the sentence that it read nothing
 outside this repository — in particular nothing under the user's `~/.claude/`
-or `~/memory/`. Neither run was shown the other's report.
+or the author's private notes. Neither run was shown the other's report.
 
 Twelve items. **Four were real and are fixed. Four did not reproduce. Two were
 declined with a reason. One was a duplicate of another run's finding, which is

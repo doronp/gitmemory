@@ -19,7 +19,7 @@ reviewer's aim so much as a statement about the surface: at this layer almost
 anything you can think to try, you can make happen.
 
 **Constraint check: clean.** The reviewer's attestation is reproduced in §5. It
-read nothing under `~/.claude/` or `~/memory/`; every `find_session` call passed
+read nothing under `~/.claude/` or the author's private notes; every `find_session` call passed
 an explicit `projects_root` under `/tmp`, so the `~/.claude/projects` default was
 never taken; the daemon was never run. Every repro of mine used scratch homes
 under `/tmp`. Nothing from this machine's own history entered the repository —
@@ -227,7 +227,7 @@ Named here so they are visibly open rather than quietly unexamined:
 ## 5. Reviewer attestation, reproduced
 
 > I read nothing outside the repository. In particular I read nothing under
-> `~/.claude/` and nothing under `~/memory/`. `claude_code.find_session()`
+> `~/.claude/` and nothing under the author's private notes. `claude_code.find_session()`
 > defaults its root to `~/.claude/projects`; every call I made passed an
 > explicit `projects_root` under `/tmp/gmsec/`, so that default was never taken.
 > I did not run the daemon or `gitmemory watch`. The only path outside the

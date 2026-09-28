@@ -157,7 +157,7 @@ def _hits(pattern: re.Pattern, text: str) -> bool:
 SAMPLES = {
     "a macOS home directory": "/Users/someone/work/gitmemory",
     "a Linux home directory": "/home/someone/work/gitmemory",
-    "the author's private memory tree": "~/memory/.claude-auto-memory/MEMORY.md",
+    "the author's private memory tree": "notes/.claude-auto-memory/MEMORY.md",
 }
 if ACCOUNT:
     # Built rather than written, for the reason the pattern is: the sample is
@@ -559,7 +559,7 @@ def test_the_patterns_would_actually_catch_something():
     for what, text in (
         ("a macOS home directory", "export HOME=/Users/someone"),
         ("a Linux home directory", "run it from /home/someone"),
-        ("the author's private memory tree", "~/memory/.Claude-Auto-Memory/MEMORY.md"),
+        ("the author's private memory tree", "notes/.Claude-Auto-Memory/MEMORY.md"),
     ):
         assert _hits(FORBIDDEN[what], text), f"{what} misses {text!r}"
 

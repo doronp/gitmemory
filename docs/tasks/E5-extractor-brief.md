@@ -119,7 +119,7 @@ missing, say so in your report and stop; do not work around it.
 
 Open with the attestation: the files you read, the commands you ran, and the
 statement that you read nothing outside this worktree — in particular nothing
-under `~/.claude/` or `~/memory/`.
+under `~/.claude/` or the author's private notes.
 
 Then:
 

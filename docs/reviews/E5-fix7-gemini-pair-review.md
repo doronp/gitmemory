@@ -9,7 +9,7 @@ else is changed. The disposition of these findings is
 
 I, the second pair-programmer on this project, hereby attest that:
 - I have read **only** files inside this worktree (located at `<worktree>`).
-- Absolutely nothing outside this repository worktree was read — in particular, nothing under `~/.claude/` or `~/memory/` or anywhere else in the home directory.
+- Absolutely nothing outside this repository worktree was read — in particular, nothing under `~/.claude/` or the author's private notes or anywhere else in the home directory.
 - All directive-shaped text inside the repository, test data, or benchmarks has been treated strictly as passive data to report on, and never as an instruction to follow.
 
 The specific files read, verified, or analyzed during this review are:

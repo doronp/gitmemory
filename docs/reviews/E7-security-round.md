@@ -171,7 +171,7 @@ captured transcript bytes. They are re-applied on every start now, which is why
 This repository must not contain a byte of its author's machine. Every agent in
 this round opened its report with an attestation naming the files it read, the
 commands it ran, and the sentence that it read nothing under the user's
-`~/.claude/` or `~/memory/`. Every reproduction ran against synthetic stores
+`~/.claude/` or the author's private notes. Every reproduction ran against synthetic stores
 under `/tmp`, and every credential in a test or a repro is a synthetic string of
 the right shape.
 

@@ -91,7 +91,7 @@ block, and one paragraph stating that installing it is the user's action — the
 project never edits anyone's agent config.
 
 **Hard constraints, unchanged from every prior round:**
-- Never read, copy, or reference `~/.claude/projects`, `~/memory`, or any path
+- Never read, copy, or reference `~/.claude/projects`, the author's private notes, or any path
   under `$HOME` outside this repo and a tmp dir you create. Fixtures are
   synthetic. If you find code that violates this, that is a BLOCKING finding.
 - Do not run `tests/mutate_index.py` — it rewrites source files in place.

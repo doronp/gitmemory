@@ -42,7 +42,7 @@ stall of the user's agent. Say which one you mean.
 Standing constraints, unchanged and binding on you too:
 
 - **Nothing of this machine's owner may be read.** Not `~/.claude/`, not
-  `~/memory/`, not any transcript outside this repository. Open your report with
+  the author's private notes, not any transcript outside this repository. Open your report with
   an attestation naming the files you read and the commands you ran, and saying
   in as many words that you read nothing under either of those paths.
 - Every reproduction runs under `/tmp` against a **synthetic** store. Every

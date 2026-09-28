@@ -27,7 +27,7 @@ I hereby attest that:
    - `.venv/bin/python -m pytest tests/test_daemon.py -q`
    - `.venv/bin/python -m pytest tests/test_gitrepo.py -q`
    - `.venv/bin/python -m pytest tests/test_daemon.py -k test_two_names_for_one_file_are_discovered_once -q`
-3. I have **not** read, listed, or referenced any files or history outside this repository. In particular, I have touched nothing under `~/.claude/` or `~/memory/`.
+3. I have **not** read, listed, or referenced any files or history outside this repository. In particular, I have touched nothing under `~/.claude/` or the author's private notes.
 
 ---
 

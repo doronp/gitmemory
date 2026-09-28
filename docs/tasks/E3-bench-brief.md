@@ -18,7 +18,7 @@ Read the files yourself:
 
 ## Hard constraints — violating any of these fails the work
 
-1. **Never read, copy, or reference `~/.claude/projects`, `~/memory`, or any
+1. **Never read, copy, or reference `~/.claude/projects`, the author's private notes, or any
    other data belonging to this machine's owner.** gitmemory is a generic
    product. Its test data is public or synthetic, always. If you need a
    transcript, generate one.
