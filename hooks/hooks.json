@@ -1,0 +1,27 @@
+{
+  "description": "Runs gitmemory's hook shim before a compaction and when a session ends. Not on Stop: see hook/README.md.",
+  "hooks": {
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hook/gitmemory-hook.sh",
+            "args": ["PreCompact"]
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hook/gitmemory-hook.sh",
+            "args": ["SessionEnd"]
+          }
+        ]
+      }
+    ]
+  }
+}

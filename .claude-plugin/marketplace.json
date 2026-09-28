@@ -1,0 +1,13 @@
+{
+  "name": "gitmemory",
+  "owner": {
+    "name": "doronp"
+  },
+  "description": "The gitmemory plugin for Claude Code: its compaction-boundary hook shim.",
+  "plugins": [
+    {
+      "name": "gitmemory",
+      "source": "./"
+    }
+  ]
+}

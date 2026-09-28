@@ -8,11 +8,13 @@ user session, never crash, write data atomically, and consume minimal resources.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 import subprocess
 import time
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -772,3 +774,43 @@ def test_a_refused_write_is_silent(clean_env):
     assert res.returncode == 0
     assert res.stderr == b"", res.stderr.decode()
     assert list(spool.iterdir()) == [], "a refused write left something behind"
+
+
+def test_the_claude_code_plugin_runs_this_shim_with_the_event_it_registers(clean_env):
+    """`hooks/hooks.json` is a second copy of the install example, and copies drift.
+
+    Each registered command is run here the way Claude Code runs it: the plugin
+    root substituted for `${CLAUDE_PLUGIN_ROOT}`, then `command` spawned with
+    `args` and no shell. Run, not compared, because what the watcher needs is the
+    event arriving in the record name; one that does not arrive is filed as
+    `unknown` and forces nothing. The events are exactly the two that force a
+    capture, so `Stop` stays out for the reason `hook/README.md` gives. The git
+    mode is checked because a plugin install is a clone: the executable bit it
+    gets is git's, not this working tree's. And `plugin.json` pins installed
+    copies to its version until that changes, so it moves with `pyproject.toml`
+    or a release reaches nobody who installed the plugin.
+    """
+    env, home = clean_env
+    root = SHIM_PATH.parent.parent
+    hooks = json.loads((root / "hooks" / "hooks.json").read_text())["hooks"]
+    manifest = json.loads((root / ".claude-plugin" / "plugin.json").read_text())
+    with open(root / "pyproject.toml", "rb") as fh:
+        assert manifest["version"] == tomllib.load(fh)["project"]["version"]
+    staged = subprocess.run(
+        ["git", "-C", str(root), "ls-files", "-s", "--", "hook/gitmemory-hook.sh"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert staged.startswith("100755 "), staged
+
+    assert set(hooks) == daemon.FORCING
+    for event, groups in hooks.items():
+        ((handler,),) = [group["hooks"] for group in groups]
+        command = handler["command"].replace("${CLAUDE_PLUGIN_ROOT}", str(root))
+        assert Path(command) == SHIM_PATH
+        res = subprocess.run([command, *handler["args"]], env=env, input=b"{}")
+        assert res.returncode == 0
+        (record,) = (home / "spool").glob("*.json")
+        assert daemon._event_of(record.name) == event
+        record.unlink()

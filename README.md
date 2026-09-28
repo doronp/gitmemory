@@ -82,7 +82,9 @@ gitmemory recall "why did we drop the retry loop?"
 
 That is the whole install. The optional [hook shim](hook/README.md) makes a
 capture happen exactly at the compaction boundary instead of at the next sweep;
-**without it the system is still correct.** For watcher flags and
+**without it the system is still correct.** Claude Code users can install it as
+a plugin, `/plugin marketplace add doronp/gitmemory` then `/plugin install
+gitmemory@gitmemory`; the watcher still does the capturing. For watcher flags and
 troubleshooting, see [docs/watching.md](docs/watching.md).
 
 **What to do with it next** — reading `recall` output, handing it back to an
@@ -181,13 +183,13 @@ real text, and that is a measurement rather than a suspicion.
 | What | How it was measured | Result |
 |---|---|---|
 | Hook cost in the agent's critical path | Timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | On a fresh checkout, no downloads | **1,025 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| The suite | On a fresh checkout, no downloads | **1,026 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
 | Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **606** negative controls |
 
 The two suite counts do not add up, and should not. Switching the corpora on
-collects 1350, not 1353. Three conformance cases fill parametrisations that
+collects 1351, not 1354. Three conformance cases fill parametrisations that
 collect as one empty placeholder each while the corpora are absent, so they
-replace three of the 1025 rather than joining them. Every figure on this board
+replace three of the 1026 rather than joining them. Every figure on this board
 is pinned by a test, which is how it stays true.
 
 **What is not measured**, and is shown as a row on the dashboard rather than

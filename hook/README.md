@@ -71,6 +71,44 @@ are measured rather than argued:
   system and not more than it. The symptom is an empty spool, and the answer is
   the same one as above: run the shim by hand. [E7b L2-F7]
 
+### As a Claude Code plugin
+
+The repository is also a Claude Code plugin, listed in a marketplace of its own.
+In a Claude Code session:
+
+```
+/plugin marketplace add doronp/gitmemory
+/plugin install gitmemory@gitmemory
+```
+
+or from a shell, `claude plugin marketplace add doronp/gitmemory` and then
+`claude plugin install gitmemory@gitmemory`.
+
+The plugin's [`hooks/hooks.json`](../hooks/hooks.json) registers the same two
+hooks as the `settings.json` example below, `PreCompact` and `SessionEnd` and not
+`Stop`, and points them at the copy of this shim that Claude Code keeps for the
+plugin. There is no path to fill in and no file to `chmod`.
+
+The plugin installs the hook and nothing else. **Nothing is captured until the
+watcher is installed and running** (`uv tool install
+git+https://github.com/doronp/gitmemory`, a watch root in `config.toml`, then
+`gitmemory watch`, as in the [Quickstart](../README.md#quickstart)), and
+gitmemory is correct without the plugin, as it is without the hook. The hook
+runs with Claude Code's environment, so a `GITMEMORY_HOME` you set for the
+watcher has to be set there too, and be absolute, as above.
+
+This keeps the rule at the top of this section. You opt in with `/plugin`,
+Claude Code records the change in its own settings, and `/plugin uninstall`
+takes it out; gitmemory itself edits nothing.
+
+Use the plugin or the `settings.json` hook below, not both. Claude Code does not
+merge a plugin's hook with one in your settings, so with both installed the shim
+fires twice per event and writes two records for the same transcript. That is
+harmless, since a record only asks the watcher to look and the capture tiles
+either way, but it doubles the work in the agent's critical path.
+
+### By hand, in `settings.json`
+
 For Claude Code, in `~/.claude/settings.json` — each event key takes an array of
 matcher groups, and the event name is passed in `args`, because Claude Code
 sends the payload on stdin and no arguments of its own:
@@ -109,9 +147,14 @@ not part of the installed package: if you installed with `uv tool install`,
 clone the repository or download `hook/gitmemory-hook.sh` to a stable absolute
 path and `chmod +x` it.
 
-`Stop` is accepted by the shim but deliberately left out of the example: it
-fires after every assistant turn, and the watcher does not force a capture on
-it, so installing it buys nothing and costs one process per reply.
+This example and the plugin both pass the event name in `args`, which Claude
+Code added in version 2.1.139. A record whose event name did not arrive is filed
+as `unknown`, and the watcher does not force a capture on it: the session is
+captured at the next sweep, as if no hook were installed.
+
+`Stop` is accepted by the shim but deliberately left out of the example and the
+plugin: it fires after every assistant turn, and the watcher does not force a
+capture on it, so installing it buys nothing and costs one process per reply.
 
 ## The seam
 
