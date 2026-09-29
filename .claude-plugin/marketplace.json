@@ -3,7 +3,7 @@
   "owner": {
     "name": "doronp"
   },
-  "description": "The gitmemory plugin for Claude Code: its compaction-boundary hook shim.",
+  "description": "The gitmemory plugin for Claude Code: its compaction-boundary hook shim, and a skill that searches and quotes the sessions gitmemory has captured.",
   "plugins": [
     {
       "name": "gitmemory",
