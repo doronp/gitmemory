@@ -89,13 +89,25 @@ hooks as the `settings.json` example below, `PreCompact` and `SessionEnd` and no
 `Stop`, and points them at the copy of this shim that Claude Code keeps for the
 plugin. There is no path to fill in and no file to `chmod`.
 
-The plugin installs the hook and nothing else. **Nothing is captured until the
-watcher is installed and running** (`uv tool install
-git+https://github.com/doronp/gitmemory`, a watch root in `config.toml`, then
-`gitmemory watch`, as in the [Quickstart](../README.md#quickstart)), and
-gitmemory is correct without the plugin, as it is without the hook. The hook
-runs with Claude Code's environment, so a `GITMEMORY_HOME` you set for the
-watcher has to be set there too, and be absolute, as above.
+The plugin installs the hook and one skill, `/gitmemory:recall`, which has the
+agent run `gitmemory recall` and quote what it returns
+([USAGE.md](../docs/USAGE.md#put-it-back-in-front-of-the-agent)). Neither
+captures anything. **Nothing is captured until the watcher is installed and
+running** (`uv tool install git+https://github.com/doronp/gitmemory`, a watch
+root in `config.toml`, then `gitmemory watch`, as in the
+[Quickstart](../README.md#quickstart)), and gitmemory is correct without the
+plugin, as it is without the hook. The hook and the skill run with Claude
+Code's environment, so a `GITMEMORY_HOME` you set for the watcher has to be set
+there too, and be absolute, as above. What the skill reads from the store goes
+to the model provider with the rest of the conversation, and no redaction gate
+stands in that path ([SECURITY.md](../SECURITY.md#if-a-credential-lands-in-the-store)).
+
+An install made before the skill was added does not have it. Claude Code keeps
+a plugin's cached copy until its version changes, and the skill was added
+without a version bump, so `claude plugin update gitmemory@gitmemory` reports
+that it is already at 0.1.0. The next release, which bumps the version, brings
+the skill; until then, `claude plugin uninstall gitmemory@gitmemory` and then
+`claude plugin install gitmemory@gitmemory` fetch the current copy.
 
 This keeps the rule at the top of [Install](#install): gitmemory never edits
 another program's configuration. You opt in with `/plugin`, and Claude Code
@@ -109,7 +121,8 @@ deduplicate a plugin's hook against one in your settings, so with both
 installed the shim fires twice per event and writes two records for the same
 transcript. That is harmless, since a record only asks the watcher to look and
 the capture tiles either way, but it starts a second shim process for every
-event.
+event. To have the skill as well, keep the plugin and take the two entries out
+of `settings.json`.
 
 ### By hand, in `settings.json`
 

@@ -38,7 +38,8 @@ maintained back-branches.
 
 In scope: anything in this repository that runs on a user's machine. That
 means capture, the store and its contiguity proof, `verify`, the redaction gate
-behind `push`, the index, `derive`, the dashboard, the watcher and the hook shim.
+behind `push`, the index, `derive`, the dashboard, the watcher, the hook shim and the plugin's
+recall skill.
 
 Worth reporting, for example:
 
@@ -86,3 +87,10 @@ The design answer is that `raw/` stays on your machine and the gate stands at
 
 There is no override flag. A gate you can wave through on a deadline is a gate
 that gets waved through on a deadline.
+
+The gate stands at `push` and nowhere else. The Claude Code plugin's recall
+skill reads the store into the agent's context, so each line it quotes goes to
+the model provider with the rest of the conversation, unscanned. That includes
+text another watched agent never sent to that provider, and a credential `push`
+would refuse to ship. The skill quotes what the question needs and no more,
+which is a rule it follows, not a gate.

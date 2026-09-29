@@ -16,6 +16,16 @@ tell you.
   `module:function`. Also settable with `GITMEMORY_POLICY`. Nothing is deleted.
   See [USAGE.md](docs/USAGE.md#when-memories-disagree).
 - `recall` prints each hit's date, and `Hit` carries the turn's `ts`.
+- **Recall skill.** The Claude Code plugin ships a skill, `/gitmemory:recall`,
+  that has the agent run `gitmemory recall` and quote what it returns, each
+  line with its address, when you refer to a decision or a rule from before a
+  compaction or from an earlier session. It runs `gitmemory index` when the
+  index is missing or stale, and writes nothing else. See
+  [docs/USAGE.md](docs/USAGE.md#put-it-back-in-front-of-the-agent). What it
+  reads goes to the model provider, past no redaction gate. The plugin's
+  version is still 0.1.0, so a copy installed from 0.1.0 does not get the skill
+  from `claude plugin update`; reinstall it, or wait for the next release
+  ([hook/README.md](hook/README.md#as-a-claude-code-plugin)).
 
 ### Changed
 

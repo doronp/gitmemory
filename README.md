@@ -84,8 +84,10 @@ That is the whole install. The optional [hook shim](hook/README.md) makes a
 capture happen exactly at the compaction boundary instead of at the next sweep;
 **without it the system is still correct.** Claude Code users can install it as
 a plugin, `/plugin marketplace add doronp/gitmemory` then `/plugin install
-gitmemory@gitmemory`; the watcher still does the capturing. For watcher flags and
-troubleshooting, see [docs/watching.md](docs/watching.md).
+gitmemory@gitmemory`, which also adds `/gitmemory:recall`, a skill that has the
+agent search the store and quote what it finds; the watcher still does the
+capturing. For watcher flags and troubleshooting, see
+[docs/watching.md](docs/watching.md).
 
 **What to do with it next** — reading `recall` output, handing it back to an
 agent after compaction, derived key ideas, the dashboard — is in
