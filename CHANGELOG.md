@@ -8,6 +8,21 @@ tell you.
 
 ## [Unreleased]
 
+### Added
+
+- **`recall --policy`** decides which of two disagreeing hits comes first:
+  `latest-user` (the user's own words newest first, then the rest), `latest`
+  (newest first, whoever said it), `relevance` (best match first), or your own
+  `module:function`. Also settable with `GITMEMORY_POLICY`. Nothing is deleted.
+  See [USAGE.md](docs/USAGE.md#when-memories-disagree).
+- `recall` prints each hit's date, and `Hit` carries the turn's `ts`.
+
+### Changed
+
+- `recall` now lists the user's own words newest first by default, not best
+  match first. Pass `--policy relevance` for the old order. `index.search` is
+  unchanged.
+
 ## [0.1.0] - 2026-09-28
 
 The first public release. What it contains:

@@ -32,13 +32,16 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib
 import os
 import re
 import shutil
 import sqlite3
 import tempfile
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from urllib.parse import quote
 
 from . import store
@@ -46,17 +49,25 @@ from .adapters import get as get_adapter
 from .records import Session, canonical_json, safe_text
 
 __all__ = [
+    "DEFAULT_POLICY",
     "DEFAULT_WEIGHTS",
+    "POLICIES",
     "Hit",
     "Hits",
+    "Policy",
     "Stats",
     "Weights",
     "build",
     "db_path",
+    "latest",
+    "latest_user",
     "match_expr",
     "open_db",
+    "policy",
+    "relevance",
     "retriever",
     "search",
+    "when",
 ]
 
 SCHEMA = 2
@@ -421,6 +432,7 @@ class Hit:
     kind: str
     score: float  # BM25; more negative is a better match, as FTS5 defines it
     text: str
+    ts: str | None = None  # the turn's timestamp exactly as the agent wrote it
 
 
 @dataclass(frozen=True, slots=True)
@@ -1004,6 +1016,7 @@ def search(
             SELECT b.byte_offset, b.byte_len, b.turn_id, b.session_key, b.agent,
                    b.session_id, b.generation, b.role, b.kind, b.block_seq,
                    b.prose || b.tool_use || b.tool_result AS text, s.score AS score,
+                   b.ts,
                    -- Partitioned by turn *and session*, not by turn alone.
                    -- `turn_id` is content-derived over the record's sessionId,
                    -- which the Claude Code adapter warns is reused across a
@@ -1024,7 +1037,7 @@ def search(
             FROM scored s JOIN blocks b ON b.rowid = s.rid
         )
         SELECT byte_offset, byte_len, turn_id, session_key, agent,
-               session_id, generation, role, kind, text, score
+               session_id, generation, role, kind, text, score, ts
         FROM ranked WHERE rn = 1
         -- Ties are broken by position, never by rowid: the answer must not
         -- depend on the order generations happened to be indexed in.
@@ -1046,6 +1059,7 @@ def search(
             kind=r["kind"],
             score=r["score"],
             text=r["text"],
+            ts=r["ts"],
         )
         for r in rows
     )
@@ -1060,3 +1074,110 @@ def retriever(db: sqlite3.Connection, *, weights: Weights = DEFAULT_WEIGHTS):
         return [h.byte_offset for h in search(db, query, k=k, weights=weights)]
 
     return retrieve
+
+
+# --------------------------------------------------------------------------- #
+# conflict policy: which of two hits that disagree goes first
+# --------------------------------------------------------------------------- #
+
+# A policy takes the hits `search` ranked by relevance and returns them in the
+# order a reader should trust them. It may reorder or drop; it must not invent.
+# `search` itself never applies one, so `bench/` keeps measuring plain BM25 and
+# a policy is a choice made where the hits are shown — `recall --policy`.
+Policy = Callable[[list[Hit]], list[Hit]]
+
+
+def when(hit: Hit) -> datetime | None:
+    """`hit.ts` as an aware UTC datetime, or None if it is absent or unreadable.
+
+    A timestamp is a string the agent wrote, so a bad one is ordinary input and
+    not an error. One without an offset is read as UTC, because comparing an
+    aware datetime with a naive one raises rather than answers.
+    """
+    try:
+        t = datetime.fromisoformat(hit.ts or "")
+    except ValueError:
+        return None
+    return t.replace(tzinfo=UTC) if t.tzinfo is None else t.astimezone(UTC)
+
+
+def latest(hits: list[Hit]) -> list[Hit]:
+    """Newest first, whoever said it: a decision reversed later is read after
+    the reversal, not before it. See `latest_user` for why it is not the default.
+
+    Relevance breaks ties, because the sort is stable and `search` hands over
+    best-first. An undated hit goes last: a turn of unknown age cannot claim to
+    be the newer word on anything.
+
+    ponytail: reorders the top `k` only, so a reversal that ranked k+1 cannot
+    win. The upgrade is to search a wider pool than is shown and cut after.
+    """
+
+    def key(h: Hit) -> tuple[bool, float]:
+        t = when(h)
+        return (t is None, -t.timestamp() if t else 0.0)
+
+    return sorted(hits, key=key)
+
+
+def latest_user(hits: list[Hit]) -> list[Hit]:
+    """The user's own words newest first, then everything else newest first.
+    The default: the latest word *the user* said wins.
+
+    Plain `latest` lets the newest mention win, and the newest mention is often
+    not a reversal. After a compaction drops "don't add a retry loop", the agent
+    proposes one; that proposal is newer than the rule and matches the same
+    words, so `latest` leads with the mistake. So does a captured `recall` from
+    an earlier session, which is newer than every turn it quotes. A user who
+    reverses themselves still wins here, because their reversal is user text.
+
+    "The user's own words" is the admission rule `derive` uses for prose: a
+    `text` block in the user role that no program injected. A tool result is a
+    user-role line in Claude Code and is not something the user said.
+
+    ponytail: a skill's loaded instructions and a slash command's expansion are
+    user text with no marker, so they pass as the user's words — the same gap
+    `derive._injected` documents. The upgrade lands there, not here.
+    """
+    from .derive import _injected  # lazy: derive imports this module
+
+    def typed(h: Hit) -> bool:
+        return h.role == "user" and h.kind == "text" and not _injected(h.text.strip())
+
+    ordered = latest(hits)
+    return [h for h in ordered if typed(h)] + [h for h in ordered if not typed(h)]
+
+
+def relevance(hits: list[Hit]) -> list[Hit]:
+    """Best match first, as `search` ranked it. For a reader that reconciles
+    conflicts itself: `recall` prints every hit's date, so the agent can see
+    which of two disagreeing turns came later and decide."""
+    return list(hits)
+
+
+POLICIES: dict[str, Policy] = {
+    "latest-user": latest_user,
+    "latest": latest,
+    "relevance": relevance,
+}
+DEFAULT_POLICY = "latest-user"
+
+
+def policy(name: str) -> Policy:
+    """A built-in policy by name, or your own as `module:function`.
+
+    The module is imported, so it runs with your permissions — the same trust
+    as anything else on your `PYTHONPATH`, and named by you, never by the store.
+    """
+    if name in POLICIES:
+        return POLICIES[name]
+    module, sep, attr = name.partition(":")
+    if not (sep and module and attr):
+        raise ValueError(f"unknown policy {name!r}: use {', '.join(POLICIES)} or module:function")
+    try:
+        fn = getattr(importlib.import_module(module), attr)
+    except (ImportError, AttributeError) as exc:
+        raise ValueError(f"cannot load policy {name!r}: {exc}") from exc
+    if not callable(fn):
+        raise ValueError(f"policy {name!r} is not callable")
+    return fn

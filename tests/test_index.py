@@ -1401,3 +1401,152 @@ def test_search_rejects_nothing_it_can_reach_the_database_with(home, src, capsys
 
     assert main(["--home", home, "recall", "marmoset"]) == 2
     assert "error:" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# conflict policy
+# --------------------------------------------------------------------------- #
+
+
+def dated(uid: str, text: str, ts: str) -> dict:
+    return user(uid, text) | {"timestamp": ts}
+
+
+# The older turn says "uploads" three times, so BM25 ranks it first; the newer
+# one reverses it. Which one `recall` leads with is the whole question.
+REVERSED = [
+    dated("u1", "uploads uploads: store the uploads as CSV", "2026-09-01T10:00:00Z"),
+    dated("u2", "scratch that, store uploads as Parquet", "2026-09-22T10:00:00Z"),
+]
+
+
+def test_latest_leads_with_the_reversal_that_relevance_ranks_second(home, src):
+    db = built(home, src, REVERSED)
+    try:
+        hits = index.search(db, "uploads")
+    finally:
+        db.close()
+    assert [h.ts for h in hits] == ["2026-09-01T10:00:00Z", "2026-09-22T10:00:00Z"]
+    assert "Parquet" in index.latest(hits)[0].text
+    assert index.relevance(hits) == list(hits)
+
+
+def _hit(ts: str | None, offset: int) -> index.Hit:
+    return index.Hit(offset, 1, "t", "k", "a", "s", 0, "user", "text", -1.0, "x", ts)
+
+
+def test_latest_reads_offsets_and_puts_the_undated_last():
+    """A turn of unknown age cannot be the newer word. An offset is honoured, so
+    11:00+02:00 is older than 10:00Z; a naive stamp is read as UTC rather than
+    raising on the comparison with an aware one."""
+    hits = [
+        _hit(None, 0),
+        _hit("not-a-date", 1),
+        _hit("2026-09-22T11:00:00+02:00", 2),
+        _hit("2026-09-22T10:00:00Z", 3),
+        _hit("2026-09-22T09:30:00", 4),
+    ]
+    assert [h.byte_offset for h in index.latest(hits)] == [3, 4, 2, 0, 1]
+
+
+def test_cli_recall_defaults_to_the_latest_user_word_and_dates_every_line(home, src, capsys):
+    write(src, REVERSED)
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "uploads"]) == 0
+    first, second = capsys.readouterr().out.splitlines()
+    assert "2026-09-22T10:00Z" in first and "Parquet" in first
+    assert "2026-09-01T10:00Z" in second
+
+
+def test_cli_recall_takes_a_policy_by_name_env_or_module(home, src, capsys, monkeypatch):
+    write(src, REVERSED)
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+
+    def first_line(*argv: str) -> str:
+        assert main(["--home", home, "recall", "uploads", *argv]) == 0
+        return capsys.readouterr().out.splitlines()[0]
+
+    assert "CSV" in first_line("--policy", "relevance")
+    assert "CSV" in first_line("--policy", "gitmemory.index:relevance")
+    monkeypatch.setenv("GITMEMORY_POLICY", "relevance")
+    assert "CSV" in first_line()
+    assert "Parquet" in first_line("--policy", "latest")  # the flag beats the env
+
+
+@pytest.mark.parametrize(
+    ("name", "says"),
+    [
+        ("newest", "unknown policy"),
+        ("gitmemory.no_such_module:fn", "cannot load"),
+        ("gitmemory.index:no_such_fn", "cannot load"),
+        ("gitmemory.index:SCHEMA", "not callable"),
+    ],
+)
+def test_a_bad_policy_is_an_error_message_not_a_traceback(home, capsys, name, says):
+    """Checked before the index is opened, so it fails the same with no index."""
+    assert main(["--home", home, "recall", "q", "--policy", name]) == 2
+    assert says in capsys.readouterr().err
+
+
+def test_a_custom_policy_that_keeps_nothing_or_breaks_is_reported(
+    home, src, capsys, monkeypatch, tmp_path
+):
+    """A policy is the user's code. Dropping every hit is a legitimate answer and
+    is said so, not printed as silence; returning nothing or raising is an error
+    message, not a traceback."""
+    (tmp_path / "rules.py").write_text(
+        "def none(hits): return []\n"
+        "def broken(hits): return None\n"
+        "def raises(hits): raise RuntimeError('boom')\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    write(src, REVERSED)
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+
+    assert main(["--home", home, "recall", "uploads", "--policy", "rules:none"]) == 0
+    out, err = capsys.readouterr()
+    assert out == "" and "dropped all 2" in err
+    for name in ("rules:broken", "rules:raises"):
+        assert main(["--home", home, "recall", "uploads", "--policy", name]) == 2
+        assert f"policy '{name}' failed" in capsys.readouterr().err
+
+
+def test_the_default_does_not_let_a_forgetful_agent_outrank_the_users_rule(home, src, capsys):
+    """The README's demo, in miniature. Compaction drops the rule; the agent then
+    proposes exactly what it forbade, and an earlier recall's output is captured
+    as a tool result. Both are newer than the rule and match it. Plain `latest`
+    leads with the mistake; the default leads with what the user said."""
+    write(
+        src,
+        [
+            dated("u1", "Don't add a retry loop around the upload.", "2026-09-28T10:00:00Z"),
+            assistant("a1", [{"type": "text", "text": "I'll add a retry loop to the upload."}])
+            | {"timestamp": "2026-09-28T11:00:00Z"},
+            user("u2", "")
+            | {
+                "timestamp": "2026-09-28T12:00:00Z",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "t1", "content": "retry loop"}
+                    ],
+                },
+            },
+        ],
+    )
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+
+    def roles(*argv: str) -> list[str]:
+        assert main(["--home", home, "recall", "retry loop", *argv]) == 0
+        return [line.split()[3] for line in capsys.readouterr().out.splitlines()]
+
+    assert roles() == ["user/text", "user/tool_result", "assistant/text"]
+    assert roles("--policy", "latest") == ["user/tool_result", "assistant/text", "user/text"]
