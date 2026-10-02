@@ -164,6 +164,15 @@ agree about uploads?" from a question for you into a search for the agent. You
 can also paste the lines in yourself. Either way the agent sees the words as
 they were written, with an address you can check.
 
+In Claude Code, the plugin does this without the `CLAUDE.md` line. Installed as
+in the [hook's README](../hook/README.md#as-a-claude-code-plugin), it adds a
+skill, `/gitmemory:recall`, that Claude loads on its own when you refer to a
+decision or a rule from before a compaction or from an earlier session, or that
+you run with a topic: `/gitmemory:recall retry loop`. It runs `recall`, and
+`index` when there is no index yet or the one there is older than what you are
+asking about. It quotes each line with its address and says when a hit comes
+from another session. It writes nothing but the index.
+
 ## Derive key ideas and decisions
 
 `derive` builds, per generation, a ranked list of key sentences and a timeline

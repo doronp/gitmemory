@@ -10,6 +10,8 @@ the ones that failed are the reason this file exists. [E4, review: docs]
 
 from __future__ import annotations
 
+import glob
+import json
 import os
 import re
 import subprocess
@@ -437,3 +439,79 @@ def test_the_secondary_write_up_quotes_what_it_says_it_quotes():
     verbatim = sorted(q for q in quoted if q in corpus)
     claimed = int(re.search(r"quotes \*\*(\d+)\*\* runs of\n40 characters", doc).group(1))
     assert len(verbatim) == claimed, verbatim
+
+
+def test_the_plugin_recall_skill_runs_only_commands_the_cli_has(tmp_path, capsys):
+    """`skills/recall/SKILL.md` is instructions an agent follows word for word.
+
+    A subcommand or a flag that the CLI has since renamed is not a stale
+    sentence there: it is an error the agent meets mid-answer, with the user
+    waiting, and it reads as gitmemory being broken. So every `gitmemory ...`
+    in the skill's code is asked for its own `--help`, which argparse answers
+    with exit 0 only for a subcommand that exists, and every flag it names is
+    looked for in that help: `--home` before the subcommand in the top-level
+    help, the rest in the subcommand's. The commands it forbids are checked the
+    same way, because a prohibition on a command that no longer exists guards
+    nothing. The messages it tells the agent to branch on are the ones the CLI
+    prints, got by running it on a path that is no store and on an empty one.
+    `skills/` holds this one skill and neither manifest adds a skills path; its
+    name is the one the three documents that mention it tell you to type.
+    """
+    from gitmemory import __main__ as cli
+    from gitmemory import index
+
+    def usage(*argv: str) -> str:
+        with pytest.raises(SystemExit) as done:
+            cli.main([*argv, "--help"])
+        assert done.value.code == 0, argv
+        return capsys.readouterr().out
+
+    skills = sorted(glob.glob("skills/*/SKILL.md", root_dir=ROOT))
+    assert skills == ["skills/recall/SKILL.md"], skills
+    skill = _read(skills[0])
+    front = skill.split("---\n")[1]
+    assert re.search(r"^name: recall$", front, re.M), front
+    manifest = json.loads(_read(".claude-plugin/plugin.json"))
+    entry = json.loads(_read(".claude-plugin/marketplace.json"))["plugins"]
+    assert "skills" not in manifest and all("skills" not in e for e in entry)
+    plugin = manifest["name"]
+    for doc in ("README.md", "hook/README.md", "docs/USAGE.md"):
+        assert f"/{plugin}:recall" in _read(doc), doc
+
+    fence = r"^```[^\n]*\n(.*?)^```"
+    code = re.findall(fence, skill, re.M | re.S)
+    prose = re.sub(fence, "", skill, flags=re.M | re.S)
+    code += [a or b for a, b in re.findall(r"``(.+?)``|`([^`\n]+)`", prose)]
+    named = set()
+    for m in re.finditer(r"(?<![\w/-])gitmemory ([^`\n]+)", "\n".join(code)):
+        tokens = m.group(1).split()
+        subs = [i for i, t in enumerate(tokens) if re.fullmatch(r"[a-z]+", t)]
+        assert subs, m.group(0)
+        at = subs[0]
+        named.add(tokens[at])
+        top, own = usage(), usage(tokens[at])
+        for i, flag in enumerate(tokens):
+            if re.fullmatch(r"--?[a-z][a-z-]*", flag):
+                helptext = top if i < at else own
+                assert re.search(rf"(?<![\w-]){flag}\b", helptext), m.group(0)
+    assert {"recall", "index", "capture", "push", "dashboard"} <= named, named
+    flat = " ".join(skill.split())
+    assert f"query truncated to {index.MAX_TERMS} terms" in flat
+
+    def run(home: str, *argv: str) -> tuple[int, str, str]:
+        code = cli.main(["--home", home, *argv])
+        out, err = capsys.readouterr()
+        return code, out, err.replace(home, "<path>")
+
+    absent, empty = str(tmp_path / "absent"), str(tmp_path / "empty")
+    os.makedirs(os.path.join(empty, "sessions"))
+    code, _, err = run(absent, "recall", "x")
+    assert code == 2 and "exit 2" in flat, err
+    said = re.sub(r"<path>\S*;", "<path>;", err.strip())
+    assert f"``{said}``" in flat, said
+    code, _, err = run(absent, "index")
+    assert code == 2 and f"`{err.strip()}`" in flat, err
+    code, out, _ = run(empty, "index")
+    assert code == 0 and out.startswith("0 generation(s)") and "`0 generation(s)`" in flat
+    code, _, err = run(empty, "recall", "x")
+    assert code == 0 and err == "no matches\n" and "`no matches` on stderr, exit 0" in flat

@@ -1,12 +1,12 @@
 {
   "name": "gitmemory",
   "version": "0.1.0",
-  "description": "Registers gitmemory's hook shim on PreCompact and SessionEnd, so a session is captured at the compaction boundary instead of at the watcher's next sweep. The hook is only a doorbell: nothing is captured unless the gitmemory watcher is installed (uv tool install git+https://github.com/doronp/gitmemory) and running, and without the hook gitmemory is still correct.",
+  "description": "Registers gitmemory's hook shim on PreCompact and SessionEnd, so a session is captured at the compaction boundary instead of at the watcher's next sweep, and adds a recall skill that has the agent search the captured sessions with gitmemory recall and quote what was said, with the address of each line. The hook is only a doorbell, and the skill writes nothing but the search index: nothing is captured unless the gitmemory watcher is installed (uv tool install git+https://github.com/doronp/gitmemory) and running, and without the hook gitmemory is still correct.",
   "author": {
     "name": "doronp"
   },
   "homepage": "https://github.com/doronp/gitmemory",
   "repository": "https://github.com/doronp/gitmemory",
   "license": "Apache-2.0",
-  "keywords": ["agent-memory", "claude-code", "hooks", "compaction", "transcripts", "git"]
+  "keywords": ["agent-memory", "claude-code", "hooks", "skills", "compaction", "transcripts", "recall", "git"]
 }
