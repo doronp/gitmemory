@@ -301,6 +301,8 @@ def _derive(args) -> int:
 
 
 def _recall(args) -> int:
+    # First, so a mistyped policy is the error you see, with or without an index.
+    resolve = index.policy(args.policy)
     path = args.db or index.db_path(args.home)
     if not os.path.exists(path):
         print(f"no index at {path}; run `gitmemory index` first", file=sys.stderr)
@@ -318,9 +320,13 @@ def _recall(args) -> int:
             f"query truncated to {index.MAX_TERMS} terms; {hits.dropped} dropped",
             file=sys.stderr,
         )
-    for h in hits:
+    for h in resolve(hits):
         head = " ".join(h.text.split())[:160]
-        print(f"{h.score:8.3f}  {h.session_key}@{h.byte_offset}  {h.role}/{h.kind}  {head}")
+        t = index.when(h)
+        # The date on every line, whatever the policy: it is what lets the
+        # reader see that two disagreeing turns are three weeks apart.
+        date = t.strftime("%Y-%m-%dT%H:%MZ") if t else "undated".ljust(17)
+        print(f"{h.score:8.3f}  {date}  {h.session_key}@{h.byte_offset}  {h.role}/{h.kind}  {head}")
     if not hits:
         print("no matches", file=sys.stderr)
     return 0
@@ -395,6 +401,12 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument("query")
     rec.add_argument("-k", type=_positive_int, default=10)
     rec.add_argument("--db", default=None)
+    rec.add_argument(
+        "--policy",
+        default=os.environ.get("GITMEMORY_POLICY") or index.DEFAULT_POLICY,
+        help="which hit goes first when they disagree: latest, relevance, or "
+        "module:function (default $GITMEMORY_POLICY or %(default)s)",
+    )
     rec.set_defaults(fn=_recall)
 
     args = ap.parse_args(argv)

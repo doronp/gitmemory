@@ -62,20 +62,78 @@ can be rerun at any time; the index is never the source of truth.
 $ gitmemory index
 1 generation(s)  4 turn(s)  4 block(s)  content=f99ac9c9b888
 $ gitmemory recall "why did we drop the retry loop?"
-  -0.000  claude-code/0f3a9c2e-…-fc59494095426389/g00@0  user/text  Don't add a retry loop around the upload; the API is idempotent only per request id.
-  -0.000  claude-code/0f3a9c2e-…-fc59494095426389/g00@288  assistant/text  Understood. I dropped the retry loop and pass a request id instead, so a replay cannot double-charge.
+  -0.000  2026-09-28T10:03Z  claude-code/0f3a9c2e-…-fc59494095426389/g00@288  assistant/text  Understood. I dropped the retry loop and pass a request id instead, so a replay cannot double-charge.
+  -0.000  2026-09-28T10:02Z  claude-code/0f3a9c2e-…-fc59494095426389/g00@0  user/text  Don't add a retry loop around the upload; the API is idempotent only per request id.
 ```
 
-One line per turn, best first:
+One line per turn, newest first (see [When memories disagree](#when-memories-disagree)):
 
 | Field | Meaning |
 |---|---|
 | `-0.000` | The BM25 score. Lower is better; on a store this small every score rounds to zero |
+| `2026-09-28T10:03Z` | When the turn was written, in UTC. `undated` if the transcript did not say |
 | `claude-code/<session>/g00` | Agent, session and generation. A new generation starts only when the source file was rewritten |
 | `@288` | The byte offset of the turn inside that generation's raw bytes |
 | `assistant/text` | Role and block kind |
 
 `-k` sets how many lines come back.
+
+## When memories disagree
+
+A decision made three weeks ago and reversed last week are both in the store,
+and both match the same search. gitmemory never deletes either one. What
+`--policy` decides is which comes first, and the first line is the one an agent
+tends to act on.
+
+| Policy | Order | Use it when |
+|---|---|---|
+| `latest` (default) | Newest first; relevance breaks ties; undated last | Later words should win, which is usually true |
+| `relevance` | Best BM25 match first | You want the agent to decide: every line carries its date, so it can see which turn came later |
+| `module:function` | Whatever your function returns | Anything else: pinned decisions, a cut-off date, a different rule per project |
+
+Set it per call with `--policy`, or for every call with `GITMEMORY_POLICY`. The
+flag wins. `latest` only reorders the top `-k` hits, so a reversal that does not
+match the query well enough to make the list cannot win. Raise `-k` if you
+suspect one.
+
+If you choose `relevance`, tell the agent what the dates are for:
+
+```markdown
+Before asking the user to repeat a decision, run `gitmemory recall "<topic>"`.
+If two lines disagree, the later date is the current decision; say so.
+```
+
+### Your own rule
+
+A policy is a function from a list of `Hit`s to a list of `Hit`s. It can
+reorder and it can drop; it gets nothing that is not already in the store. A
+`Hit` has the fields `recall` prints, plus `text` and `ts`, and
+`gitmemory.index.when(hit)` reads `ts` as a UTC `datetime`.
+
+A validity window, where everything before a date you name is out of date, is
+one such rule:
+
+```python
+# myrules.py
+from datetime import UTC, datetime
+
+from gitmemory.index import latest, when
+
+REVERSED = datetime(2026, 9, 14, tzinfo=UTC)  # the day the upload rules changed
+
+
+def since_reversal(hits):
+    """Drop what was said before the reversal, then newest first."""
+    return latest([h for h in hits if (t := when(h)) and t >= REVERSED])
+```
+
+```console
+$ PYTHONPATH=. gitmemory recall "upload retries" --policy myrules:since_reversal
+```
+
+The module is imported and runs with your permissions, so name only code you
+would run anyway. A name that does not resolve is an error, not a silent
+fallback to the default.
 
 The offset is the point: it takes you back to the exact bytes, not to a
 paraphrase of them. The raw segments live under

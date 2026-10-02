@@ -1401,3 +1401,92 @@ def test_search_rejects_nothing_it_can_reach_the_database_with(home, src, capsys
 
     assert main(["--home", home, "recall", "marmoset"]) == 2
     assert "error:" in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# conflict policy
+# --------------------------------------------------------------------------- #
+
+
+def dated(uid: str, text: str, ts: str) -> dict:
+    return user(uid, text) | {"timestamp": ts}
+
+
+# The older turn says "uploads" three times, so BM25 ranks it first; the newer
+# one reverses it. Which one `recall` leads with is the whole question.
+REVERSED = [
+    dated("u1", "uploads uploads: store the uploads as CSV", "2026-09-01T10:00:00Z"),
+    dated("u2", "scratch that, store uploads as Parquet", "2026-09-22T10:00:00Z"),
+]
+
+
+def test_latest_leads_with_the_reversal_that_relevance_ranks_second(home, src):
+    db = built(home, src, REVERSED)
+    try:
+        hits = index.search(db, "uploads")
+    finally:
+        db.close()
+    assert [h.ts for h in hits] == ["2026-09-01T10:00:00Z", "2026-09-22T10:00:00Z"]
+    assert "Parquet" in index.latest(hits)[0].text
+    assert index.relevance(hits) == list(hits)
+
+
+def _hit(ts: str | None, offset: int) -> index.Hit:
+    return index.Hit(offset, 1, "t", "k", "a", "s", 0, "user", "text", -1.0, "x", ts)
+
+
+def test_latest_reads_offsets_and_puts_the_undated_last():
+    """A turn of unknown age cannot be the newer word. An offset is honoured, so
+    11:00+02:00 is older than 10:00Z; a naive stamp is read as UTC rather than
+    raising on the comparison with an aware one."""
+    hits = [
+        _hit(None, 0),
+        _hit("not-a-date", 1),
+        _hit("2026-09-22T11:00:00+02:00", 2),
+        _hit("2026-09-22T10:00:00Z", 3),
+        _hit("2026-09-22T09:30:00", 4),
+    ]
+    assert [h.byte_offset for h in index.latest(hits)] == [3, 4, 2, 0, 1]
+
+
+def test_cli_recall_defaults_to_latest_and_dates_every_line(home, src, capsys):
+    write(src, REVERSED)
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "uploads"]) == 0
+    first, second = capsys.readouterr().out.splitlines()
+    assert "2026-09-22T10:00Z" in first and "Parquet" in first
+    assert "2026-09-01T10:00Z" in second
+
+
+def test_cli_recall_takes_a_policy_by_name_env_or_module(home, src, capsys, monkeypatch):
+    write(src, REVERSED)
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+
+    def first_line(*argv: str) -> str:
+        assert main(["--home", home, "recall", "uploads", *argv]) == 0
+        return capsys.readouterr().out.splitlines()[0]
+
+    assert "CSV" in first_line("--policy", "relevance")
+    assert "CSV" in first_line("--policy", "gitmemory.index:relevance")
+    monkeypatch.setenv("GITMEMORY_POLICY", "relevance")
+    assert "CSV" in first_line()
+    assert "Parquet" in first_line("--policy", "latest")  # the flag beats the env
+
+
+@pytest.mark.parametrize(
+    ("name", "says"),
+    [
+        ("newest", "unknown policy"),
+        ("gitmemory.no_such_module:fn", "cannot load"),
+        ("gitmemory.index:no_such_fn", "cannot load"),
+        ("gitmemory.index:SCHEMA", "not callable"),
+    ],
+)
+def test_a_bad_policy_is_an_error_message_not_a_traceback(home, capsys, name, says):
+    """Checked before the index is opened, so it fails the same with no index."""
+    assert main(["--home", home, "recall", "q", "--policy", name]) == 2
+    assert says in capsys.readouterr().err
