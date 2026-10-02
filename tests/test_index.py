@@ -1449,7 +1449,7 @@ def test_latest_reads_offsets_and_puts_the_undated_last():
     assert [h.byte_offset for h in index.latest(hits)] == [3, 4, 2, 0, 1]
 
 
-def test_cli_recall_defaults_to_latest_and_dates_every_line(home, src, capsys):
+def test_cli_recall_defaults_to_the_latest_user_word_and_dates_every_line(home, src, capsys):
     write(src, REVERSED)
     assert main(["--home", home, "capture", src]) == 0
     assert main(["--home", home, "index"]) == 0
@@ -1490,3 +1490,63 @@ def test_a_bad_policy_is_an_error_message_not_a_traceback(home, capsys, name, sa
     """Checked before the index is opened, so it fails the same with no index."""
     assert main(["--home", home, "recall", "q", "--policy", name]) == 2
     assert says in capsys.readouterr().err
+
+
+def test_a_custom_policy_that_keeps_nothing_or_breaks_is_reported(
+    home, src, capsys, monkeypatch, tmp_path
+):
+    """A policy is the user's code. Dropping every hit is a legitimate answer and
+    is said so, not printed as silence; returning nothing or raising is an error
+    message, not a traceback."""
+    (tmp_path / "rules.py").write_text(
+        "def none(hits): return []\n"
+        "def broken(hits): return None\n"
+        "def raises(hits): raise RuntimeError('boom')\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    write(src, REVERSED)
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+
+    assert main(["--home", home, "recall", "uploads", "--policy", "rules:none"]) == 0
+    out, err = capsys.readouterr()
+    assert out == "" and "dropped all 2" in err
+    for name in ("rules:broken", "rules:raises"):
+        assert main(["--home", home, "recall", "uploads", "--policy", name]) == 2
+        assert f"policy '{name}' failed" in capsys.readouterr().err
+
+
+def test_the_default_does_not_let_a_forgetful_agent_outrank_the_users_rule(home, src, capsys):
+    """The README's demo, in miniature. Compaction drops the rule; the agent then
+    proposes exactly what it forbade, and an earlier recall's output is captured
+    as a tool result. Both are newer than the rule and match it. Plain `latest`
+    leads with the mistake; the default leads with what the user said."""
+    write(
+        src,
+        [
+            dated("u1", "Don't add a retry loop around the upload.", "2026-09-28T10:00:00Z"),
+            assistant("a1", [{"type": "text", "text": "I'll add a retry loop to the upload."}])
+            | {"timestamp": "2026-09-28T11:00:00Z"},
+            user("u2", "")
+            | {
+                "timestamp": "2026-09-28T12:00:00Z",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "t1", "content": "retry loop"}
+                    ],
+                },
+            },
+        ],
+    )
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+
+    def roles(*argv: str) -> list[str]:
+        assert main(["--home", home, "recall", "retry loop", *argv]) == 0
+        return [line.split()[3] for line in capsys.readouterr().out.splitlines()]
+
+    assert roles() == ["user/text", "user/tool_result", "assistant/text"]
+    assert roles("--policy", "latest") == ["user/tool_result", "assistant/text", "user/text"]

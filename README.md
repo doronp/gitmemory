@@ -97,7 +97,7 @@ agent after compaction, derived key ideas, the dashboard — is in
 | `gitmemory capture <file>` | Copies out one transcript's new bytes, by hand |
 | `gitmemory verify` | Checks every manifest's contiguity proof |
 | `gitmemory index` | Rebuilds the SQLite FTS5 index from the store |
-| `gitmemory recall "<query>"` | Searches the index and prints one line per turn, best first |
+| `gitmemory recall "<query>"` | Searches the index and prints one line per turn, dated, the user's own words newest first ([`--policy`](docs/USAGE.md#when-memories-disagree)) |
 | `gitmemory derive [--graph]` | Rebuilds key ideas and a timeline; `--graph` adds the decision graph (opt-in) |
 | `gitmemory dashboard` | Serves the index with Datasette, read-only, on loopback, behind a sign-in |
 | `gitmemory push` | Runs the redaction gate over what a push would send (it does not send yet) |
@@ -183,13 +183,13 @@ real text, and that is a measurement rather than a suspicion.
 | What | How it was measured | Result |
 |---|---|---|
 | Hook cost in the agent's critical path | Timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | On a fresh checkout, no downloads | **1,034 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| The suite | On a fresh checkout, no downloads | **1,036 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
 | Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **606** negative controls |
 
 The two suite counts do not add up, and should not. Switching the corpora on
-collects 1359, not 1362. Three conformance cases fill parametrisations that
+collects 1361, not 1364. Three conformance cases fill parametrisations that
 collect as one empty placeholder each while the corpora are absent, so they
-replace three of the 1034 rather than joining them. Every figure on this board
+replace three of the 1036 rather than joining them. Every figure on this board
 is pinned by a test, which is how it stays true.
 
 **What is not measured**, and is shown as a row on the dashboard rather than

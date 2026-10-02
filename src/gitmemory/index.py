@@ -60,6 +60,7 @@ __all__ = [
     "build",
     "db_path",
     "latest",
+    "latest_user",
     "match_expr",
     "open_db",
     "policy",
@@ -1101,8 +1102,8 @@ def when(hit: Hit) -> datetime | None:
 
 
 def latest(hits: list[Hit]) -> list[Hit]:
-    """Newest first. The default: a decision reversed later is read after the
-    reversal, not before it.
+    """Newest first, whoever said it: a decision reversed later is read after
+    the reversal, not before it. See `latest_user` for why it is not the default.
 
     Relevance breaks ties, because the sort is stable and `search` hands over
     best-first. An undated hit goes last: a turn of unknown age cannot claim to
@@ -1119,6 +1120,34 @@ def latest(hits: list[Hit]) -> list[Hit]:
     return sorted(hits, key=key)
 
 
+def latest_user(hits: list[Hit]) -> list[Hit]:
+    """The user's own words newest first, then everything else newest first.
+    The default: the latest word *the user* said wins.
+
+    Plain `latest` lets the newest mention win, and the newest mention is often
+    not a reversal. After a compaction drops "don't add a retry loop", the agent
+    proposes one; that proposal is newer than the rule and matches the same
+    words, so `latest` leads with the mistake. So does a captured `recall` from
+    an earlier session, which is newer than every turn it quotes. A user who
+    reverses themselves still wins here, because their reversal is user text.
+
+    "The user's own words" is the admission rule `derive` uses for prose: a
+    `text` block in the user role that no program injected. A tool result is a
+    user-role line in Claude Code and is not something the user said.
+
+    ponytail: a skill's loaded instructions and a slash command's expansion are
+    user text with no marker, so they pass as the user's words — the same gap
+    `derive._injected` documents. The upgrade lands there, not here.
+    """
+    from .derive import _injected  # lazy: derive imports this module
+
+    def typed(h: Hit) -> bool:
+        return h.role == "user" and h.kind == "text" and not _injected(h.text.strip())
+
+    ordered = latest(hits)
+    return [h for h in ordered if typed(h)] + [h for h in ordered if not typed(h)]
+
+
 def relevance(hits: list[Hit]) -> list[Hit]:
     """Best match first, as `search` ranked it. For a reader that reconciles
     conflicts itself: `recall` prints every hit's date, so the agent can see
@@ -1126,8 +1155,12 @@ def relevance(hits: list[Hit]) -> list[Hit]:
     return list(hits)
 
 
-POLICIES: dict[str, Policy] = {"latest": latest, "relevance": relevance}
-DEFAULT_POLICY = "latest"
+POLICIES: dict[str, Policy] = {
+    "latest-user": latest_user,
+    "latest": latest,
+    "relevance": relevance,
+}
+DEFAULT_POLICY = "latest-user"
 
 
 def policy(name: str) -> Policy:

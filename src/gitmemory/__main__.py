@@ -320,7 +320,11 @@ def _recall(args) -> int:
             f"query truncated to {index.MAX_TERMS} terms; {hits.dropped} dropped",
             file=sys.stderr,
         )
-    for h in resolve(hits):
+    try:
+        shown = list(resolve(hits))
+    except Exception as exc:  # a custom policy is the user's code: report it, no traceback
+        raise ValueError(f"policy {args.policy!r} failed: {exc!r}") from exc
+    for h in shown:
         head = " ".join(h.text.split())[:160]
         t = index.when(h)
         # The date on every line, whatever the policy: it is what lets the
@@ -329,6 +333,10 @@ def _recall(args) -> int:
         print(f"{h.score:8.3f}  {date}  {h.session_key}@{h.byte_offset}  {h.role}/{h.kind}  {head}")
     if not hits:
         print("no matches", file=sys.stderr)
+    elif not shown:
+        # Not a bare "no matches": the search found something and the policy
+        # kept none of it, which is a different fact about the store.
+        print(f"no matches kept: policy {args.policy!r} dropped all {len(hits)}", file=sys.stderr)
     return 0
 
 
@@ -404,7 +412,7 @@ def main(argv: list[str] | None = None) -> int:
     rec.add_argument(
         "--policy",
         default=os.environ.get("GITMEMORY_POLICY") or index.DEFAULT_POLICY,
-        help="which hit goes first when they disagree: latest, relevance, or "
+        help="which hit goes first when they disagree: latest-user, latest, relevance, or "
         "module:function (default $GITMEMORY_POLICY or %(default)s)",
     )
     rec.set_defaults(fn=_recall)

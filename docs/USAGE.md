@@ -62,11 +62,12 @@ can be rerun at any time; the index is never the source of truth.
 $ gitmemory index
 1 generation(s)  4 turn(s)  4 block(s)  content=f99ac9c9b888
 $ gitmemory recall "why did we drop the retry loop?"
-  -0.000  2026-09-28T10:03Z  claude-code/0f3a9c2e-…-fc59494095426389/g00@288  assistant/text  Understood. I dropped the retry loop and pass a request id instead, so a replay cannot double-charge.
   -0.000  2026-09-28T10:02Z  claude-code/0f3a9c2e-…-fc59494095426389/g00@0  user/text  Don't add a retry loop around the upload; the API is idempotent only per request id.
+  -0.000  2026-09-28T10:03Z  claude-code/0f3a9c2e-…-fc59494095426389/g00@288  assistant/text  Understood. I dropped the retry loop and pass a request id instead, so a replay cannot double-charge.
 ```
 
-One line per turn, newest first (see [When memories disagree](#when-memories-disagree)):
+One line per turn: what the user said first, newest first, then everything else
+newest first (see [When memories disagree](#when-memories-disagree)):
 
 | Field | Meaning |
 |---|---|
@@ -87,13 +88,21 @@ tends to act on.
 
 | Policy | Order | Use it when |
 |---|---|---|
-| `latest` (default) | Newest first; relevance breaks ties; undated last | Later words should win, which is usually true |
+| `latest-user` (default) | The user's own words newest first, then the agent's turns and tool output newest first | The user's later word should win, and nothing else should |
+| `latest` | Newest first, whoever said it | Any later turn should win, the agent's included |
 | `relevance` | Best BM25 match first | You want the agent to decide: every line carries its date, so it can see which turn came later |
 | `module:function` | Whatever your function returns | Anything else: pinned decisions, a cut-off date, a different rule per project |
 
+Why the default is not plain `latest`: the newest mention is often not a
+reversal. After a compaction drops "don't add a retry loop", the agent proposes
+one, and that proposal is newer than the rule and matches the same words. Under
+`latest` it comes first; under `latest-user` the rule does, and a user who
+changes their mind still wins, because their reversal is newer user text.
+Ties go to the better match, and undated turns go last.
+
 Set it per call with `--policy`, or for every call with `GITMEMORY_POLICY`. The
-flag wins. `latest` only reorders the top `-k` hits, so a reversal that does not
-match the query well enough to make the list cannot win. Raise `-k` if you
+flag wins. Every policy reorders only the top `-k` hits, so a reversal that does
+not match the query well enough to make the list cannot win. Raise `-k` if you
 suspect one.
 
 If you choose `relevance`, tell the agent what the dates are for:
@@ -117,14 +126,14 @@ one such rule:
 # myrules.py
 from datetime import UTC, datetime
 
-from gitmemory.index import latest, when
+from gitmemory.index import latest_user, when
 
 REVERSED = datetime(2026, 9, 14, tzinfo=UTC)  # the day the upload rules changed
 
 
 def since_reversal(hits):
-    """Drop what was said before the reversal, then newest first."""
-    return latest([h for h in hits if (t := when(h)) and t >= REVERSED])
+    """Drop what was said before the reversal, then order as the default does."""
+    return latest_user([h for h in hits if (t := when(h)) and t >= REVERSED])
 ```
 
 ```console
