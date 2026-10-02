@@ -32,15 +32,17 @@ BM25: it matches words, not meaning.
 gitmemory recall "<topic>"        # 10 lines by default; -k N for more or fewer
 ```
 
-One line per turn, best first:
+One line per turn: what the user said first, newest first, then everything
+else newest first:
 
 ```
-  -7.512  claude-code/0f3a9c2e-1b2d-4c5e-8f90-3a53cc4a5233-76edb6eef42266c0/g00@346  assistant/text  <the block's text>
+  -7.512  2026-09-28T10:03Z  claude-code/0f3a9c2e-1b2d-4c5e-8f90-3a53cc4a5233-76edb6eef42266c0/g00@346  assistant/text  <the block's text>
 ```
 
 | Field | Meaning |
 |---|---|
 | `-7.512` | BM25 score. Lower is better; `-0.000` means the words that matched are common in the store |
+| `2026-09-28T10:03Z` | When the turn was written, in UTC; `undated` if the transcript did not say |
 | `claude-code/<session>/g00` | Agent, session and generation |
 | `@346` | Byte offset of the turn (its JSONL line) in that generation's raw bytes |
 | `assistant/text` | Role and block kind |
@@ -49,6 +51,11 @@ One line per turn, best first:
 `no matches` on stderr, exit 0, is an answer. Try once more with other words
 the user might have used, then tell them nothing was found. `query truncated to
 64 terms; N dropped` on stderr means the query was too long: shorten it.
+
+If two lines disagree, the later date is usually the current decision: say so,
+and quote both. An agent's newer proposal does not overrule the user's older
+rule; a newer user line does. If the user has set `GITMEMORY_POLICY` or asks
+for another order, leave it; `--policy` is theirs to choose.
 
 ## Echoes
 
