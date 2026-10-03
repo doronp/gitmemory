@@ -112,6 +112,7 @@ ours is not, so **this row is not directly comparable** to any other.
 | 2 | Mem0 Platform (top-50) | Apache-2.0 | 94.8 | not stated | [memory-benchmarks](https://github.com/mem0ai/memory-benchmarks) |
 | 3 | Hindsight (AMB run) | MIT | 94.6 | a Gemini model | [benchmarks.hindsight.vectorize.io](https://benchmarks.hindsight.vectorize.io/) |
 | 4 | **gitmemory `rerank12`, top 10 sessions** | Apache-2.0 | **94.20** | gemini-3.1-pro-preview | this run |
+| — | gitmemory `full_history` (control) | | 94.60 | gemini-3.1-pro-preview | this run |
 | — | gitmemory `rerank`, top 10 sessions | | 93.60 | gemini-3.1-pro-preview | this run |
 | 5 | Honcho | AGPL-3.0 | 92.6 | Gemini 3 Pro | [plasticlabs.ai](https://plasticlabs.ai/blog/research/Benchmarking-Honcho) |
 | 6 | Zep (Cloud) | engine open as Graphiti, Apache-2.0 | 90.2 | gpt-5.4 | [getzep.com/research](https://www.getzep.com/research/) |

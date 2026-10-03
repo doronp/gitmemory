@@ -108,3 +108,14 @@ def test_a_call_that_fails_every_retry_scores_wrong_and_is_counted():
                  "error": "m: 6 attempts failed"}
     r = qa.scored_wrong_on_failure(boom, (SAMPLE, None, 4, {"category": 3}))
     assert (r["id"], r["type"], r["correct"]) == ("c#4", "category 3", False)
+
+def test_full_history_arm_passes_all_sids_without_retrieving(monkeypatch):
+    inst = _inst()
+    called = []
+    monkeypatch.setattr(qa, "_retrieve", lambda *a: called.append(a))
+    def dummy_client(prompt, **kw): return "Yes."
+    dummy_client.model = "dummy"
+    c = qa.Cache("/dev/null")
+    ans = qa.lme_one(inst, "full_history", 1, dummy_client, dummy_client, c)
+    assert ans["retrieved"] == ["late", "early"]
+    assert not called
