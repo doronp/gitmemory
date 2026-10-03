@@ -320,15 +320,23 @@ def lme_items(path: str, split: str):
 
 def lme_one(inst: Instance, arm: str, k: int, reader, judge, cache: Cache,
             cot: bool = False) -> dict:
-    tx = to_transcript(inst, seed=42, compaction=None, plain=True)
-    with tempfile.NamedTemporaryFile(suffix=".jsonl") as tmp:
-        tmp.write(tx.bytes_data)
-        tmp.flush()
-        turns = sorted(cc.parse(tmp.name).turns, key=lambda t: t.byte_offset)
-    offsets = _retrieve(arm, inst.question_id, tx.bytes_data, inst.question)
-    sids = ranked_sessions(offsets, [t.byte_offset for t in turns], turns)[:k]
+    if arm == "full_history":
+        sids = list(inst.haystack_session_ids)
+    else:
+        tx = to_transcript(inst, seed=42, compaction=None, plain=True)
+        with tempfile.NamedTemporaryFile(suffix=".jsonl") as tmp:
+            tmp.write(tx.bytes_data)
+            tmp.flush()
+            turns = sorted(cc.parse(tmp.name).turns, key=lambda t: t.byte_offset)
+        offsets = _retrieve(arm, inst.question_id, tx.bytes_data, inst.question)
+        sids = ranked_sessions(offsets, [t.byte_offset for t in turns], turns)[:k]
+    
+    hist_text = lme_history(inst, sids)
+    hist_bytes = len(hist_text.encode('utf-8'))
+    print(f"[{inst.question_id}] arm={arm} history bytes: {hist_bytes} (~{hist_bytes // 4} tokens)")
+
     template = LME_READER_COT if cot else LME_READER
-    answer = cache.ask(reader, template.format(lme_history(inst, sids), inst.question_date,
+    answer = cache.ask(reader, template.format(hist_text, inst.question_date,
                                                inst.question))
     ok = lme_verdict(cache.ask(judge, lme_judge_prompt(inst, answer)))
     kind = "abstention" if "_abs" in inst.question_id else inst.question_type
@@ -392,11 +400,13 @@ def summarise(records: list[dict]) -> dict:
             "by_type": {t: (sum(v) / len(v), len(v)) for t, v in sorted(by.items())}}
 
 
+QA_ARMS = ARMS + ("full_history",)
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m bench.qa")
     ap.add_argument("--bench", choices=("lme", "locomo"), required=True)
     ap.add_argument("--dataset", required=True)
-    ap.add_argument("--arm", default="rerank12", choices=ARMS)
+    ap.add_argument("--arm", default="rerank12", choices=QA_ARMS)
     ap.add_argument("--unit", choices=("session", "turn"), default="session",
                     help="locomo only; lme is always sessions, as in the official runs")
     ap.add_argument("--k", type=int, default=10)
