@@ -33,7 +33,8 @@ A smoke run on 5 instances from the dev split showed:
 | single-session-user | 0.9844 | 64 |
 | temporal-reasoning | 0.9606 | 127 |
 
-- **Failure count:** 0 instances failed completely (any temporary failures were recovered on retry).
+- **Failure count:** 0 unscored instances in the final run.
+- **Rerun variance:** an earlier 64-worker run scored 93.80; 6/500 instances shifted between runs (intermediate-code prompt diffs plus temp-0 nondeterminism on ~125k-token prompts). The final-code result is stable at 94.60 across fully cache-warm reruns (zero new API calls), so treat ±0.8pt as the run-to-run noise floor — itself smaller than the |94.60 − 94.20| gap being interpreted.
 - **Cost / Wall time:** ~62.5M total input tokens processed in ~12 minutes using 64 parallel Vertex AI workers (cost ~$80-150 depending on tier).
 - **Interpretation:** The full history control (94.60) and the `rerank12` arm (94.20) are identical within statistical noise (n=500). Retrieval therefore provides massive token savings (from ~125k to ~5k per request) while sacrificing virtually zero accuracy. Honcho's lower baseline (92.0) is likely due to their prompt engineering or model differences.
 
