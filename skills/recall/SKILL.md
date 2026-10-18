@@ -17,8 +17,8 @@ redaction gate: that gate stands at `gitmemory push`.
 The store is `$GITMEMORY_HOME`, or `~/.gitmemory` when that is unset; the CLI
 reads it, so leave it as this session has it. If the user keeps the store
 somewhere else, pass their path before the subcommand, as in
-`gitmemory --home <path> recall "<topic>"`, and the same for `index`. `<store>`
-below means that directory: the path the user gave, or what
+`gitmemory --home <path> recall "<topic>"`, and the same for `index` and
+`show`. `<store>` below means that directory: the path the user gave, or what
 `echo "${GITMEMORY_HOME:-$HOME/.gitmemory}"` prints. Do not type `~/.gitmemory`
 in its place from memory.
 
@@ -86,6 +86,10 @@ recalls match the same words. Skip these hits; they are not sources:
 - a `gitmemory recall ...` tool call and its result, lines that start with a
   score, `N generation(s)` or `no matches`;
 - a `gitmemory --version` tool call and the one line it printed;
+- a `gitmemory show ...` tool call and its result, text that starts `> ` or
+  `- ` and an `<agent>/<session>/gNN@<offset>` address. It holds the whole
+  turn, dated later than the turn was: the source is the turn at the address
+  in its `> ` header, not the echo's own address;
 - an earlier answer to the same question, and the lines it quoted.
 
 If they crowd out the rest, search again with `-k 30`. Quote the original turn.
@@ -136,12 +140,19 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
 - Quote the text field verbatim, with its address copied whole, never
   shortened. A paraphrase is not a quote: if you summarise, say that you are,
   and keep the address beside it.
-- The text stops at 160 characters. If the question needs the rest, the turn
-  is in `<store>/raw/<agent>/<session>/g<NN>/`. Segment file names are byte
-  ranges, start included, end excluded. In the one whose range holds the
-  offset, the turn's JSON line starts `offset - start` bytes in, and the block
-  is inside it. If the file ends before the line does, the line goes on at the
-  start of the next segment, whose range starts where this one ends.
+- The text stops at 160 characters. If the question needs the rest, run
+  `gitmemory show <address>` with the address copied whole, or
+  `gitmemory show --context 2 <address>` for the two turns either side too. A
+  header starts `>` for the turn at the address and `-` for a neighbour, and
+  only headers start in column 0; quote the text under one without its indent.
+  `subagent:user` in a header is a brief from the agent that started the
+  subagent, not the user's words. If the CLI is older than `show` (exit 2,
+  `invalid choice: 'show'`), tell the user as [When it fails](#when-it-fails)
+  says, and read the turn by hand: it is the JSON line that starts
+  `offset - start` bytes into the segment under
+  `<store>/raw/<agent>/<session>/g<NN>/` whose name, the byte range
+  `start-end` with the end excluded, holds the offset, and it may run on into
+  the next segment.
 - This session is `${CLAUDE_SESSION_ID}`. A hit's manifest,
   `<store>/sessions/<agent>/<session>/g<NN>.json`, has its transcript's
   `source_path`: `<project>/<session-id>.jsonl`, or for a subagent (a session
@@ -157,9 +168,10 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
 
 ## Read-only
 
-Run `gitmemory --version`, `gitmemory recall` and `gitmemory index`, and read
-files under `<store>`. `index` writes only the derived index under
-`<store>/index/`. Do not run `gitmemory init`, `gitmemory capture`,
-`gitmemory watch`, `gitmemory service`, `gitmemory derive`, `gitmemory push`
-or `gitmemory dashboard`, and never `gitmemory dashboard --expose`. Do not
-edit `config.toml` or anything else in the store.
+Run `gitmemory --version`, `gitmemory recall`, `gitmemory show` and
+`gitmemory index`, and read files under `<store>`. `index` writes only the
+derived index under `<store>/index/`. Do not run `gitmemory init`,
+`gitmemory capture`, `gitmemory watch`, `gitmemory service`,
+`gitmemory derive`, `gitmemory push` or `gitmemory dashboard`, and never
+`gitmemory dashboard --expose`. Do not edit `config.toml` or anything else in
+the store.

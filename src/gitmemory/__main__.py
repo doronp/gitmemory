@@ -14,6 +14,7 @@ import argparse
 import builtins
 import ipaddress
 import os
+import re
 import shlex
 import socket
 import sqlite3
@@ -202,6 +203,21 @@ def _positive_int(text: str) -> int:
         raise argparse.ArgumentTypeError(f"invalid int value: {text!r}") from err
     if value <= 0:
         raise argparse.ArgumentTypeError(f"must be positive: {text}")
+    return value
+
+
+def _count(text: str) -> int:
+    """A non-negative integer, for `show --context`, whose default is 0.
+
+    Plain `type=int` took `-C -1`, and the slice that asked for was empty, so
+    `show` printed nothing and exited 0.
+    """
+    try:
+        value = int(text)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(f"invalid int value: {text!r}") from err
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"cannot be negative: {text}")
     return value
 
 
@@ -440,10 +456,9 @@ def _recall(args) -> int:
         raise ValueError(f"policy {args.policy!r} failed: {exc!r}") from exc
     for h in shown:
         head = " ".join(h.text.split())[:160]
-        t = index.when(h)
         # The date on every line, whatever the policy: it is what lets the
         # reader see that two disagreeing turns are three weeks apart.
-        date = t.strftime("%Y-%m-%dT%H:%MZ") if t else "undated".ljust(17)
+        date = _date(h)
         # In the role's column, not a column of its own: whatever parses these
         # lines reads role/kind as the fourth field, and a subagent's user/text
         # is the parent agent's instructions, which must not be quoted as the
@@ -456,6 +471,90 @@ def _recall(args) -> int:
         # Not a bare "no matches": the search found something and the policy
         # kept none of it, which is a different fact about the store.
         print(f"no matches kept: policy {args.policy!r} dropped all {len(hits)}", file=sys.stderr)
+    return 0
+
+
+def _date(item) -> str:
+    """When a hit or a turn was written, as `recall` and `show` both print it:
+    to the minute in UTC, or `undated` padded to the same width."""
+    t = index.when(item)
+    return t.strftime("%Y-%m-%dT%H:%MZ") if t else "undated".ljust(17)
+
+
+# `<agent>/<session>/gNN@<offset>`, as `recall` prints it. `[0-9]`, not `\d`:
+# `\d` is Unicode, and `int()` reads an Arabic-Indic digit as an offset.
+_ADDRESS = re.compile(r"([^/]+)/([^/]+)/g([0-9]+)@([0-9]+)\Z")
+
+
+def _show(args) -> int:
+    """The turn at an address `recall` printed, read from the store.
+
+    The store, not the index: the watcher does not index, and a stale or
+    hostile index would choose what this prints, when this is how a reader
+    checks what `recall` said. The parse is `index`'s own, so a turn cut by a
+    segment boundary comes back whole.
+
+    The address never becomes a path. Its names go through `store.identity`,
+    the rule `capture` filed them under, so `..`, a dotfile or a newline is
+    refused before anything is read, and the result is only compared with what
+    `sessions()` found, which already keeps manifests and segments inside the
+    store.
+    """
+    m = _ADDRESS.match(args.address)
+    try:
+        agent, session_id = store.identity(m[1], m[2]) if m else ("", "")
+    except ValueError:
+        m = None
+    if not m:
+        want = "expected <agent>/<session>/gNN@<offset>, as recall prints it"
+        print(f"not an address: {redact.safe_path(args.address)!r}; {want}", file=sys.stderr)
+        return 2
+    if (code := _not_a_store(args.home)) is not None:
+        return code
+    gen, offset = int(m[3]), int(m[4])
+    key = f"{agent}/{session_id}/g{gen:02d}"
+    # Each error below names the address as it was typed, masked. A session id
+    # is whatever `capture --session-id` was handed, so it can be a token, and
+    # `key` is lowercased, which hides an AWS key id from its detector.
+    said = redact.safe_path(f"{m[1]}/{m[2]}/g{gen:02d}")
+    found = [
+        s
+        for s in store.sessions(store.resolve_home(args.home))
+        if (s.agent, s.session_id, s.generation) == (agent, session_id, gen)
+    ]
+    if len(found) != 1:
+        # Two is a manifest declaring an identity its path does not have, which
+        # `verify` reports. Picking one would be choosing the answer.
+        why = "not in the store"
+        if found:
+            why = f"claimed by {len(found)} manifests; run `gitmemory verify`"
+        print(f"{said}: {why}", file=sys.stderr)
+        return 1
+    turns = index.parse_generation(found[0]).turns
+    # An offset inside a turn is that turn, as a bench gold offset is; the
+    # header then gives its start.
+    at = next(
+        (i for i, t in enumerate(turns) if t.byte_offset <= offset < t.byte_offset + t.byte_len),
+        None,
+    )
+    if at is None:
+        print(f"{said}: no turn at byte {offset}", file=sys.stderr)
+        return 1
+    # Only a header starts in column 0, and `safe_text` leaves "\n" the only
+    # line break that reaches the terminal, so no transcript can print a line
+    # that reads as one. Two ways past that were reproduced and are closed
+    # here: a tool name is any string the transcript chose, so it is collapsed,
+    # and `splitlines()` broke on "\r", "\x85" and U+2028 before `safe_text`
+    # could escape them.
+    lo = max(0, at - args.context)
+    for i, t in enumerate(turns[lo : at + args.context + 1], start=lo):
+        # A subagent's user turn is the brief its parent wrote, not the user.
+        who = f"subagent:{t.role}" if t.is_sidechain else t.role
+        print(f"{'>' if i == at else '-'} {key}@{t.byte_offset}  {_date(t)}  {who}")
+        for b in t.blocks:
+            print("  " + " ".join([b.kind, *(b.tool_name or "").split()]))
+            for line in b.text.split("\n") if b.text else ():
+                print(f"    {line}")
     return 0
 
 
@@ -550,6 +649,13 @@ def main(argv: list[str] | None = None) -> int:
         "module:function (default $GITMEMORY_POLICY or %(default)s)",
     )
     rec.set_defaults(fn=_recall)
+
+    sho = sub.add_parser("show", help="print the turn at an address recall printed, from the store")
+    sho.add_argument("address", help="<agent>/<session>/gNN@<offset>, as recall prints it")
+    sho.add_argument(
+        "-C", "--context", type=_count, default=0, metavar="N", help="also N turns either side"
+    )
+    sho.set_defaults(fn=_show)
 
     args = ap.parse_args(argv)
     try:

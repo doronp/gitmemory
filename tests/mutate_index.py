@@ -4647,7 +4647,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "30 mutants",
+        "a full pass is 6" + "38 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5476,6 +5476,63 @@ MUTANTS = [
         "    if False:\n",
         "test_a_non_positive_count_is_refused_at_the_command_line",
     ),
+    # `gitmemory show`: the address is input, and the output is a terminal's.
+    (
+        "show takes an address's names without the store's path rule",
+        "__main__.py",
+        '        agent, session_id = store.identity(m[1], m[2]) if m else ("", "")',
+        '        agent, session_id = (m[1], m[2]) if m else ("", "")',
+        "test_a_malformed_or_escaping_address_is_not_an_address",
+    ),
+    (
+        "show reads an Arabic-Indic digit as an offset",
+        "__main__.py",
+        '_ADDRESS = re.compile(r"([^/]+)/([^/]+)/g([0-9]+)@([0-9]+)\\Z")',
+        '_ADDRESS = re.compile(r"([^/]+)/([^/]+)/g(\\d+)@(\\d+)\\Z")',
+        "test_a_malformed_or_escaping_address_is_not_an_address",
+    ),
+    (
+        "show picks one of two manifests that claim an address",
+        "__main__.py",
+        "    if len(found) != 1:",
+        "    if not found:",
+        "test_two_manifests_claiming_one_address_are_refused",
+    ),
+    (
+        "show prints a credential-shaped session id in its error",
+        "__main__.py",
+        '    said = redact.safe_path(f"{m[1]}/{m[2]}/g{gen:02d}")',
+        "    said = key",
+        "test_a_credential_in_an_address_is_masked_in_the_error",
+    ),
+    (
+        "show masks the lowercased key, which hides an AWS key id",
+        "__main__.py",
+        '    said = redact.safe_path(f"{m[1]}/{m[2]}/g{gen:02d}")',
+        "    said = redact.safe_path(key)",
+        "test_a_credential_in_an_address_is_masked_in_the_error",
+    ),
+    (
+        "show prints a tool name's newline, so a transcript forges a header",
+        "__main__.py",
+        '            print("  " + " ".join([b.kind, *(b.tool_name or "").split()]))',
+        '            print("  " + " ".join([b.kind, *filter(None, [b.tool_name])]))',
+        "test_a_transcript_cannot_forge_a_show_header_or_reach_the_terminal",
+    ),
+    (
+        "show splits block text before a carriage return is escaped",
+        "__main__.py",
+        '            for line in b.text.split("\\n") if b.text else ():',
+        "            for line in b.text.splitlines() if b.text else ():",
+        "test_a_transcript_cannot_forge_a_show_header_or_reach_the_terminal",
+    ),
+    (
+        "show takes a negative --context and prints nothing",
+        "__main__.py",
+        '"-C", "--context", type=_count,',
+        '"-C", "--context", type=int,',
+        "test_show_on_no_store_and_a_negative_context_exit_2",
+    ),
     (
         "every ssh login name but git is refused as a credential",
         "redact.py",
@@ -5837,7 +5894,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 630 mutants × two suite runs —
+    The filter exists because a full pass is 638 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

@@ -75,7 +75,7 @@ right of `git` can be deleted and rebuilt, so `index/` is gitignored and
 | Store | [`gitrepo.py`](../src/gitmemory/gitrepo.py) | The only module that runs git, always as `git -C <home>` | §2.4 |
 | Derive | [`index.py`](../src/gitmemory/index.py) | A SQLite FTS5 (BM25) index rebuilt from raw bytes. It is never authoritative | §2.7 |
 | Derive | [`derive.py`](../src/gitmemory/derive.py), [`graph.py`](../src/gitmemory/graph.py) | Key ideas and a timeline. The decision extraction behind the graph is opt-in (`--graph`) | §2.6 |
-| Surface | [`__main__.py`](../src/gitmemory/__main__.py) | The CLI: `init capture watch service verify push index derive dashboard recall` | §2.8 |
+| Surface | [`__main__.py`](../src/gitmemory/__main__.py) | The CLI: `init capture watch service verify push index derive dashboard recall show` | §2.8 |
 | Surface | [`dashboard.py`](../src/gitmemory/dashboard.py) | Datasette over the index, `--immutable`, on loopback, behind a single-use sign-in URL | §2.9 |
 | Egress | [`redact.py`](../src/gitmemory/redact.py) | The only place secrets are looked for. It stands at `push` and scans the files, the segment seams and the object graph a push would transmit | §2.4 |
 

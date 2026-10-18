@@ -100,6 +100,38 @@ since: start `gitmemory watch` with the hook's `$GITMEMORY_HOME`, and
 covers the other causes, such as a watcher that runs passes less often than
 hourly. With `--db`, recall does not look.
 
+## Read the whole turn
+
+A line stops at 160 characters. `show` prints the whole turn at an address,
+read from the store rather than the index, so it needs no index and a stale
+one cannot change what it prints. Copy the address whole: the ones above are
+cut short with `…` to fit this page, and a shortened address is refused with
+`not an address` and exit 2.
+
+```console
+$ gitmemory show claude-code/0f3a9c2e-1b2d-4c5e-8f90-3a53cc4a5233-fc59494095426389/g00@288 --context 1
+- claude-code/0f3a9c2e-1b2d-4c5e-8f90-3a53cc4a5233-fc59494095426389/g00@0  2026-09-28T10:02Z  user
+  text
+    Don't add a retry loop around the upload; the API is idempotent only per request id.
+> claude-code/0f3a9c2e-1b2d-4c5e-8f90-3a53cc4a5233-fc59494095426389/g00@288  2026-09-28T10:03Z  assistant
+  text
+    Understood. I dropped the retry loop and pass a request id instead, so a replay cannot double-charge.
+- claude-code/0f3a9c2e-1b2d-4c5e-8f90-3a53cc4a5233-fc59494095426389/g00@592  2026-09-28T10:04Z  user
+  text
+    Good. Ship it.
+```
+
+Each turn starts with a header: `>` for the turn at the address, `-` for the
+neighbours `--context N` (or `-C N`) adds either side, then the turn's own
+address, date and role. A subagent's turns say `subagent:user` and
+`subagent:assistant`. Under the header comes each block's kind, with the tool's
+name for a tool call, and then its text, indented. Only headers start in
+column 0, so nothing in a transcript can print a line that reads as one.
+
+An offset inside a turn shows that turn, and its header gives where it starts.
+An address the store does not hold (`not in the store`, `no turn at byte N`)
+exits 1.
+
 ## When memories disagree
 
 A decision made three weeks ago and reversed last week are both in the store,
@@ -184,9 +216,10 @@ would run anyway. A name that does not resolve is an error, not a silent
 fallback to the default.
 
 The offset is the point: it takes you back to the exact bytes, not to a
-paraphrase of them. The raw segments live under
-`raw/<agent>/<session>/g<NN>/`, named by the byte range they hold, so a turn at
-offset 288 is in the segment whose range contains 288.
+paraphrase of them. [`show`](#read-the-whole-turn) finds them for you. To check
+it by hand, the raw segments live under `raw/<agent>/<session>/g<NN>/`, named
+by the byte range they hold, so a turn at offset 288 is in the segment whose
+range contains 288.
 
 ## Put it back in front of the agent
 

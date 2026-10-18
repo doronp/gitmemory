@@ -64,6 +64,15 @@ tell you.
   tell a stopped watcher from an idle one; a record no pass has drained can.
   Not under `--db`, and never on a store the hook does not ring. See
   [docs/watching.md](docs/watching.md#check-it).
+- **`gitmemory show <address>`** prints the whole turn at an address `recall`
+  printed, where `recall` stops at 160 characters. It reads the store, not the
+  index, so it needs no index and a stale one cannot change the answer.
+  `--context N` (`-C N`) adds N turns either side; a turn cut by a segment
+  boundary comes back whole; an offset inside a turn shows that turn; a
+  subagent's turn is headed `subagent:<role>`. An address that is not one exits
+  2, and one the store does not hold exits 1. The recall skill uses it in place
+  of reading `raw/` by hand. See
+  [USAGE.md](docs/USAGE.md#read-the-whole-turn).
 
 ### Changed
 
