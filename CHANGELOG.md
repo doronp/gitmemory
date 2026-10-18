@@ -26,6 +26,11 @@ tell you.
   version is still 0.1.0, so a copy installed from 0.1.0 does not get the skill
   from `claude plugin update`; reinstall it, or wait for the next release
   ([hook/README.md](hook/README.md#as-a-claude-code-plugin)).
+- **`gitmemory --version`** prints the installed release. The recall skill
+  runs it first and tells you when the CLI is older than the plugin; when the
+  CLI lacks a subcommand or a flag the skill needs, the skill stops and says
+  which instead of retrying without it. See
+  [hook/README.md](hook/README.md#as-a-claude-code-plugin).
 
 ### Changed
 

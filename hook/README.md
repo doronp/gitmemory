@@ -109,6 +109,19 @@ that it is already at 0.1.0. The next release, which bumps the version, brings
 the skill; until then, `claude plugin uninstall gitmemory@gitmemory` and then
 `claude plugin install gitmemory@gitmemory` fetch the current copy.
 
+The plugin and the CLI are installed separately, and nothing makes them one
+release: `uv tool install` takes the commit you name, or the head of main, and
+the plugin is the commit its marketplace was cloned at, kept until its version
+changes. The recall skill runs `gitmemory --version` first and tells you when
+the CLI is older than it, and when the CLI lacks a subcommand or a flag the
+skill needs, it stops and says which rather than retrying without it. To hold
+both at one release, pin both to its tag, `v<version>`:
+`uv tool install --python 3.13 git+https://github.com/doronp/gitmemory@v<version>`
+and `/plugin marketplace add doronp/gitmemory#v<version>` (a marketplace pins a
+branch or a tag, not a bare commit). To move the CLI forward, run the
+`uv tool install` line again without the `@` part; `uv tool upgrade gitmemory`
+leaves a pinned install where it is.
+
 This keeps the rule at the top of [Install](#install): gitmemory never edits
 another program's configuration. You opt in with `/plugin`, and Claude Code
 records the change in its own settings. `/plugin uninstall gitmemory@gitmemory`

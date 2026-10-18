@@ -484,11 +484,11 @@ uv run pytest -q --collect-only -p no:cacheprovider | tail -1
 uv run pytest -q --collect-only -p no:cacheprovider | grep -c '\.jsonl\]$'
 ```
 
-**Expected:** `1038/1039 tests collected (1 deselected)`, then
-`1363/1364 tests collected (1 deselected)`, then `328`. The deselected test is
+**Expected:** `1039/1040 tests collected (1 deselected)`, then
+`1364/1365 tests collected (1 deselected)`, then `328`. The deselected test is
 the LongMemEval corpus test, which is opt-in:
 `uv run pytest -q -m corpus` after `bench/fetch_longmemeval.sh`. The README's
-paragraph on why 1,038 + 328 is 1,363 and not 1,366 is the arithmetic of these
+paragraph on why 1,039 + 328 is 1,364 and not 1,367 is the arithmetic of these
 three numbers. All three were run while writing this guide.
 
 `tests/test_docs.py` holds the README to the first and third numbers, so a

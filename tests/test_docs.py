@@ -553,11 +553,12 @@ def test_the_plugin_recall_skill_runs_only_commands_the_cli_has(tmp_path, capsys
     waiting, and it reads as gitmemory being broken. So every `gitmemory ...`
     in the skill's code is asked for its own `--help`, which argparse answers
     with exit 0 only for a subcommand that exists, and every flag it names is
-    looked for in that help: `--home` before the subcommand in the top-level
-    help, the rest in the subcommand's. The commands it forbids are checked the
-    same way, because a prohibition on a command that no longer exists guards
-    nothing. The messages it tells the agent to branch on are the ones the CLI
-    prints, got by running it on a path that is no store and on an empty one.
+    looked for in that help: `--home` before the subcommand, and `--version`,
+    which comes with none, in the top-level help, the rest in the subcommand's.
+    The commands it forbids are checked the same way, because a prohibition on
+    a command that no longer exists guards nothing. The messages it tells the
+    agent to branch on are the ones the CLI prints, got by running it on a path
+    that is no store and on an empty one.
     `skills/` holds this one skill and neither manifest adds a skills path; its
     name is the one the three documents that mention it tell you to type.
     """
@@ -590,10 +591,12 @@ def test_the_plugin_recall_skill_runs_only_commands_the_cli_has(tmp_path, capsys
     for m in re.finditer(r"(?<![\w/-])gitmemory ([^`\n]+)", "\n".join(code)):
         tokens = m.group(1).split()
         subs = [i for i, t in enumerate(tokens) if re.fullmatch(r"[a-z]+", t)]
-        assert subs, m.group(0)
-        at = subs[0]
-        named.add(tokens[at])
-        top, own = usage(), usage(tokens[at])
+        # With no subcommand it is `gitmemory --version`: flags only, all
+        # top-level. A bare word there is a subcommand the pattern missed.
+        assert subs or all(t.startswith("-") for t in tokens), m.group(0)
+        at = subs[0] if subs else len(tokens)
+        named.update(tokens[at : at + 1])
+        top, own = usage(), usage(*tokens[at : at + 1])
         for i, flag in enumerate(tokens):
             if re.fullmatch(r"--?[a-z][a-z-]*", flag):
                 helptext = top if i < at else own
@@ -619,3 +622,58 @@ def test_the_plugin_recall_skill_runs_only_commands_the_cli_has(tmp_path, capsys
     assert code == 0 and out.startswith("0 generation(s)") and "`0 generation(s)`" in flat
     code, _, err = run(empty, "recall", "x")
     assert code == 0 and err == "no matches\n" and "`no matches` on stderr, exit 0" in flat
+
+
+def test_the_recall_skill_names_the_release_it_was_written_for(capsys):
+    """The plugin and the CLI are installed separately, and nothing makes them
+    one release.
+
+    The test above runs the skill against the CLI in this checkout, which says
+    nothing about an installed copy of each. A skew has shipped already: at
+    v0.1.0 `recall` printed no date and ranked by relevance, the skill reads
+    the date to tell which of two lines is current, both said 0.1.0, and
+    nothing errored. So the skill names its release, pinned here to
+    `pyproject.toml` and `__version__` (test_hook.py pins `plugin.json`), and
+    asks `gitmemory --version` once per session. A CLI from before the flag
+    answers with the first error below (measured on c352a40 under 3.12, 3.13
+    and 3.14); one that lacks a subcommand or a flag answers with one of the
+    other two. The skill branches on those words, so each is got from the CLI
+    and must be in the skill as the CLI prints it. A topic left unquoted is
+    rejected in the same words as a missing flag, naming a plain word, so the
+    skill tells the two apart by the leading `-`. And the store captures the
+    `--version` call of every session that uses the skill, which outranks real
+    hits on "version" unless the skill lists it among its echoes.
+    """
+    from gitmemory import __main__ as cli
+    from gitmemory import __version__
+
+    with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:
+        release = tomllib.load(fh)["project"]["version"]
+    assert __version__ == release
+    skill = " ".join(_read("skills/recall/SKILL.md").split())
+
+    with pytest.raises(SystemExit) as done:
+        cli.main(["--version"])
+    assert done.value.code == 0 and capsys.readouterr().out == f"gitmemory {release}\n"
+    assert f"written for gitmemory {release}." in skill, release
+
+    for argv, said in (
+        ([], "the following arguments are required: cmd"),
+        (["no-such-subcommand"], "invalid choice"),
+        (["recall", "--no-such-flag", "x"], "unrecognized arguments"),
+    ):
+        with pytest.raises(SystemExit) as done:
+            cli.main(argv)
+        err = capsys.readouterr().err
+        assert done.value.code == 2 and err.startswith("usage: gitmemory "), err
+        assert said in err.splitlines()[-1] and f"`{said}`" in skill, err
+    assert "`usage: gitmemory`" in skill
+
+    with pytest.raises(SystemExit) as done:
+        cli.main(["recall", "retry", "loop"])
+    last = capsys.readouterr().err.splitlines()[-1]
+    assert done.value.code == 2 and last.endswith("unrecognized arguments: loop"), last
+    assert "a word starting with `-`" in skill and "went in unquoted" in skill
+
+    echoes = skill.split("## Echoes ", 1)[1].split(" ## ", 1)[0]
+    assert "`gitmemory --version`" in echoes, echoes

@@ -81,6 +81,22 @@ is supported when `tests/conformance.py::check_adapter` passes on a public
 corpus of that agent's transcripts. Say in the PR where the corpus comes from
 and what its licence is.
 
+## Bumping the version
+
+Claude Code keeps an installed plugin's copy until the plugin's version
+changes, so a change under `skills/`, `hooks/` or `.claude-plugin/`, or to
+`hook/gitmemory-hook.sh`, reaches nobody who installed the plugin until the
+version is bumped. A bump moves five places in one commit: `version` in
+`pyproject.toml`, `__version__` in `src/gitmemory/__init__.py`, `version` in
+`.claude-plugin/plugin.json`, the release `skills/recall/SKILL.md` says it is
+written for, and `uv.lock`, which records the project's version: run `uv lock`
+after editing `pyproject.toml`, or CI's `uv sync --locked` fails. The tests pin
+the first four equal. The same commit turns CHANGELOG.md's `[Unreleased]` into
+the release's heading, with its date and a compare link from the previous tag,
+and starts `[Unreleased]`'s link at the new one. Once the commit is on main,
+tag it `v<version>` and push the tag: hook/README.md tells users to pin both
+installs to that tag, and a pin to a tag that does not exist installs nothing.
+
 ## Pull requests
 
 - Keep each PR to one change. Explain the *why* in the description; the diff

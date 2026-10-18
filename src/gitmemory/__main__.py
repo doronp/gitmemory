@@ -18,7 +18,7 @@ import socket
 import sqlite3
 import sys
 
-from . import daemon, dashboard, derive, gitrepo, index, redact, store
+from . import __version__, daemon, dashboard, derive, gitrepo, index, redact, store
 from .records import safe_text
 
 
@@ -342,6 +342,10 @@ def _recall(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="gitmemory")
+    # The plugin and the CLI are installed apart and can be releases apart, so
+    # the recall skill asks this before it trusts `recall`'s columns. argparse
+    # prints it past the escaping `print` above: fine for a source constant.
+    ap.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     ap.add_argument(
         "--home", default=None, help="store root (default $GITMEMORY_HOME or ~/.gitmemory)"
     )

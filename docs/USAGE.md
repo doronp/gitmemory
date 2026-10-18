@@ -171,7 +171,10 @@ decision or a rule from before a compaction or from an earlier session, or that
 you run with a topic: `/gitmemory:recall retry loop`. It runs `recall`, and
 `index` when there is no index yet or the one there is older than what you are
 asking about. It quotes each line with its address and says when a hit comes
-from another session. It writes nothing but the index.
+from another session. It writes nothing but the index. It runs
+`gitmemory --version` first and says when the CLI is older than the plugin;
+the [hook's README](../hook/README.md#as-a-claude-code-plugin) has how to hold
+the two at one release.
 
 ## Derive key ideas and decisions
 

@@ -22,6 +22,23 @@ below means that directory: the path the user gave, or what
 `echo "${GITMEMORY_HOME:-$HOME/.gitmemory}"` prints. Do not type `~/.gitmemory`
 in its place from memory.
 
+## The CLI's version
+
+The plugin and the CLI are installed separately, so they can come from
+different releases. This skill is written for gitmemory 0.1.0. Once per
+session, before the first search, run:
+
+```sh
+gitmemory --version
+```
+
+If it prints that release or a later one, go on. If it prints an earlier one,
+or exits 2 with `the following arguments are required: cmd` (a CLI from before
+`--version` existed), the CLI is older than this skill: tell the user so in
+one line, with the fix under [When it fails](#when-it-fails), and go on. If
+what `recall` then prints is not laid out as below, say so, and do not judge
+which of two lines is the current decision from their order.
+
 ## Search
 
 The topic is the skill's argument if it was given one, otherwise the thing the
@@ -66,12 +83,21 @@ recalls match the same words. Skip these hits; they are not sources:
 - `/gitmemory:recall` and its arguments, however the transcript wraps them;
 - a `gitmemory recall ...` tool call and its result, lines that start with a
   score, `N generation(s)` or `no matches`;
+- a `gitmemory --version` tool call and the one line it printed;
 - an earlier answer to the same question, and the lines it quoted.
 
 If they crowd out the rest, search again with `-k 30`. Quote the original turn.
 
 ## When it fails
 
+- A `gitmemory` command exits 2, what it prints starts `usage: gitmemory`, and
+  its last line says `invalid choice`, or `unrecognized arguments` naming a
+  flag (a word starting with `-`): the CLI is older than this skill and lacks
+  that subcommand or flag. Do not run it again without the flag or under
+  another name. Tell the user which one is missing, and that running step 1
+  below again updates the CLI, a pinned install included. If
+  `unrecognized arguments` names only plain words, the CLI is not the problem:
+  the topic went in unquoted. Put it in one pair of quotes and search again.
 - ``no index at <path>; run `gitmemory index` first``, exit 2: run
   `gitmemory index`, then search again. `index` rebuilds the index from the
   store in full. It is safe to rerun, and the index is never the source of
@@ -115,7 +141,8 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
 
 ## Read-only
 
-Run `gitmemory recall` and `gitmemory index`, and read files under `<store>`.
+Run `gitmemory --version`, `gitmemory recall` and `gitmemory index`, and read
+files under `<store>`.
 `index` writes only the derived index under `<store>/index/`. Do not run
 `gitmemory capture`, `gitmemory watch`, `gitmemory derive`, `gitmemory push`
 or `gitmemory dashboard`, and never `gitmemory dashboard --expose`. Do not
