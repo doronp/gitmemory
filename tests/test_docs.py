@@ -16,6 +16,8 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
+from itertools import pairwise
 
 import pytest
 from test_claude_code import CC_FIXTURES, _corpus
@@ -183,6 +185,35 @@ def test_the_readme_arithmetic_paragraph_is_the_arithmetic():
     assert f"replace three of the {offline}" in text
 
 
+def test_the_reproduce_guide_states_the_readme_counts():
+    """docs/REPRODUCE.md repeats the board's four numbers, and nothing held them.
+
+    So they drifted: main said 1027 tests beside the README's 1,037, and an
+    install-feedback commit left 1043 beside 1,063. The README is pinned to the
+    suite by the tests above, so holding the guide to the README holds it to
+    the suite, with no second collection, and on a machine without the corpora
+    too. [review]
+    """
+    board = _read("README.md")
+    guide = " ".join(_read("docs/REPRODUCE.md").split())
+
+    def number(pattern: str) -> int:
+        found = re.search(pattern, board)
+        assert found, pattern
+        return int(found.group(1).replace(",", ""))
+
+    tests = number(r"\*\*([\d,]+) tests\*\*")
+    cases = number(r"(\d[\d,]*) conformance cases")
+    online = number(r"collects (\d+), not \d+\.")
+    controls = number(r"\*\*([\d,]+)\*\* negative controls")
+    assert (
+        f"**Expected:** `{tests}/{tests + 1} tests collected (1 deselected)`, then "
+        f"`{online}/{online + 1} tests collected (1 deselected)`, then `{cases}`."
+    ) in guide, "docs/REPRODUCE.md §5b does not expect the README's counts"
+    assert f"why {tests:,} + {cases:,} is {online:,} and not {tests + cases:,}" in guide
+    assert f"**Expected:** `{controls}`." in guide, "§5c does not expect the README's count"
+
+
 def test_the_design_document_does_not_promise_a_file_that_is_not_written():
     """`manifest.json` was the name in every version of the verification recipe.
 
@@ -212,6 +243,54 @@ def test_the_documented_manifest_fields_are_the_fields():
     design = _read("docs/DESIGN.md")
     for field in store._FIELDS:
         assert field in design, f"DESIGN.md does not mention the manifest field {field!r}"
+
+
+def test_the_disk_section_calls_rebuildable_only_what_is_gitignored():
+    """ARCHITECTURE.md said the store "holds each byte the agent wrote exactly
+    once", and DESIGN.md "zero duplication". That is `raw/`. `.git` keeps a
+    second, compressed copy and `index/` the text a third time, so one store
+    came to 1.75x what it had captured, and no document said why.
+
+    The ratios are not pinned: they move with the filesystem's block size, the
+    git version, when `gc --auto` last packed, and the corpus. What is pinned is
+    the advice. Every directory a sentence of the section tells you to delete
+    must be one the store's own `.gitignore` ignores, and `raw/` and `sessions/`
+    must stay tracked, because deleting either loses the only copy. The anchors
+    pointing at the section are checked against its heading, so renaming it
+    breaks a test and not just a link.
+    Headings are read with fenced blocks cut out: a `# comment` in a shell or
+    TOML recipe is not a heading, and counting it let a link to no heading pass.
+    """
+    from gitmemory import gitrepo
+
+    watching = re.sub(r"^```.*?^```", "", _read("docs/watching.md"), flags=re.S | re.M)
+    section = re.search(r"^## How much disk it takes\n(.*?)(?=^## |\Z)", watching, re.S | re.M)
+    assert section, "docs/watching.md has no 'How much disk it takes' section"
+    body = section.group(1)
+    assert "`index/`" in body and "`gitmemory index`" in body, "it no longer says what rebuilds it"
+
+    ignored = gitrepo.GITIGNORE.splitlines()
+    told = [
+        d
+        for sentence in re.split(r"(?<=\.)\s+", " ".join(body.split()))
+        if re.search(r"\b(?:delete|remove)\b", sentence, re.I)
+        for d in re.findall(r"`([\w.-]+/)`", sentence)
+    ]
+    assert told, "the section no longer names the directory to delete"
+    for d in told:
+        assert f"/{d}" in ignored, f"the section says to delete `{d}`, which git does not ignore"
+    for durable in ("/raw/", "/sessions/"):
+        assert durable not in ignored, f"{durable} is ignored, so git no longer holds it"
+
+    slugs = {
+        re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
+        for h in re.findall(r"^#+ (.+)$", watching, re.M)
+    }
+    for rel in ("README.md", "CHANGELOG.md", "docs/ARCHITECTURE.md", "docs/DESIGN.md"):
+        anchors = re.findall(r"watching\.md#([\w-]+)", _read(rel))
+        assert "how-much-disk-it-takes" in anchors, f"{rel} does not point at the section"
+        for anchor in anchors:
+            assert anchor in slugs, f"{rel} links watching.md#{anchor}, which no heading makes"
 
 
 def test_the_documented_shim_length_is_the_shim_length():
@@ -275,6 +354,122 @@ def test_the_design_document_cites_nothing_in_tmp():
     for rel in ("docs/DESIGN.md", "README.md", "hook/README.md", "docs/watching.md"):
         for n, line in enumerate(_read(rel).splitlines(), 1):
             assert "/tmp/" not in line, f"{rel}:{n} cites a scratch path: {line.strip()}"
+
+
+_INSTALLERS = r"uv tool install|pipx install"
+# The tool, then its words up to the end of the code span, a `)`, a `#`, the end
+# of the line, or the next tool, so two commands on one line are two commands.
+_INSTALL = re.compile(rf"\b({_INSTALLERS})\b([^`)#\n]*?)(?=\b(?:{_INSTALLERS})\b|[`)#]|$)")
+
+
+def _installs(text: str):
+    """(line number, tool, its words, as written) for each install command in
+    `text`. A line that ends in a backslash goes on into the next, as in sh. A
+    tool whose span holds nothing else takes the rest of the line, up to the
+    next tool, when that starts with a source or a flag: `` `uv tool install`
+    git+… `` is one command split across spans, not prose."""
+    lines, n = text.splitlines(), 0
+    while n < len(lines):
+        start, line = n + 1, lines[n]
+        while line.endswith("\\") and n + 1 < len(lines):
+            n += 1
+            line = line[:-1] + " " + lines[n]
+        n += 1
+        for m in _INSTALL.finditer(line):
+            words = m.group(2).split()
+            if not words:
+                rest = re.split(_INSTALLERS, line[m.end() :], maxsplit=1)[0]
+                rest = rest.replace("`", " ").split()
+                if rest and rest[0].strip("\"'").startswith(("git+", "gitmemory", "-")):
+                    words = rest
+            yield start, m.group(1), words, " ".join([m.group(1), *words])
+
+
+def _names_python(tool: str, words: list[str], want: str) -> bool:
+    """`--python <want>` or `--python=<want>`, or uv's own `-p <want>`."""
+    flags = ("--python", "-p") if tool == "uv tool install" else ("--python",)
+    words = [w.strip("\"'") for w in words]
+    return f"--python={want}" in words or any(
+        a in flags and b == want for a, b in pairwise(words)
+    )
+
+
+def test_every_documented_install_names_the_python_floor():
+    """The README's install line did not install on Ubuntu 24.04; the same line
+    with `--python 3.13` did.
+
+    pyproject says `>=3.13`, and the README said so one line above a command
+    that did not. Left to choose, uv can settle on the machine's own Python
+    (3.12 there) and refuse the install, which is what it does with Python
+    downloads off (measured); named, it builds the tool on 3.13, fetching one
+    if it may, or says to install one. pipx installs into the Python it runs
+    under, so its line names an interpreter of that version. The floor is read
+    from pyproject, so the commands cannot drift from it a second time.
+
+    A command is the tool and what follows it, to the end of its code span, a
+    `)` or a `#`, the end of the line (a trailing backslash carries it on to the
+    next), or the next command. It names the floor as `--python X.Y`,
+    `--python=X.Y` or uv's `-p X.Y`; pipx's value is `pythonX.Y`. Prose that
+    names the tool with nothing after it ("if you installed with
+    `uv tool install`,") has no source, so it is not one. Prose with words after
+    the tool and no code span around it reads as a command and fails, so put the
+    tool in a code span or write the whole command; a span holding the tool
+    alone still reads on when the next word is a source or a flag
+    (`` `uv tool install` git+… ``). `tests/` is not scanned,
+    because its strings are fixtures and this one names the tools; nor are the
+    records, which quote what was run at the time. [install feedback 1]
+    """
+    with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:
+        spec = tomllib.load(fh)["project"]["requires-python"]
+    floor = re.fullmatch(r">=(\d+\.\d+)", spec)
+    assert floor, f"requires-python is {spec!r}; this test knows only a bare lower bound"
+    v = floor.group(1)
+    want = {"uv tool install": v, "pipx install": f"python{v}"}
+
+    # The scanner first, on spellings a later line may use. [install review 2, 4]
+    probe = (
+        f"(uv tool install --python {v} git+x, or pipx install git+x)\n"
+        f"`uv tool install -p {v} git+x` and `uv tool install --python={v} git+x`\n"
+        f"uv tool install \\\n  --python {v} git+x\n"
+        f"`pipx install --python python{v} git+x` `pipx install -p python{v} git+x`\n"
+        "if you installed with `uv tool install`,\n"
+        f"`uv tool install` git+x, then uv tool install `--python {v} git+x`\n"
+    )
+    found = [(n, t, _names_python(t, w, want[t])) for n, t, w, _ in _installs(probe) if w]
+    assert found == [
+        (1, "uv tool install", True),
+        (1, "pipx install", False),
+        (2, "uv tool install", True),
+        (2, "uv tool install", True),
+        (3, "uv tool install", True),
+        (5, "pipx install", True),
+        (5, "pipx install", False),
+        (7, "uv tool install", False),
+        (7, "uv tool install", True),
+    ], found
+
+    records = ("tests/", "docs/reviews/", "docs/tasks/", "docs/DESIGN-v0.md")
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+    seen, wrong = set(), []
+    for rel in filter(None, tracked):
+        if rel.startswith(records):
+            continue
+        try:
+            text = _read(rel)
+        except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
+            continue  # a binary or a submodule; no command in it
+        for n, tool, words, said in _installs(text):
+            if not words:
+                continue
+            seen.add(rel)
+            if not _names_python(tool, words, want[tool]):
+                wrong.append(f"{rel}:{n}: `{said}` lacks --python {want[tool]}")
+    # The floor, because a scan that matches nothing passes loudest.
+    named = {"README.md", "hook/README.md", "skills/recall/SKILL.md", ".claude-plugin/plugin.json"}
+    assert named <= seen, named - seen
+    assert not wrong, f"requires-python is {spec}:\n" + "\n".join(wrong)
 
 
 def test_no_tracked_file_contains_an_invisible_character():
@@ -449,11 +644,13 @@ def test_the_plugin_recall_skill_runs_only_commands_the_cli_has(tmp_path, capsys
     waiting, and it reads as gitmemory being broken. So every `gitmemory ...`
     in the skill's code is asked for its own `--help`, which argparse answers
     with exit 0 only for a subcommand that exists, and every flag it names is
-    looked for in that help: `--home` before the subcommand in the top-level
-    help, the rest in the subcommand's. The commands it forbids are checked the
-    same way, because a prohibition on a command that no longer exists guards
-    nothing. The messages it tells the agent to branch on are the ones the CLI
-    prints, got by running it on a path that is no store and on an empty one.
+    looked for in that help: `--home` before the subcommand, and `--version`,
+    which comes with none, in the top-level help, the rest in the subcommand's.
+    The commands it forbids are checked the same way, because a prohibition on
+    a command that no longer exists guards nothing. The messages it tells the
+    agent to branch on are the ones the CLI prints, got by running it on a path
+    that is no store, on an empty one, and on one whose spool no watcher has
+    drained.
     `skills/` holds this one skill and neither manifest adds a skills path; its
     name is the one the three documents that mention it tell you to type.
     """
@@ -486,10 +683,12 @@ def test_the_plugin_recall_skill_runs_only_commands_the_cli_has(tmp_path, capsys
     for m in re.finditer(r"(?<![\w/-])gitmemory ([^`\n]+)", "\n".join(code)):
         tokens = m.group(1).split()
         subs = [i for i, t in enumerate(tokens) if re.fullmatch(r"[a-z]+", t)]
-        assert subs, m.group(0)
-        at = subs[0]
-        named.add(tokens[at])
-        top, own = usage(), usage(tokens[at])
+        # With no subcommand it is `gitmemory --version`: flags only, all
+        # top-level. A bare word there is a subcommand the pattern missed.
+        assert subs or all(t.startswith("-") for t in tokens), m.group(0)
+        at = subs[0] if subs else len(tokens)
+        named.update(tokens[at : at + 1])
+        top, own = usage(), usage(*tokens[at : at + 1])
         for i, flag in enumerate(tokens):
             if re.fullmatch(r"--?[a-z][a-z-]*", flag):
                 helptext = top if i < at else own
@@ -515,3 +714,145 @@ def test_the_plugin_recall_skill_runs_only_commands_the_cli_has(tmp_path, capsys
     assert code == 0 and out.startswith("0 generation(s)") and "`0 generation(s)`" in flat
     code, _, err = run(empty, "recall", "x")
     assert code == 0 and err == "no matches\n" and "`no matches` on stderr, exit 0" in flat
+    os.makedirs(os.path.join(empty, "spool"))
+    with open(os.path.join(empty, "spool", "1-SessionEnd.json"), "w") as fh:
+        fh.write("{}")
+    os.utime(fh.name, (0, 0))
+    code, _, err = run(empty, "recall", "x")
+    said = err.splitlines()[0].replace("<path>", "<store>")
+    said = re.sub(r"for \d+ \w+:", "for <age>:", re.sub(r"^\d+", "<N>", said))
+    assert code == 0 and f"``{said}``" in flat, said
+
+
+def test_the_recall_skill_names_the_release_it_was_written_for(capsys):
+    """The plugin and the CLI are installed separately, and nothing makes them
+    one release.
+
+    The test above runs the skill against the CLI in this checkout, which says
+    nothing about an installed copy of each. A skew has shipped already: at
+    v0.1.0 `recall` printed no date and ranked by relevance, the skill reads
+    the date to tell which of two lines is current, both said 0.1.0, and
+    nothing errored. So the skill names its release, pinned here to
+    `pyproject.toml` and `__version__` (test_hook.py pins `plugin.json`), and
+    asks `gitmemory --version` once per session. A CLI from before the flag
+    answers with the first error below (measured on c352a40 under 3.12, 3.13
+    and 3.14); one that lacks a subcommand or a flag answers with one of the
+    other two. The skill branches on those words, so each is got from the CLI
+    and must be in the skill as the CLI prints it. A topic left unquoted is
+    rejected in the same words as a missing flag, naming a plain word, so the
+    skill tells the two apart by the leading `-`. And the store captures the
+    `--version` call of every session that uses the skill, which outranks real
+    hits on "version" unless the skill lists it among its echoes.
+    """
+    from gitmemory import __main__ as cli
+    from gitmemory import __version__
+
+    with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:
+        release = tomllib.load(fh)["project"]["version"]
+    assert __version__ == release
+    skill = " ".join(_read("skills/recall/SKILL.md").split())
+
+    with pytest.raises(SystemExit) as done:
+        cli.main(["--version"])
+    assert done.value.code == 0 and capsys.readouterr().out == f"gitmemory {release}\n"
+    assert f"written for gitmemory {release}." in skill, release
+
+    for argv, said in (
+        ([], "the following arguments are required: cmd"),
+        (["no-such-subcommand"], "invalid choice"),
+        (["recall", "--no-such-flag", "x"], "unrecognized arguments"),
+    ):
+        with pytest.raises(SystemExit) as done:
+            cli.main(argv)
+        err = capsys.readouterr().err
+        assert done.value.code == 2 and err.startswith("usage: gitmemory "), err
+        assert said in err.splitlines()[-1] and f"`{said}`" in skill, err
+    assert "`usage: gitmemory`" in skill
+
+    with pytest.raises(SystemExit) as done:
+        cli.main(["recall", "retry", "loop"])
+    last = capsys.readouterr().err.splitlines()[-1]
+    assert done.value.code == 2 and last.endswith("unrecognized arguments: loop"), last
+    assert "a word starting with `-`" in skill and "went in unquoted" in skill
+
+    echoes = skill.split("## Echoes ", 1)[1].split(" ## ", 1)[0]
+    assert "`gitmemory --version`" in echoes, echoes
+
+
+def test_the_main_sessions_only_pattern_does_what_watching_md_says(tmp_path):
+    """`docs/watching.md` offers a pattern that leaves Claude Code's subagents out,
+    and says a hook cannot bring one back in. Both are claims about the watcher,
+    so the documented block is the config here, verbatim, over Claude Code's
+    layout: a Task subagent, a workflow agent and the workflow's journal beside
+    the main session. The default pattern finds all four, so the three this one
+    misses are files the watcher would otherwise capture. The page also says the
+    recipe must replace the default table, not sit beside it."""
+    import dataclasses
+
+    from gitmemory import daemon
+
+    doc = _read("docs/watching.md")
+    section = re.search(r"^### Main sessions only.*?(?=^#)", doc, re.M | re.S)
+    assert section, "docs/watching.md has no main-sessions-only recipe"
+    block = re.search(r"^```toml\n(.*?)^```", section.group(0), re.M | re.S)
+    assert block, section.group(0)
+
+    turn = '{"type":"user","message":{"role":"user","content":"hello"}}\n'
+    session = os.path.join(os.path.expanduser("~/.claude/projects"), "-proj", "s1")
+    parent = session + ".jsonl"
+    workflow = os.path.join(session, "subagents", "workflows", "wf_1")
+    child = os.path.join(session, "subagents", "agent-a1.jsonl")
+    others = [child, *(os.path.join(workflow, f) for f in ("agent-b2.jsonl", "journal.jsonl"))]
+    for path in (parent, *others):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(turn)
+    home = str(tmp_path / "store")
+    os.makedirs(os.path.join(home, daemon.SPOOL))
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as fh:
+        fh.write(block.group(1))
+
+    watches = daemon.load_watches(home)
+    found = [p for _, p in daemon.discover(watches)]
+    assert found == [os.path.realpath(parent)]
+    every = [dataclasses.replace(w, pattern=daemon.PATTERN) for w in watches]
+    assert len(daemon.discover(every)) == 4
+    first = daemon.tick(home, watches, commit=False)
+    assert [key.split("/")[1].startswith("s1-") for key in first.captured] == [True]
+
+    # A hook firing as the subagent ends rings for a file the pattern left out.
+    with open(child, "a", encoding="utf-8") as fh:
+        fh.write(turn)
+    with open(os.path.join(home, daemon.SPOOL, "1-2-SessionEnd.json"), "w") as fh:
+        json.dump({"transcript_path": child}, fh)
+    second = daemon.tick(home, watches, interval=1e9, commit=False)
+    assert second.captured == [] and second.spool_consumed == 1
+
+    # Added as a second table beside a default one on the same root, it leaves
+    # nothing out, which is why the page says to edit the table you have.
+    default = re.sub(r"^pattern = .*\n", "", block.group(1), flags=re.M)
+    assert default != block.group(1)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as fh:
+        fh.write(default + "\n" + block.group(1))
+    assert len(daemon.discover(daemon.load_watches(home))) == 4
+
+
+def test_the_documented_watch_table_is_the_one_init_writes(tmp_path, capsys):
+    """The README and watching.md show the table and say `gitmemory init` writes
+    it. Two copies of one config in prose and one in `daemon.ROOTS` is how a doc
+    ends up telling people to hand-write a table the command no longer writes,
+    so the block under each section heading is looked for in what init wrote.
+    By section, because watching.md may hold other `toml` recipes init does
+    not write; split on `##` because a TOML comment is a `#` at column 0."""
+    from gitmemory.__main__ import main
+
+    home = str(tmp_path / "store")
+    assert main(["--home", home, "init", "claude-code"]) == 0
+    capsys.readouterr()
+    with open(os.path.join(home, "config.toml"), encoding="utf-8") as fh:
+        written = fh.read()
+    for rel, heading in [("README.md", "## Quickstart"), ("docs/watching.md", "## Configure")]:
+        section = _read(rel).split(f"\n{heading}", 1)[1].split("\n##", 1)[0]
+        block = re.search(r"^```toml\n(.*?)^```", section, re.M | re.S)
+        assert block, f"{rel} {heading} no longer shows the table"
+        assert block.group(1) in written, rel

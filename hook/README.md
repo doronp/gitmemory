@@ -93,21 +93,43 @@ The plugin installs the hook and one skill, `/gitmemory:recall`, which has the
 agent run `gitmemory recall` and quote what it returns
 ([USAGE.md](../docs/USAGE.md#put-it-back-in-front-of-the-agent)). Neither
 captures anything. **Nothing is captured until the watcher is installed and
-running** (`uv tool install git+https://github.com/doronp/gitmemory`, a watch
-root in `config.toml`, then `gitmemory watch`, as in the
+running** (`uv tool install --python 3.13 git+https://github.com/doronp/gitmemory`,
+`gitmemory init claude-code`, then `gitmemory watch`, as in the
 [Quickstart](../README.md#quickstart)), and gitmemory is correct without the
 plugin, as it is without the hook. The hook and the skill run with Claude
 Code's environment, so a `GITMEMORY_HOME` you set for the watcher has to be set
 there too, and be absolute, as above. What the skill reads from the store goes
 to the model provider with the rest of the conversation, and no redaction gate
 stands in that path ([SECURITY.md](../SECURITY.md#if-a-credential-lands-in-the-store)).
+To have `recall` and `show` mask the credential shapes the gate knows in what
+they print, set `GITMEMORY_REDACT=1` in that environment, in
+`~/.claude/settings.json` as
+[USAGE.md](../docs/USAGE.md#put-it-back-in-front-of-the-agent) shows. The
+skill then passes `--redact` to every `recall` and `show` it runs. It masks; it
+is not a gate, and
+[USAGE.md](../docs/USAGE.md#what-it-does-not-guarantee) lists what it does not
+cover.
 
-An install made before the skill was added does not have it. Claude Code keeps
-a plugin's cached copy until its version changes, and the skill was added
-without a version bump, so `claude plugin update gitmemory@gitmemory` reports
-that it is already at 0.1.0. The next release, which bumps the version, brings
-the skill; until then, `claude plugin uninstall gitmemory@gitmemory` and then
+An install made from 0.1.0 does not have the skill. Claude Code keeps a
+plugin's cached copy until its version changes, and the skill was added after
+0.1.0 without a version bump, so until 0.2.0 an update reported that the
+plugin was already at 0.1.0. Release 0.2.0 bumps the version, so
+`claude plugin update gitmemory@gitmemory` brings the skill; if it still says
+0.1.0, `claude plugin uninstall gitmemory@gitmemory` and then
 `claude plugin install gitmemory@gitmemory` fetch the current copy.
+
+The plugin and the CLI are installed separately, and nothing makes them one
+release: `uv tool install` takes the commit you name, or the head of main, and
+the plugin is the commit its marketplace was cloned at, kept until its version
+changes. The recall skill runs `gitmemory --version` first and tells you when
+the CLI is older than it, and when the CLI lacks a subcommand or a flag the
+skill needs, it stops and says which rather than retrying without it. To hold
+both at one release, pin both to its tag, `v<version>`:
+`uv tool install --python 3.13 git+https://github.com/doronp/gitmemory@v<version>`
+and `/plugin marketplace add doronp/gitmemory#v<version>` (a marketplace pins a
+branch or a tag, not a bare commit). To move the CLI forward, run the
+`uv tool install` line again without the `@` part; `uv tool upgrade gitmemory`
+leaves a pinned install where it is.
 
 This keeps the rule at the top of [Install](#install): gitmemory never edits
 another program's configuration. You opt in with `/plugin`, and Claude Code
@@ -192,6 +214,11 @@ A record is a doorbell, not data. The watcher reads the transcript path out of
 it and then re-derives everything — how many bytes are new, where the boundary
 is, whether the file was rewritten — from the transcript itself. A record naming
 a path outside the configured watch roots is dropped.
+
+Every pass removes every complete record, dropped or not, so a record older
+than an hour means no watcher has run a pass on this store since it arrived,
+and `gitmemory recall` says so on stderr. That is also how a hook and a watcher
+with different `$GITMEMORY_HOME`s show up: the message names the store.
 
 ## Latency
 

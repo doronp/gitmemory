@@ -139,8 +139,8 @@ def _sumy():
         from sumy.utils import get_stop_words
     except ImportError as exc:  # pragma: no cover - exercised by hand, not in CI
         raise RuntimeError(
-            "derivation needs the `derive` extra: "
-            'uv tool install "gitmemory[derive] @ git+https://github.com/doronp/gitmemory"'
+            "derivation needs the `derive` extra: uv tool install --python 3.13 "
+            '"gitmemory[derive] @ git+https://github.com/doronp/gitmemory"'
             " (from a clone: uv sync --extra derive)"
         ) from exc
 

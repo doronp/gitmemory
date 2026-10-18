@@ -577,6 +577,27 @@ def test_cli_capture_records_the_compaction_boundary_the_adapter_found(tmp_path,
     assert main(["--home", home, "verify"]) == 0
 
 
+def test_cli_capture_says_how_much_in_units_and_where_in_bytes(tmp_path, capsys):
+    """`+` is an amount, so a person gets units; `size=` is a coordinate, so it stays bytes.
+
+    `size=` is the end of `[0, size)`, the range `verify` and every `@offset`
+    are stated in. The second capture is there so the two numbers differ.
+    """
+    from gitmemory.__main__ import main
+
+    home, src = str(tmp_path / "h"), str(tmp_path / "s.jsonl")
+    os.mkdir(home)
+    base = transcript(src, 20)
+    assert main(["--home", home, "capture", src, "--session-id", "sess"]) == 0
+    end = transcript(src, 20, start=20)
+    assert (base, end) == (1500, 3020)
+    capsys.readouterr()
+
+    assert main(["--home", home, "capture", src, "--session-id", "sess"]) == 0
+    out = capsys.readouterr().out
+    assert out.endswith("  +1.5 kB (1520 B)  size=3020  g00\n"), out
+
+
 def test_cli_verify_exits_nonzero_on_a_hole(tmp_path):
     from gitmemory.__main__ import main
 
@@ -1994,7 +2015,8 @@ def test_a_credential_in_an_exception_message_is_masked_on_the_way_out(home, cap
 
     An `OSError` carries the path it failed on. Nobody asked to see that string
     — it is a diagnostic — and `recall`, which prints transcript content because
-    that is what it is for, is deliberately not masked. Only exception text is.
+    that is what it is for, is not masked unless the owner asks (`--redact`).
+    Exception text always is.
     """
     from gitmemory.__main__ import main
 
@@ -2649,7 +2671,7 @@ def test_a_manifest_whose_adopted_is_not_a_list_is_refused(home, src):
 
 
 def test_cli_capture_says_when_it_only_found_the_bytes(tmp_path, capsys):
-    """A capture that reclaims an orphan reports `+0B` and is otherwise silent.
+    """A capture that reclaims an orphan reports `+0 B` and is otherwise silent.
 
     The manifest is where the fact lives for ever, but a person running
     `gitmemory capture` after a crash is not reading manifests — and the
@@ -2674,7 +2696,7 @@ def test_cli_capture_says_when_it_only_found_the_bytes(tmp_path, capsys):
 
     out = capsys.readouterr()
     assert f"adopted 1 segment(s) found on disk, not copied from the source: {name}" in out.err
-    assert "+0B" in out.out, "the line has to be beside a result that looks like nothing happened"
+    assert "+0 B" in out.out, "the line has to be beside a result that looks like nothing happened"
 
 
 # --- E7 fs-F5: the proof tree reached through a link -------------------------

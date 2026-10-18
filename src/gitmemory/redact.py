@@ -6,7 +6,8 @@ Raw stays local and verbatim; that is the thesis, and scrubbing before hashing
 would make the bytes we commit not the bytes the agent wrote (DESIGN.md §2.5a
 records agentcairn losing exactly that way). So redaction lives at the two
 boundaries where bytes leave: anything written to `derived/`, and anything
-pushed to a remote.
+pushed to a remote. `mask` also serves `recall --redact` and `show --redact`,
+which mask what they print when the owner asks them to, and block nothing.
 
 Two tiers, because a one-tier gate is either useless or unpassable:
 
@@ -30,18 +31,20 @@ not a proof of its absence. [E7]
 
 from __future__ import annotations
 
+import bisect
 import os
 import re
 import stat
 import tomllib
 import urllib.parse
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 __all__ = [
     "Finding",
     "contents",
     "gate",
+    "mask",
     "push_allowed",
     "safe_path",
     "scan_bytes",
@@ -172,18 +175,107 @@ def safe_path(path: str) -> str:
     append-only. Masking the span rather than the whole string keeps the finding
     useful: it still names the directory and the file. [E7]
     """
-    data = path.encode("utf-8", "surrogateescape")
-    found = scan_bytes(data)
-    if not found:
-        return path
-    out, cursor = b"", 0
+    return mask(path)
+
+
+# Where a PEM block ends. Not the detector with BEGIN swapped for END: the gate
+# refuses on the header alone, and this only has to say where the key stops.
+# Bounded, because `[A-Z0-9 ]*KEY[A-Z ]*` retried every `KEY` in a `-----END
+# KEY KEY …` line to the end of it: 125 KB took 4.1 s. The longest real END
+# line has eighteen characters before `KEY` and six after; one longer than the
+# bounds is not found, and the mask runs to the end of the text instead.
+_PEM_END = re.compile(rb"-----END [A-Z0-9 ]{0,40}KEY[A-Z ]{0,10}-----")
+
+# How `records.safe_text` spells a control or an invisible character, which is
+# how the index stores one: `\x7f`, `\u200b`, and `\ue0041` for a tag character.
+_SPELLED = re.compile(rb"\\x[0-9a-f]{2}|\\u(?:e00[0-7][0-9a-f]|[0-9a-f]{4})")
+
+# A whitespace run that `" ".join(text.split())` narrows: two or more, or one
+# that is not a space. Greedy and unanchored on either side, so it stays linear.
+_RUN = re.compile(rb"\s{2,}|[\t\n\r\f\v]")
+
+
+def mask(text: str, *, collapse: bool = False) -> str:
+    """`text` with every match of both tiers masked, the rest left readable.
+
+    One span is widened. `private_key_block` matches the BEGIN line, and the
+    secret is the base64 under it: masking the match alone printed the header
+    as `----…[31 bytes]` and then every byte of the key. So that span runs to
+    the next END line, or to the end of `text` when there is none.
+
+    Text holding a spelled-out control is scanned twice. Every spelling ends in
+    a word character, so `\\ufeffAKIA…` has no `\\b` before the key, where the
+    push gate, reading the raw bytes, sees a BOM and a boundary. The second scan
+    reads a copy with each spelling blanked to as many spaces, so its offsets
+    are the text's. The first stays, because a spelling can sit inside a match
+    (`password=abc\\x01defghijklmn`) that the blanked copy cuts short.
+
+    `collapse` is for a caller that masks before it flattens, or never does.
+    `-----BEGIN RSA\\nPRIVATE KEY-----` is a header only once flattened, so such
+    a caller asks for a third scan, of the blanked copy with every whitespace
+    run one space. `recall` and `show` both do: flattening first with
+    `str.split()` broke on a no-break space, which is a token byte here. Its END
+    line is still looked for as written, so one a break split is not found, and
+    the mask runs to the end of the text.
+    """
+    # `surrogatepass`, as `records` hashes: `show` masks the parsed text, where
+    # a JSON `\ud83d` is a lone surrogate, and `surrogateescape` raised on any
+    # outside U+DC80-U+DCFF. The patterns are bytes; the result decodes lossily.
+    data = text.encode("utf-8", "surrogatepass")
+    plain = _SPELLED.sub(lambda m: b" " * len(m[0]), data)
+    found = scan_bytes(data) + (scan_bytes(plain) if plain != data else [])
+    if collapse:
+        found += _found_collapsed(plain)
+    widened, reach = [], -1
+    for f in sorted(found, key=lambda f: f.offset):
+        # Only a header no earlier span already covers. Each one searching for
+        # its own END line made a page of headers with none cost headers x
+        # length: 16,000 of them, 437 KB, took 2.4 s.
+        if f.detector == "private_key_block" and f.offset >= reach:
+            end = _PEM_END.search(plain, f.offset + f.length)
+            reach = end.end() if end else len(data)
+            f = replace(f, length=reach - f.offset)
+        widened.append(f)
+    if not widened:
+        return text
+    out, cursor = [], 0
     # Merged spans, because two detectors matching the same key (`sk-ant-…`
     # trips both `anthropic_api_key` and `openai_api_key`) would otherwise mask
-    # it twice and mangle the rest of the path with it.
-    for start, end in _merged(found):
-        out += data[cursor:start] + _mask(data[start:end]).encode("utf-8")
+    # it twice and mangle the rest of the text with it. Joined once at the end:
+    # `bytes +=` copies everything so far for every span.
+    for start, end in _merged(widened):
+        out += (data[cursor:start], _mask(data[start:end]).encode("utf-8"))
         cursor = end
-    return (out + data[cursor:]).decode("utf-8", "replace")
+    out.append(data[cursor:])
+    return b"".join(out).decode("utf-8", "replace")
+
+
+def _found_collapsed(data: bytes) -> list[Finding]:
+    """What a scan finds in `data` with each whitespace run one space, at the
+    offsets of `data`: a match that starts or ends on a run's space covers the
+    whole run."""
+    pieces, spaces, ends, cursor, shift = [], [], [], 0, 0
+    for m in _RUN.finditer(data):
+        pieces += (data[cursor : m.start()], b" ")
+        # Where the run's one space lands in the copy, and where the run ends.
+        spaces.append(m.start() - shift)
+        ends.append(m.end())
+        shift += len(m[0]) - 1
+        cursor = m.end()
+    if not spaces:
+        return []
+    pieces.append(data[cursor:])
+
+    def back(x: int) -> int:
+        # The last run whose space is before `x`; past it, bytes map one to one.
+        i = bisect.bisect_left(spaces, x) - 1
+        return x if i < 0 else ends[i] + x - spaces[i] - 1
+
+    found = []
+    for f in scan_bytes(b"".join(pieces)):
+        start = back(f.offset)
+        found.append(replace(f, offset=start, length=back(f.offset + f.length) - start))
+    return found
 
 
 def _merged(findings: list[Finding]) -> list[tuple[int, int]]:

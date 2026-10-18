@@ -3852,6 +3852,205 @@ MUTANTS = [
         "    if False:",
         "test_recall_says_a_query_was_truncated_before_it_says_no_matches",
     ),
+    # --- install feedback: the hook rang and no watcher answered ----------- #
+    (
+        "recall says nothing when the hook rang and no watcher collected it",
+        "__main__.py",
+        "        if waiting and age >= daemon.STALE_RECORD:",
+        "        if False:",
+        "test_recall_says_the_hook_rang_and_no_watcher_answered",
+    ),
+    (
+        "recall reports a spool record a watcher could still be draining",
+        "__main__.py",
+        "        if waiting and age >= daemon.STALE_RECORD:",
+        "        if waiting:",
+        "test_recall_says_nothing_about_a_spool_a_watcher_could_still_be_draining",
+    ),
+    (
+        "a hook's temp file counts as an uncollected record",
+        "daemon.py",
+        '                if not entry.name.startswith("."):',
+        "                if True:",
+        "test_recall_says_nothing_about_a_spool_a_watcher_could_still_be_draining",
+    ),
+    (
+        "a directory no pass can unlink counts as an uncollected record",
+        "daemon.py",
+        "                        if not entry.is_dir(follow_symlinks=False):",
+        "                        if True:",
+        "test_one_watcher_pass_is_what_clears_it",
+    ),
+    (
+        "recall reads a store's spool for an index named by --db",
+        "__main__.py",
+        "    if args.db is None:",
+        "    if True:",
+        "test_recall_says_nothing_about_a_spool_a_watcher_could_still_be_draining",
+    ),
+    (
+        "the uncollected age is the newest record's, not the oldest's",
+        "daemon.py",
+        "max(ages, default=0.0)",
+        "min(ages, default=0.0)",
+        "test_recall_says_the_hook_rang_and_no_watcher_answered",
+    ),
+    (
+        "a watcher pass leaves the records it consumed in the spool",
+        "daemon.py",
+        "            _unlink(path)\n            tick.spool_consumed += 1",
+        "            tick.spool_consumed += 1",
+        "test_one_watcher_pass_is_what_clears_it",
+    ),
+    # --- recall --redact: masked where the detectors can still see the key -- #
+    (
+        "recall --redact masks the head after the 160-character cut",
+        "__main__.py",
+        '        head = " ".join(shown_as(h.text).split())[:160]',
+        '        head = shown_as(" ".join(h.text.split())[:160])',
+        "test_recall_redact_masks_a_key_the_160_character_cut_would_have_halved",
+    ),
+    (
+        # The mask joins a header a line break split itself, as show's does.
+        "recall --redact masks the head before the collapse assembles a header",
+        "__main__.py",
+        "    shown_as = functools.partial(redact.mask, collapse=True) if args.redact else str\n"
+        "    for h in shown:",
+        "    shown_as = redact.mask if args.redact else str\n    for h in shown:",
+        "test_recall_redact_masks_a_header_that_only_the_collapse_assembles",
+    ),
+    (
+        # `str.split()` breaks on a no-break space; the bytes patterns do not.
+        "recall --redact collapses a Unicode space out of a value before it masks",
+        "__main__.py",
+        '        head = " ".join(shown_as(h.text).split())[:160]',
+        '        head = shown_as(" ".join(h.text.split()))[:160]',
+        "test_recall_redact_masks_a_value_with_a_unicode_space_in_it",
+    ),
+    (
+        "recall --redact masks a private key's header and prints its body",
+        "redact.py",
+        "            f = replace(f, length=reach - f.offset)\n",
+        "",
+        "test_recall_redact_masks_a_private_key_body_and_not_only_its_header",
+    ),
+    (
+        "recall --redact prints a session id that is itself a credential",
+        "__main__.py",
+        '        where = shown_as(f"{h.session_key}@{h.byte_offset}").replace(" ", "")',
+        '        where = f"{h.session_key}@{h.byte_offset}".replace(" ", "")',
+        "test_recall_redact_masks_a_session_id_that_is_itself_a_credential",
+    ),
+    (
+        # The marker is `ghp_…[40 bytes]`, and its space moved role/kind to [4].
+        "recall --redact splits a masked address into two columns",
+        "__main__.py",
+        '        where = shown_as(f"{h.session_key}@{h.byte_offset}").replace(" ", "")',
+        '        where = shown_as(f"{h.session_key}@{h.byte_offset}")',
+        "test_recall_redact_masks_a_session_id_that_is_itself_a_credential",
+    ),
+    (
+        # The obvious spelling, and it reads `GITMEMORY_REDACT=0` as on.
+        "recall --redact reads GITMEMORY_REDACT=0 as on",
+        "__main__.py",
+        '        default=os.environ.get("GITMEMORY_REDACT", "") not in ("", "0"),',
+        '        default=bool(os.environ.get("GITMEMORY_REDACT")),',
+        "test_gitmemory_redact_makes_masking_standing_and_0_turns_it_off",
+    ),
+    (
+        # The index spells a BOM `\ufeff`, and its `f` takes away the key's `\b`.
+        "recall --redact prints a key behind a control the index spells out",
+        "redact.py",
+        '    plain = _SPELLED.sub(lambda m: b" " * len(m[0]), data)',
+        "    plain = data",
+        "test_recall_redact_masks_a_key_behind_a_character_the_index_spells_out",
+    ),
+    (
+        "recall --redact scans only the copy with the spellings blanked",
+        "redact.py",
+        "    found = scan_bytes(data) + (scan_bytes(plain) if plain != data else [])",
+        "    found = scan_bytes(plain)",
+        "test_recall_redact_masks_a_key_behind_a_character_the_index_spells_out",
+    ),
+    (
+        "every private key header searches for its own END line again",
+        "redact.py",
+        '        if f.detector == "private_key_block" and f.offset >= reach:',
+        '        if f.detector == "private_key_block":',
+        "test_mask_stays_linear_on_a_page_of_key_headers_and_an_end_line_that_never_closes",
+    ),
+    (
+        "the END line pattern's runs are unbounded again",
+        "redact.py",
+        "{0,40}KEY[A-Z ]{0,10}-----",
+        "*KEY[A-Z ]*-----",
+        "test_mask_stays_linear_on_a_page_of_key_headers_and_an_end_line_that_never_closes",
+    ),
+    # --- show --redact: the whole turn, masked as recall's line is ---------- #
+    (
+        # A private key's body is the lines under its header, and no detector
+        # matches a line of base64 on its own.
+        "show --redact masks each line apart and prints a private key's body",
+        "__main__.py",
+        '            for line in shown_as(b.text).split("\\n") if b.text else ():',
+        '            for line in map(shown_as, b.text.split("\\n")) if b.text else ():',
+        "test_show_redact_masks_a_whole_turn_and_the_default_prints_it",
+    ),
+    (
+        "show --redact prints a session id that is itself a credential",
+        "__main__.py",
+        '        where = shown_as(f"{key}@{t.byte_offset}").replace(" ", "")',
+        '        where = f"{key}@{t.byte_offset}"',
+        "test_show_redact_masks_a_whole_turn_and_the_default_prints_it",
+    ),
+    (
+        "show --redact splits a masked address into two fields",
+        "__main__.py",
+        '        where = shown_as(f"{key}@{t.byte_offset}").replace(" ", "")',
+        '        where = shown_as(f"{key}@{t.byte_offset}")',
+        "test_show_redact_masks_a_whole_turn_and_the_default_prints_it",
+    ),
+    (
+        "show --redact prints a tool's name unmasked",
+        "__main__.py",
+        '            print("  " + shown_as(" ".join([b.kind, *(b.tool_name or "").split()])))',
+        '            print("  " + " ".join([b.kind, *(b.tool_name or "").split()]))',
+        "test_show_redact_masks_a_whole_turn_and_the_default_prints_it",
+    ),
+    (
+        # show prints the line breaks, so only the mask's own collapse joins one.
+        "show --redact masks without joining a key header a line break split",
+        "__main__.py",
+        "functools.partial(redact.mask, collapse=True) if args.redact else str\n"
+        "    lo = max(0, at - args.context)",
+        "functools.partial(redact.mask, collapse=False) if args.redact else str\n"
+        "    lo = max(0, at - args.context)",
+        "test_show_redact_joins_a_key_header_a_line_break_split",
+    ),
+    (
+        # `surrogateescape` round-trips U+DC80-U+DCFF only; `\ud83d` raised.
+        "show --redact stops on a lone surrogate the mask cannot encode",
+        "redact.py",
+        '    data = text.encode("utf-8", "surrogatepass")',
+        '    data = text.encode("utf-8", "surrogateescape")',
+        "test_show_redact_prints_a_turn_that_holds_a_lone_surrogate",
+    ),
+    (
+        "show refuses a masked address as one recall never printed",
+        "__main__.py",
+        '        if "…[" in args.address:',
+        "        if False:",
+        "test_a_masked_address_is_refused_as_masked_not_as_mistyped",
+    ),
+    (
+        # The copy is shorter by every run it narrowed, so its offsets are not
+        # the text's: unmapped, the mask eats the bytes before the key.
+        "the collapsed scan masks at the copy's offsets, not the text's",
+        "redact.py",
+        "        return x if i < 0 else ends[i] + x - spaces[i] - 1",
+        "        return x",
+        "test_show_redact_joins_a_key_header_a_line_break_split",
+    ),
     # --- E7 index-F8: the caps bound the shape of the input, not its cost -- #
     (
         "sumy's own quadratic idf is used again",
@@ -4597,7 +4796,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "06 mutants",
+        "a full pass is 6" + "62 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5426,6 +5625,63 @@ MUTANTS = [
         "    if False:\n",
         "test_a_non_positive_count_is_refused_at_the_command_line",
     ),
+    # `gitmemory show`: the address is input, and the output is a terminal's.
+    (
+        "show takes an address's names without the store's path rule",
+        "__main__.py",
+        '        agent, session_id = store.identity(m[1], m[2]) if m else ("", "")',
+        '        agent, session_id = (m[1], m[2]) if m else ("", "")',
+        "test_a_malformed_or_escaping_address_is_not_an_address",
+    ),
+    (
+        "show reads an Arabic-Indic digit as an offset",
+        "__main__.py",
+        '_ADDRESS = re.compile(r"([^/]+)/([^/]+)/g([0-9]+)@([0-9]+)\\Z")',
+        '_ADDRESS = re.compile(r"([^/]+)/([^/]+)/g(\\d+)@(\\d+)\\Z")',
+        "test_a_malformed_or_escaping_address_is_not_an_address",
+    ),
+    (
+        "show picks one of two manifests that claim an address",
+        "__main__.py",
+        "    if len(found) != 1:",
+        "    if not found:",
+        "test_two_manifests_claiming_one_address_are_refused",
+    ),
+    (
+        "show prints a credential-shaped session id in its error",
+        "__main__.py",
+        '    said = redact.safe_path(f"{m[1]}/{m[2]}/g{gen:02d}")',
+        "    said = key",
+        "test_a_credential_in_an_address_is_masked_in_the_error",
+    ),
+    (
+        "show masks the lowercased key, which hides an AWS key id",
+        "__main__.py",
+        '    said = redact.safe_path(f"{m[1]}/{m[2]}/g{gen:02d}")',
+        "    said = redact.safe_path(key)",
+        "test_a_credential_in_an_address_is_masked_in_the_error",
+    ),
+    (
+        "show prints a tool name's newline, so a transcript forges a header",
+        "__main__.py",
+        '            print("  " + shown_as(" ".join([b.kind, *(b.tool_name or "").split()])))',
+        '            print("  " + shown_as(" ".join([b.kind, *filter(None, [b.tool_name])])))',
+        "test_a_transcript_cannot_forge_a_show_header_or_reach_the_terminal",
+    ),
+    (
+        "show splits block text before a carriage return is escaped",
+        "__main__.py",
+        '            for line in shown_as(b.text).split("\\n") if b.text else ():',
+        "            for line in shown_as(b.text).splitlines() if b.text else ():",
+        "test_a_transcript_cannot_forge_a_show_header_or_reach_the_terminal",
+    ),
+    (
+        "show takes a negative --context and prints nothing",
+        "__main__.py",
+        '"-C", "--context", type=_count,',
+        '"-C", "--context", type=int,',
+        "test_show_on_no_store_and_a_negative_context_exit_2",
+    ),
     (
         "every ssh login name but git is refused as a credential",
         "redact.py",
@@ -5500,6 +5756,179 @@ MUTANTS = [
         "    except ZeroDivisionError as e:",
         "test_a_call_that_fails_every_retry_scores_wrong_and_is_counted",
     ),
+    # --- a subagent's dispatch prompt led `latest-user` as the user's word ---
+    (
+        "latest-user takes a subagent's dispatch prompt for the user's word",
+        "index.py",
+        "            and not h.is_sidechain\n",
+        "",
+        "test_a_subagent_prompt_is_not_the_users_word",
+    ),
+    (
+        "search reads every turn as a main session's",
+        "index.py",
+        "               COALESCE((\n"
+        "                   SELECT t.is_sidechain FROM turns t\n"
+        "                   WHERE t.session_key = ranked.session_key AND t.seq = ranked.turn_seq\n"
+        "               ), 0) AS is_sidechain",
+        "               0 AS is_sidechain",
+        "test_a_sidechain_line_inside_a_main_file_is_marked",
+    ),
+    (
+        "recall prints a subagent's turn with the user's role",
+        "__main__.py",
+        '        who = f"subagent:{h.role}" if h.is_sidechain else h.role',
+        "        who = h.role",
+        "test_recall_marks_a_subagent_turn",
+    ),
+    # --- `gitmemory init <agent>`: the config is appended to, or left alone ---
+    (
+        # `config.toml` also holds `[remote.*] allow_push`, so a rewrite revokes
+        # a push opt-in nobody asked to revoke.
+        "init overwrites config.toml instead of appending to it",
+        "__main__.py",
+        "    new = old + sep + table.encode()",
+        "    new = table.encode()",
+        "test_cli_init_appends_and_keeps_every_byte_already_there",
+    ),
+    (
+        "init follows a symlinked config.toml and replaces the link with a file",
+        "__main__.py",
+        "        st = os.lstat(path)",
+        "        st = os.stat(path)",
+        "test_cli_init_does_not_replace_a_symlinked_config",
+    ),
+    (
+        # The rename gives the name a new inode; the dotfile keeps the old bytes.
+        "init replaces a hard-linked config.toml and splits it from the other name",
+        "__main__.py",
+        "        if st.st_nlink > 1:",
+        "        if False:",
+        "test_cli_init_does_not_split_a_hard_linked_config",
+    ),
+    (
+        # Unreadable taken for absent: the file is replaced by the table alone.
+        "init takes a config.toml it cannot read for a missing one",
+        "__main__.py",
+        '    except FileNotFoundError:\n        return b""',
+        '    except OSError:\n        return b""',
+        "test_cli_init_says_error_and_exits_2_when_it_could_not_look",
+    ),
+    (
+        # init prints this as its reason; the store contains the root, not
+        # the other way round.
+        "a root inside the store is said to contain the store",
+        "daemon.py",
+        '                    how = "is inside the store"',
+        '                    how = "contains the store itself"',
+        "test_cli_init_refuses_a_table_the_watcher_would_skip_and_writes_nothing",
+    ),
+    (
+        # The table is written, and then skipped by the watcher on every pass.
+        "init writes a table the watcher would skip",
+        "__main__.py",
+        "    if not any(\n        w.agent == args.agent and real in w.roots\n",
+        "    if False and not any(\n        w.agent == args.agent and real in w.roots\n",
+        "test_cli_init_refuses_a_table_the_watcher_would_skip_and_writes_nothing",
+    ),
+    (
+        # `discover` gives a root to the first watch naming it: dead on arrival.
+        "init adds a second watch on a root another agent already watches",
+        "__main__.py",
+        '            return _refuse(f"{path} already watches {root} as {w.agent!r}")',
+        "            continue",
+        "test_cli_init_refuses_a_root_another_agent_already_watches",
+    ),
+    (
+        # Two inits read the same bytes; the later rename drops the other's
+        # table, and both say "added".
+        "init renames over a config another init wrote after it read it",
+        "__main__.py",
+        "        if _config_bytes(path) != old:",
+        "        if False:",
+        "test_cli_init_says_so_when_another_init_wrote_first",
+    ),
+    (
+        "a killed init's temp copy of config.toml is committed",
+        "gitrepo.py",
+        "/config.toml.tmp.*\n",
+        "",
+        "test_cli_init_leaves_no_temp_the_watcher_would_commit",
+    ),
+    # --- `gitmemory service install`: the file a user service manager runs ---
+    (
+        "service install overwrites a unit file that is already there",
+        "service.py",
+        "os.O_WRONLY | os.O_CREAT | os.O_EXCL",
+        "os.O_WRONLY | os.O_CREAT | os.O_TRUNC",
+        "test_service_install_refuses_to_overwrite_an_existing_file",
+    ),
+    (
+        "the service runs python -m without -P, so a gitmemory.py in $HOME shadows it",
+        "service.py",
+        'sys.executable, "-P", "-m", "gitmemory"',
+        'sys.executable, "-m", "gitmemory"',
+        "test_the_installed_service_runs_the_watcher_from_its_own_working_directory",
+    ),
+    (
+        "the service resolves sys.executable to an interpreter outside the venv",
+        "service.py",
+        "return [sys.executable, ",
+        "return [os.path.realpath(sys.executable), ",
+        "test_the_installed_service_runs_the_watcher_from_its_own_working_directory",
+    ),
+    (
+        # The quoting test's decoder used to turn `%%` into `%`, which let an
+        # undoubled `%h` through as itself: this mutant survived. [review]
+        "the unit leaves % undoubled, so a store path spelling %h names the home directory",
+        "service.py",
+        '.replace("%", "%%")',
+        '.replace("%", "%")',
+        "test_a_unit_survives_a_home_with_quotes_percent_and_dollar_in_it",
+    ),
+    (
+        "ExecStart leaves $ undoubled, so a store path spelling $HOME is expanded",
+        "service.py",
+        "_word(w.replace('$', '$$'))",
+        "_word(w)",
+        "test_a_unit_survives_a_home_with_quotes_percent_and_dollar_in_it",
+    ),
+    (
+        "the printed removal waits on bootout, so a plist never bootstrapped is never removed",
+        "service.py",
+        'f"launchctl bootout {job}; rm {shlex.quote(target)}"',
+        'f"launchctl bootout {job} && rm {shlex.quote(target)}"',
+        "test_the_printed_removal_works_when_the_job_was_never_started",
+    ),
+    (
+        "the printed systemd removal leaves the manager holding the unit it removed",
+        "service.py",
+        "; rm {shlex.quote(target)}; {ctl} daemon-reload",
+        "; rm {shlex.quote(target)}",
+        "test_service_install_writes_a_systemd_user_unit_and_starts_nothing",
+    ),
+    # --- a captured amount said for a person ---
+    (
+        "the watch line goes back to a bare byte count",
+        "daemon.py",
+        "+{size_text(result.appended)} ",
+        "+{result.appended}B ",
+        "test_the_watch_line_says_how_much_in_units_a_person_reads",
+    ),
+    (
+        "capture's result line goes back to a bare byte count",
+        "__main__.py",
+        "    added = daemon.size_text(cap.appended)",
+        '    added = f"{cap.appended}B"',
+        "test_cli_capture_says_how_much_in_units_and_where_in_bytes",
+    ),
+    (
+        "a size just under the next unit rounds up to 1000.0 of this one",
+        "daemon.py",
+        '        if x < 999.95 or unit == "TB":',
+        '        if x < 1000 or unit == "TB":',
+        "test_a_byte_count_is_said_for_a_person_and_exactly",
+    ),
 ]
 
 
@@ -5530,12 +5959,13 @@ def run(args: list[str]) -> int:
     figure depends on something the docstring used to get wrong. `addopts`
     carries `-m 'not corpus'`, but only one test is marked `corpus`; the ~328
     conformance cases are gated on the `.conformance/` clones being present, not
-    on a marker. So this is the 955-test offline suite on a machine without the
-    clones and the 1280-test suite on a machine with them — **measured**, 81 s
-    for the former on the author's laptop. It said "about a second" from E3
-    until somebody read it next to the "about a minute" nine lines down and
-    noticed the same call described twice, an order of magnitude apart.
-    [E3; review: docs, claims]
+    on a marker. So this is the offline suite on a machine without the clones
+    and the corpus-on suite on a machine with them — **measured**, 81 s for the
+    former on the author's laptop, when the two were 955 and 1280 tests; both
+    have grown since and it has not been re-timed. It said "about a second"
+    from E3 until somebody read it next to the "about a minute" nine lines
+    down and noticed the same call described twice, an order of magnitude
+    apart. [E3; review: docs, claims]
 
     `ANCHOR_TEST` as well, for the reason written where it is defined: it is the
     one test in the suite that is *supposed* to fail while a mutant is applied,
@@ -5652,19 +6082,20 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 606 mutants × two suite runs —
+    The filter exists because a full pass is 662 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
-    for the other 567 or trusting the new one untested.
+    for every other row or trusting the new one untested.
 
     Cost: **measured**, three rows timed end to end at 3.7 s, 17.1 s and
     17.2 s, on a machine with the `.conformance/` clones — so against the
-    1280-test suite, not the 955-test offline one (`run` explains why the two
-    differ). **Estimated** from those, a full pass is roughly one to two and a
-    half hours. The spread is not noise and does not average away — the first
-    of the two runs is `-x`, so a row costs however long the suite takes to
-    *reach* the test the mutant breaks, and that is a position in collection
-    order, not a property of the row. A row the suite misses entirely pays for
-    the whole suite instead.
+    corpus-on suite, not the offline one (`run` explains why the two differ),
+    when they were 1280 and 955 tests. **Estimated** from those, a full pass
+    was then roughly one to two and a half hours; the suite and the index have
+    both grown since, and neither figure has been re-timed. The spread is not
+    noise and does not average away — the first of the two runs is `-x`, so a
+    row costs however long the suite takes to *reach* the test the mutant
+    breaks, and that is a position in collection order, not a property of the
+    row. A row the suite misses entirely pays for the whole suite instead.
 
     Every figure in this paragraph had drifted: "41 s a row", "1,126-test",
     "71 verdicts in 49 minutes" and "about six hours" were all carried forward

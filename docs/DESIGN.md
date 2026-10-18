@@ -32,6 +32,9 @@ Two properties, and they are the whole product:
   **No data from this machine is ingested, copied, or committed. Ever.**
 - Test corpora are synthetic or public-benchmark-derived.
 - Userspace only: no `crontab`, no `sudo`, no Docker. LaunchAgent is the keep-alive.
+  **[2026-10-18 — and on Linux a systemd user unit. `gitmemory service install` writes either
+  one, as the user, and starts neither: enabling it is the user's step, as installing the hook
+  is.]**
 - Local-first. No network by default. No remote configured by default.
 - Apache-2.0.
 
@@ -199,6 +202,10 @@ $GITMEMORY_HOME/                      # default ~/.gitmemory
 Each capture commits **only the bytes appended since the last recorded offset**. Consequences:
 
 1. **Zero duplication.** Stored bytes == bytes the agent ever wrote, not a multiple.
+   **[2026-10-18 — true of `raw/`, not of the store on disk. `.git/` keeps a zlib-compressed copy
+   of the same bytes and `index/` holds their text again, so budget about twice what you capture,
+   more if it compresses poorly; [watching.md](watching.md#how-much-disk-it-takes) has the
+   measurements.]**
 2. **Plain text, never pre-compressed.** Let git's zlib + delta work on text it understands.
    Pre-compressing defeats git's native packing.
 3. **Reconstruction is `cat` in filename order**, checked against a recorded whole-file sha256.
@@ -212,6 +219,13 @@ coalescing only changes where the cut points are, never whether they tile.
 **Raw is committed locally, always** — that is the thesis. Redaction applies at exactly two
 boundaries: anything written to `derived/`, and anything **`gitmemory push`** sends. **`push` is
 opt-in per remote and refuses unless the redaction gate passed.** Default config has no remote.
+**[2026-10-18 — `recall --redact` and `show --redact` are a third point, and they mask; they are
+not a gate. Off by default, because a store on the owner's own disk is still not an egress. The
+owner turns it on, or makes it standing with `GITMEMORY_REDACT`, when their output goes on to a
+model provider through the plugin's skill. Both tiers are masked, unlike `derived/` below, because a
+mask costs the span and not the sentence. Neither refuses anything, and `raw/` and the index stay
+verbatim. [USAGE.md](USAGE.md#masking-credentials-in-what-it-prints) says what is masked, and
+what is not.]**
 
 Not "anything that leaves the machine" — that claim was wider than the code and is withdrawn
 **[E7]**. The store is an ordinary git repository in a directory the owner can read. A `git push`
@@ -225,8 +239,8 @@ deleted is absent from the first two and present in the third **[E7]**.
 A startup assertion refuses to run if `$GITMEMORY_HOME` is inside another work tree, and every
 git call is explicit `git -C $GITMEMORY_HOME` — never cwd-inherited **[R1]**.
 
-The `derived/` boundary acts on the **HIGH tier only** — the nine issuer-anchored shapes, not the
-three SUSPECT ones. A sentence carrying a high-confidence key is dropped before ranking and
+The `derived/` boundary acts on the **HIGH tier only** — the twelve issuer-anchored shapes, not
+the four SUSPECT ones. A sentence carrying a high-confidence key is dropped before ranking and
 counted in `sentences_redacted`; `derive._write` then refuses outright to publish a payload that
 still contains one, because an artifact reaching that door with a key in it is a bug upstream, not
 a sentence to quietly lose. SUSPECT is excluded deliberately: it is `password: "..."`-shaped and
@@ -625,8 +639,14 @@ answers the token-burn objection.)*
 **UNVERIFIED, must be tested before claiming coexistence:** whether multiple `UserPromptSubmit`
 hooks' `additionalContext` outputs concatenate or last-wins.
 
-**As built:** the CLI only. There is no MCP server and no `UserPromptSubmit` hook in `src/`, so
-nothing is injected; injection cost is carried as `NOT BUILT` on the dashboard (§2.9).
+**As built:** the CLI, and the Claude Code plugin's recall skill (`skills/recall/SKILL.md`,
+`/gitmemory:recall`), which has the agent run `recall` and `show` itself and quote what they
+print with each line's address. The skill is a search the agent runs when the user refers to an
+earlier decision or runs the skill, not an injection: there is no MCP server and no
+`UserPromptSubmit` hook in `src/`, so nothing is injected; injection cost is carried as
+`NOT BUILT` on the dashboard (§2.9). `recall` prints each hit's address, and `show` resolves one
+to the whole turn from the store, not the index, so a stale or tampered index cannot change what
+the address is shown to say.
 
 ### 2.9 Dashboard
 

@@ -1,6 +1,6 @@
 [project]
 name = "gitmemory"
-version = "0.1.0"
+version = "0.2.0"
 description = "Git-versioned, contiguity-checked memory for agents that keep a local, append-only, line-delimited transcript"
 readme = "README.md"
 requires-python = ">=3.13"

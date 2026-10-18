@@ -67,6 +67,7 @@ right of `git` can be deleted and rebuilt, so `index/` is gitignored and
 |---|---|---|---|
 | Trigger | [`hook/gitmemory-hook.sh`](../hook/gitmemory-hook.sh) | Writes the hook's stdin to one spool file and exits 0. No git, no Python, no network. It adds latency, not correctness | §2.3 |
 | Trigger | [`daemon.py`](../src/gitmemory/daemon.py) | The watcher. It tails the configured roots by `(path, inode, offset, mtime)`, drains the spool, captures and commits. This is what makes capture a guarantee | §2.3 |
+| Trigger | [`service.py`](../src/gitmemory/service.py) | Writes the systemd user unit or LaunchAgent that keeps the watcher running, with this Python, the store and git's directory spelled out in it. It never starts one | §2.3 |
 | Parse | [`adapters/`](../src/gitmemory/adapters/) | Turns agent-native bytes into canonical records. An adapter is two symbols, `AGENT` and `parse(path)`, and it may not touch git, the index or derivation | §2.1–2.2 |
 | Parse | [`records.py`](../src/gitmemory/records.py) | Canonical `Session` / `Turn` / `Block` / `Event`, with content-derived IDs and sorted-key JSON, so the committed tree stays diffable | §2.1 |
 | Parse | [`jsonl.py`](../src/gitmemory/jsonl.py) | A streaming JSONL reader with exact byte offsets, vendored from fable (MIT) | §2.5b |
@@ -74,9 +75,9 @@ right of `git` can be deleted and rebuilt, so `index/` is gitignored and
 | Store | [`gitrepo.py`](../src/gitmemory/gitrepo.py) | The only module that runs git, always as `git -C <home>` | §2.4 |
 | Derive | [`index.py`](../src/gitmemory/index.py) | A SQLite FTS5 (BM25) index rebuilt from raw bytes. It is never authoritative | §2.7 |
 | Derive | [`derive.py`](../src/gitmemory/derive.py), [`graph.py`](../src/gitmemory/graph.py) | Key ideas and a timeline. The decision extraction behind the graph is opt-in (`--graph`) | §2.6 |
-| Surface | [`__main__.py`](../src/gitmemory/__main__.py) | The CLI: `capture watch verify push index derive dashboard recall` | §2.8 |
+| Surface | [`__main__.py`](../src/gitmemory/__main__.py) | The CLI: `init capture watch service verify push index derive dashboard recall show` | §2.8 |
 | Surface | [`dashboard.py`](../src/gitmemory/dashboard.py) | Datasette over the index, `--immutable`, on loopback, behind a single-use sign-in URL | §2.9 |
-| Egress | [`redact.py`](../src/gitmemory/redact.py) | The only place secrets are looked for. It stands at `push` and scans the files, the segment seams and the object graph a push would transmit | §2.4 |
+| Egress | [`redact.py`](../src/gitmemory/redact.py) | The only place secrets are looked for. It stands at `push` and scans the files, the segment seams and the object graph a push would transmit. `recall --redact` and `show --redact` use its detectors to mask what they print | §2.4 |
 
 ## On disk
 
@@ -92,13 +93,14 @@ $GITMEMORY_HOME/                      # default ~/.gitmemory; a git repository
   index/                                   # gitignored: SQLite is not diffable
   spool/                                   # gitignored: one file per hook fire
   .locks/                                  # gitignored: one per session
-  config.toml                              # watch roots; there is no default
+  config.toml                              # watch roots; no default (`init` writes one)
 ```
 
 A capture commits **only the bytes appended since the last recorded offset**,
-so the store holds each byte the agent wrote exactly once. If the source is
-rewritten (its prefix no longer matches), capture starts a new *generation*
-`g<NN+1>` rather than treating the rewrite as corruption. §2.5a.
+so `raw/` holds each byte the agent wrote exactly once; git's object store keeps
+its own compressed copy ([how much disk](watching.md#how-much-disk-it-takes)).
+If the source is rewritten (its prefix no longer matches), capture starts a new
+*generation* `g<NN+1>` rather than treating the rewrite as corruption. §2.5a.
 
 ## Trust boundaries
 

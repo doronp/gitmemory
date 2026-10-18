@@ -475,26 +475,34 @@ which is the load and not the shim.
 conformance cases the three third-party corpora add.
 
 ```sh
-# the fresh-checkout count: point both corpus variables at nothing
+# the fresh-checkout count: point both corpus variables at nothing, and HOME
+# at a new directory
+HOME=$(mktemp -d)/isolated-home \
 GITMEMORY_CC_FIXTURES=$PWD/no-such-corpus GITMEMORY_PI_FIXTURES=$PWD/no-such-corpus \
     uv run pytest -q --collect-only -p no:cacheprovider | tail -1
 
 # with the corpora cloned by tests/fetch_fixtures.sh
-uv run pytest -q --collect-only -p no:cacheprovider | tail -1
+HOME=$(mktemp -d)/isolated-home uv run pytest -q --collect-only -p no:cacheprovider | tail -1
 uv run pytest -q --collect-only -p no:cacheprovider | grep -c '\.jsonl\]$'
 ```
 
-**Expected:** `1027/1028 tests collected (1 deselected)`, then
-`1352/1353 tests collected (1 deselected)`, then `328`. The deselected test is
+**Expected:** `1134/1135 tests collected (1 deselected)`, then
+`1459/1460 tests collected (1 deselected)`, then `328`. The deselected test is
 the LongMemEval corpus test, which is opt-in:
 `uv run pytest -q -m corpus` after `bench/fetch_longmemeval.sh`. The README's
-paragraph on why 1,027 + 328 is 1,352 and not 1,355 is the arithmetic of these
+paragraph on why 1,134 + 328 is 1,459 and not 1,462 is the arithmetic of these
 three numbers. All three were run while writing this guide.
 
-`tests/test_docs.py` holds the README to the first and third numbers, so a
-drifted count fails the suite. To run the suite rather than count it:
-`uv run pytest -q`, which CONTRIBUTING.md gives as about a minute and a half,
-no network.
+The `HOME` is the one the suite gives itself. The owner-data scan adds two
+cases named after your account, the last part of `$HOME`, and leaves them out
+when that name is shorter than four characters or a generic one such as
+`ubuntu`, `runner` or `root`. Without it, such an account collects two fewer.
+
+`tests/test_docs.py` holds the README to all three numbers, the second and
+third only where the corpora are cloned, and this guide, §5c's figure
+included, to the README, so a drifted count fails the suite. To run the suite
+rather than count it: `uv run pytest -q`, which CONTRIBUTING.md gives as about
+a minute and a half, no network.
 
 ### 5c. Negative controls
 
@@ -505,7 +513,7 @@ test fail. The count is the number of rows in `tests/mutate_index.py`.
 uv run python -c "import sys; sys.path.insert(0, 'tests'); from mutate_index import MUTANTS; print(len(MUTANTS))"
 ```
 
-**Expected:** `606`. Checked while writing this guide.
+**Expected:** `662`. Checked while writing this guide.
 
 To run the controls rather than count them:
 
@@ -518,7 +526,8 @@ uv run python tests/mutate_index.py "verify"   # only mutants whose name contain
 and `bench/` in place and restores each one after its row, so run it on a clean
 checkout that nothing else is editing. Its docstring estimates a full pass at
 one to two and a half hours, from three rows timed at 3.7 s, 17.1 s and
-17.2 s. It exits 0 only if every mutant is caught by its intended test.
+17.2 s on a smaller suite. It exits 0 only if every mutant is caught by its
+intended test.
 
 ## What cannot be reproduced exactly, and why
 

@@ -35,6 +35,10 @@ def _no_real_home(tmp_path, monkeypatch):
     home.mkdir(exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.delenv("GITMEMORY_HOME", raising=False)
+    # The docs tell the owner to make masking standing in `settings.json`, and a
+    # Claude Code session running this suite inherits that: every test that
+    # reads recall's default output would read the masked one instead.
+    monkeypatch.delenv("GITMEMORY_REDACT", raising=False)
     return home
 
 

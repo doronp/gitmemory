@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from gitmemory import gitrepo, index, records, store
+from gitmemory import gitrepo, index, records, redact, store
 from gitmemory.__main__ import main
 
 
@@ -1550,3 +1550,402 @@ def test_the_default_does_not_let_a_forgetful_agent_outrank_the_users_rule(home,
 
     assert roles() == ["user/text", "user/tool_result", "assistant/text"]
     assert roles("--policy", "latest") == ["user/tool_result", "assistant/text", "user/text"]
+
+
+def sidechain(uid: str, text: str, ts: str) -> dict:
+    """A subagent's turn. Claude Code marks it `isSidechain` wherever it is
+    written, and its first one is user-role text the parent agent wrote: the
+    dispatch prompt."""
+    return dated(uid, text, ts) | {"isSidechain": True, "agentId": "a1"}
+
+
+def with_a_subagent(home: str, tmp_path: Path) -> None:
+    """The user's rule in a main session, then the opposite a day later in a
+    dispatch prompt to one of its subagents. Claude Code's own layout:
+    `<project>/<session>.jsonl` and `<project>/<session>/subagents/agent-<id>.jsonl`."""
+    parent = tmp_path / "proj" / "s1.jsonl"
+    child = tmp_path / "proj" / "s1" / "subagents" / "agent-a1.jsonl"
+    child.parent.mkdir(parents=True)
+    write(
+        str(parent),
+        [
+            dated("u1", "Don't add a retry loop around the upload.", "2026-09-28T10:00:00Z"),
+            assistant("a1", [{"type": "text", "text": "Understood: the upload has no retry loop."}])
+            | {"timestamp": "2026-09-28T11:00:00Z"},
+        ],
+    )
+    prompt = sidechain("u2", "Add a retry loop around the upload.", "2026-09-29T09:00:00Z")
+    write(str(child), [prompt])
+    store.capture(str(parent), "claude-code", "s1", home=home)
+    store.capture(str(child), "claude-code", "agent-a1", home=home)
+    index.build(home)
+
+
+def test_a_subagent_prompt_is_not_the_users_word(home, tmp_path):
+    """The forgetful agent again, arriving through a dispatch prompt rather than a
+    proposal. The prompt is user text, newer than the rule and matching it, so
+    the default led with it as the user's own words. The turn is marked, so it
+    is ranked with the agent's turns, where the parent's instructions belong."""
+    with_a_subagent(home, tmp_path)
+    db = index.open_db(index.db_path(home))
+    try:
+        hits = index.search(db, "retry loop upload")
+    finally:
+        db.close()
+    ordered = index.latest_user(hits)
+    assert ordered[0].text == "Don't add a retry loop around the upload."
+    assert [h.is_sidechain for h in ordered] == [False, True, False]
+
+
+def test_recall_marks_a_subagent_turn(home, tmp_path, capsys):
+    """A prefix on the role, not a new column: `split()[3]` is role/kind to
+    whatever parses these lines, this file included, and a main session's
+    role/kind carries no prefix."""
+    with_a_subagent(home, tmp_path)
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "retry loop upload"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split()[3] for line in lines] == [
+        "user/text",
+        "subagent:user/text",
+        "assistant/text",
+    ]
+    assert lines[1].split()[2].startswith("claude-code/agent-a1/")
+
+
+def test_a_sidechain_line_inside_a_main_file_is_marked(home, src):
+    """Older Claude Code wrote a subagent's turns into the parent's own file, each
+    line marked. The mark is read per turn, so those are caught too, which no
+    rule on the file's path can do."""
+    db = built(
+        home,
+        src,
+        [
+            dated("u1", "keep the upload single-shot", "2026-09-28T10:00:00Z"),
+            sidechain("u2", "review the upload code", "2026-09-28T10:05:00Z"),
+        ],
+    )
+    try:
+        hits = index.search(db, "upload")
+    finally:
+        db.close()
+    assert {h.text: h.is_sidechain for h in hits} == {
+        "keep the upload single-shot": False,
+        "review the upload code": True,
+    }
+
+
+# --------------------------------------------------------------------------- #
+# the hook rang and no watcher answered
+# --------------------------------------------------------------------------- #
+
+
+def _ring(home: str, age: float, name: str = "4242-SessionEnd.json") -> None:
+    """A spool record as the shim leaves it, arrived `age` seconds ago."""
+    spool = os.path.join(home, "spool")
+    os.makedirs(spool, exist_ok=True)
+    path = os.path.join(spool, name)
+    with open(path, "w") as fh:
+        fh.write('{"transcript_path": "/nowhere/s.jsonl"}')
+    then = time.time() - age
+    os.utime(path, (then, then))
+
+
+def _indexed(home: str, src: str) -> None:
+    write(src, [user("u1", "the peculiar marmoset")])
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+
+
+def test_recall_says_the_hook_rang_and_no_watcher_answered(home, src, capsys):
+    """A stopped watcher was invisible from `recall`: it answered from the store
+    as it was when the watcher stopped, and said nothing. Time since the last
+    capture cannot say so, because a running watcher on an idle machine captures
+    nothing either. A record the watcher would have drained within one poll can.
+    Before the answer, like the truncation notice. [install feedback]"""
+    _indexed(home, src)
+    _ring(home, 3 * 3600 + 5)
+    _ring(home, 60, "4243-PreCompact.json")
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "marmoset"]) == 0
+    out, err = capsys.readouterr()
+    assert "marmoset" in out and "uncollected" not in out, out
+    assert err == (
+        "2 hook record(s) uncollected, the oldest for 3 hours: is `gitmemory watch` "
+        f"running for {home}? These results may be missing everything said since.\n"
+    ), err
+    assert main(["--home", home, "recall", "aardvark"]) == 0
+    err = capsys.readouterr().err
+    assert err.index("uncollected") < err.index("no matches"), err
+    # Each unit starts at 2, so the number is never 1 and its plural always fits.
+    for age, said in (
+        (90 * 60, "90 minutes"),
+        (2 * 3600 - 30, "119 minutes"),
+        (2 * 3600 + 30, "2 hours"),
+        (2 * 86400 - 30, "47 hours"),
+        (2 * 86400 + 30, "2 days"),
+        (3 * 86400, "3 days"),
+    ):
+        _ring(home, age)
+        assert main(["--home", home, "recall", "marmoset"]) == 0
+        assert f"the oldest for {said}:" in capsys.readouterr().err
+
+
+def test_recall_says_nothing_about_a_spool_a_watcher_could_still_be_draining(
+    home, src, capsys
+):
+    """Silent below the threshold, on a hook still writing, and under `--db`,
+    whose index records no store to look in."""
+    _indexed(home, src)
+    _ring(home, 30 * 60)
+    _ring(home, 3 * 3600, ".tmp-4242-0")
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "marmoset"]) == 0
+    assert capsys.readouterr().err == "", "a fresh record or a hook's temp was reported"
+    _ring(home, 3 * 3600)
+    assert main(["--home", home, "recall", "marmoset", "--db", index.db_path(home)]) == 0
+    assert capsys.readouterr().err == "", "--db names an index, not a store"
+
+
+def test_one_watcher_pass_is_what_clears_it(home, src, capsys):
+    """The notice is true exactly as long as `drain_spool` has not run: every
+    pass consumes every complete record, covered or not. A directory in the
+    spool is no record and no pass can unlink it, so counting it warned for
+    ever with a watcher running. [review]"""
+    root = json.dumps(os.path.dirname(src))
+    with open(os.path.join(home, "config.toml"), "w") as fh:
+        fh.write(f'[[watch]]\nagent = "claude-code"\nroots = [{root}]\n')
+    _indexed(home, src)
+    _ring(home, 3 * 3600)
+    stuck = os.path.join(home, "spool", "4244-Stop.json")
+    os.mkdir(stuck)
+    os.utime(stuck, (time.time() - 3 * 3600,) * 2)
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "marmoset"]) == 0
+    err = capsys.readouterr().err
+    assert err.startswith("1 hook record(s) uncollected, the oldest for 3 hours:"), err
+    assert main(["--home", home, "watch", "--once"]) == 0
+    assert os.path.isdir(stuck), "the pass removed the directory; this test no longer bites"
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "marmoset"]) == 0
+    assert "uncollected" not in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# recall --redact: the owner asks for the gate's shapes to be masked
+# --------------------------------------------------------------------------- #
+
+# Synthetic, right shape, and assembled here so that no credential-shaped
+# literal sits in the tree for a push scanner to find.
+AKIA = "AKIA" + "ZQ" * 8
+PEM_BODY = "b" * 64
+PEM = (
+    "-----BEGIN RSA " + "PRIVATE KEY-----\n" + PEM_BODY + "\n" + PEM_BODY + "\n"
+    "-----END RSA " + "PRIVATE KEY-----"
+)
+
+
+def _recall_out(home: str, capsys, *argv: str) -> str:
+    assert main(["--home", home, "recall", *argv]) == 0
+    return capsys.readouterr().out
+
+
+def test_recall_redact_masks_a_key_the_160_character_cut_would_have_halved(home, src, capsys):
+    """Masked before the cut. The key starts at character 150, so the cut keeps
+    ten of its twenty characters, and ten match no detector: masking the
+    printed head instead would scan a fragment clean and print it."""
+    text = "zebra " * 25 + AKIA + " tail"
+    assert text.index(AKIA) == 150
+    built(home, src, [user("u1", text)]).close()
+    capsys.readouterr()
+    assert AKIA[:10] in _recall_out(home, capsys, "zebra"), "the default stays verbatim"
+    out = _recall_out(home, capsys, "zebra", "--redact")
+    assert "AKIA…[" in out and AKIA[4:10] not in out, out
+
+
+def test_recall_redact_masks_a_private_key_body_and_not_only_its_header(home, src, capsys):
+    """`private_key_block` matches the BEGIN line, and the key is the base64
+    under it. Masking the match alone printed `----…[31 bytes]` followed by
+    every byte of the key."""
+    built(home, src, [user("u1", "pemcase " + PEM + " after the key")]).close()
+    capsys.readouterr()
+    assert PEM_BODY[:8] in _recall_out(home, capsys, "pemcase"), "premise: the body is there"
+    out = _recall_out(home, capsys, "pemcase", "--redact")
+    assert PEM_BODY[:8] not in out and "PRIVATE KEY" not in out, out
+    assert "pemcase ----…[" in out and "after the key" in out, out
+
+
+def test_recall_redact_masks_a_header_that_only_the_collapse_assembles(home, src, capsys):
+    """`-----BEGIN RSA\\nPRIVATE KEY-----` scans clean as written and is a
+    header once the line is flattened, and the flattened line is what recall
+    prints. So the mask scans a flattened copy too, as `graph._label` found it
+    had to, and as `show`'s does. [E7b L3-F1]"""
+    split = PEM.replace("RSA PRIVATE", "RSA\nPRIVATE", 1)
+    assert redact.mask(split) == split, "premise: nothing matches before the collapse"
+    built(home, src, [user("u1", "pemcase " + split)]).close()
+    capsys.readouterr()
+    out = _recall_out(home, capsys, "pemcase", "--redact")
+    assert PEM_BODY[:8] not in out and "PRIVATE KEY" not in out, out
+
+
+def test_recall_redact_masks_a_value_with_a_unicode_space_in_it(home, src, capsys):
+    """`str.split()` breaks on a no-break space, and the gate's bytes patterns
+    read one as part of the token. Collapsing first cut the value below the
+    twelve-character floor, so `recall --redact` printed what `show --redact`
+    and the push gate both flag. The collapse that joins a split header is the
+    mask's own, on ASCII whitespace, as `show`'s is."""
+    secret = "pass" + "word=abc defghijklmnop"
+    flat = " ".join(secret.split())
+    assert redact.mask(flat) == flat and redact.mask(secret) != secret, "premise"
+    built(home, src, [user("u1", f"gnu note {secret} end")]).close()
+    capsys.readouterr()
+    out = _recall_out(home, capsys, "gnu", "--redact")
+    assert "defghijklmnop" not in out and "gnu note pass…[" in out, out
+
+
+def test_recall_redact_masks_a_session_id_that_is_itself_a_credential(home, src, capsys):
+    """The address is printed too, and `_SAFE_RE` accepts a token as a session
+    id. Lowercase, because the store case-folds ids.
+
+    The masked address stays one column. The mask's marker has a space in it,
+    and with it `split()[3]` read `bytes]/g00@0` where role/kind belongs."""
+    ghp = "ghp_" + "a" * 36
+    write(src, [user("u1", "walrus note")])
+    store.capture(src, "claude-code", ghp, home=home)
+    index.build(home)
+    capsys.readouterr()
+    assert ghp in _recall_out(home, capsys, "walrus")
+    out = _recall_out(home, capsys, "walrus", "--redact")
+    assert ghp not in out and "/ghp_…[40bytes]/g00@0  user/text" in out, out
+    assert out.split()[3] == "user/text", out
+
+
+def test_recall_redact_masks_a_key_the_raw_bytes_only_spell_escaped(home, src, capsys):
+    """The push gate reads raw bytes and cannot see `\\u0073k-ant-…`. The index
+    holds the parsed text, where the escape is already the key, so recall's
+    mask sees what the push gate does not."""
+    key = "sk-ant-api03-" + "A1b2_-" * 15
+    with open(src, "ab") as fh:
+        fh.write(
+            b'{"type":"user","uuid":"u1","sessionId":"s1","message":{"role":"user",'
+            b'"content":"escaped \\u0073' + key[1:].encode() + b' unicorn"}}\n'
+        )
+    assert redact.scan_bytes(Path(src).read_bytes()) == [], "premise: the raw bytes scan clean"
+    store.capture(src, "claude-code", "sess", home=home)
+    index.build(home)
+    capsys.readouterr()
+    out = _recall_out(home, capsys, "unicorn", "--redact")
+    assert key[4:20] not in out and "sk-a…[103 bytes]" in out, out
+
+
+def test_gitmemory_redact_makes_masking_standing_and_0_turns_it_off(
+    home, src, capsys, monkeypatch
+):
+    """Unset, empty and `0` are off, and anything else is on, so a mistyped
+    value fails toward masking. Read when the parser is built, as
+    `GITMEMORY_POLICY` is."""
+    built(home, src, [user("u1", "aws " + AKIA + " done")]).close()
+    capsys.readouterr()
+    for value, masked in (("1", True), ("yes", True), ("0", False), ("", False)):
+        monkeypatch.setenv("GITMEMORY_REDACT", value)
+        assert (AKIA not in _recall_out(home, capsys, "aws")) is masked, value
+    monkeypatch.delenv("GITMEMORY_REDACT")
+    assert AKIA in _recall_out(home, capsys, "aws")
+    assert AKIA not in _recall_out(home, capsys, "aws", "--redact")
+
+
+def test_mask_returns_clean_text_unchanged_and_keeps_the_words_around_a_key():
+    clean = "the lock is held across the await, see a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+    assert redact.mask(clean) is clean
+    assert redact.mask(f"use {AKIA} for staging") == "use AKIA…[20 bytes] for staging"
+    # Each header runs to its own END line, not the last one in the text.
+    two = redact.mask(f"one {PEM} between {PEM} two")
+    assert two == f"one ----…[{len(PEM)} bytes] between ----…[{len(PEM)} bytes] two", two
+    # Cut before its END line, the rest of the text is the key, so the rest goes.
+    assert redact.mask("x " + PEM[:80]) == "x ----…[80 bytes]"
+    # A second key in the body is inside the header's span, and must not end it.
+    inner = PEM.replace(PEM_BODY + "\n", f"{PEM_BODY}\n{AKIA}\n", 1)
+    assert redact.mask(f"x {inner} y") == f"x ----…[{len(inner)} bytes] y"
+
+
+def test_recall_redact_masks_a_key_behind_a_character_the_index_spells_out(home, src, capsys):
+    """The push gate reads raw bytes, and a BOM, a zero-width space or a DEL in
+    front of a key is not a word character there, so the key's `\\b` holds and
+    the gate finds it. The index holds `records.safe_text`'s spelling of each,
+    `\\ufeff`, `\\u200b`, `\\x7f`, and every spelling ends in a word character:
+    the boundary was gone and `recall --redact` printed all three whole. A `cat`
+    of an `.env` saved with a BOM is the ordinary way in.
+
+    The password has a control inside its value, which a scan of the blanked
+    copy alone cuts to three characters and misses, so both scans stay."""
+    ghp = "ghp_" + "a" * 36
+    secret = "pass" + "word=abc" + "\x01" + "defghijklmn"
+    text = f"marmot \ufeff{AKIA} x\u200b{ghp} y\x7f{AKIA} z {secret} end"
+    line = {"type": "user", "uuid": "u1", "sessionId": "s1"}
+    line["message"] = {"role": "user", "content": text}
+    # Literal UTF-8, as Node's JSON.stringify writes it, which is what the gate reads.
+    with open(src, "wb") as fh:
+        fh.write(json.dumps(line, ensure_ascii=False).encode() + b"\n")
+    gate = [f.detector for f in redact.scan_bytes(Path(src).read_bytes())]
+    assert gate.count("aws_access_key_id") == 2 and "github_token" in gate, gate
+    assert "assigned_secret" in gate, gate
+    store.capture(src, "claude-code", "sess", home=home)
+    index.build(home)
+    capsys.readouterr()
+    assert AKIA in _recall_out(home, capsys, "marmot"), "premise: the default prints them"
+    out = _recall_out(home, capsys, "marmot", "--redact")
+    assert AKIA[4:10] not in out and ghp[4:20] not in out and "defghijklmn" not in out, out
+    assert "\\ufeffAKIA…[20 bytes] x\\u200bghp_…[40 bytes] y\\x7fAKIA…[20 bytes]" in out, out
+
+
+def test_mask_stays_linear_on_a_page_of_key_headers_and_an_end_line_that_never_closes(
+    monkeypatch,
+):
+    """Two ways the PEM widening went quadratic on text an agent fetched.
+
+    Each header searched for its own END line, so headers with none cost
+    headers x length: 16,000 of them (437 KB) took 2.4 s where `scan_bytes`
+    took 0.06 s, and a 2 MB tool_result of them kept `recall --redact` for
+    41 s. And the END pattern's unbounded runs retried every `KEY` in a
+    `-----END KEY KEY …` line to its end: 125 KB took 4.1 s.
+
+    The page of headers is counted, not timed: one header searches, and every
+    later one sits inside the span that search found. The END line is one
+    `search` whose cost is inside `re` and cannot be counted, so it is timed,
+    as `test_a_separator_free_megabyte_does_not_hang_the_build` is: about 10 s
+    at this size when quadratic, and 1.5 s is several times the linear cost.
+    """
+    header = "-----BEGIN " + "PRIVATE KEY-----\n"
+    real, searched = redact._PEM_END, []
+
+    class Counted:
+        def search(self, data, pos):
+            searched.append(pos)
+            return real.search(data, pos)
+
+    with monkeypatch.context() as m:
+        m.setattr(redact, "_PEM_END", Counted())
+        text = header * 2_000
+        assert redact.mask(text) == f"----…[{len(text)} bytes]"
+    assert searched == [len(header) - 1], f"{len(searched)} headers searched for an END line"
+
+    text = header + "-----END " + "KEY " * 50_000
+    started = time.monotonic()
+    out = redact.mask(text)
+    elapsed = time.monotonic() - started
+    assert out == f"----…[{len(text)} bytes]", out[:80]
+    assert elapsed < 1.5, f"the END line pattern went quadratic again: {elapsed:.2f}s"
+
+
+def test_recall_redact_keeps_a_subagent_turn_marked(home, tmp_path, capsys):
+    """The mask and the subagent mark compose. `--redact` changes what the
+    address and the text say, never which field role/kind is in or whose turn
+    a line is."""
+    with_a_subagent(home, tmp_path)
+    capsys.readouterr()
+    out = _recall_out(home, capsys, "retry loop upload", "--redact")
+    assert [line.split()[3] for line in out.splitlines()] == [
+        "user/text",
+        "subagent:user/text",
+        "assistant/text",
+    ], out

@@ -16,7 +16,8 @@ Three rules that are easy to get wrong and are therefore stated here:
   `config.toml` names. A product whose first run scans `~/.claude/projects`
   ingests its owner's entire history on install, which is the one thing this
   project promises not to do. The adapter documents the conventional path; the
-  config has to name it.
+  config has to name it. `gitmemory init <agent>` writes it there when asked
+  by name, and nothing reads `ROOTS` as a default.
 - **A spool record is a doorbell, not data.** It says something happened to a
   transcript. Everything else — how many bytes, where the boundary is, whether
   the file was rewritten — is re-derived from the source file. A record naming a
@@ -57,6 +58,11 @@ INTERVAL = 3600.0  # seconds between idle captures of one session (DESIGN.md §2
 ERROR_REPEAT = 3600.0
 POLL = 5.0  # seconds between ticks
 STALE_TMP = 3600.0  # a `.tmp-` this old is a killed hook, not a live one
+# A complete spool record this old means no watcher pass has run on this store
+# since it arrived: every pass drains every record, whatever it names. 720
+# default polls, and no further behind than `INTERVAL` already leaves a growing
+# session. Read by `recall`. Its own constant, for `ERROR_REPEAT`'s reason.
+STALE_RECORD = 3600.0
 
 # A module constant, not `Watch.pattern`: on a `slots=True` dataclass the class
 # attribute is the slot's `member_descriptor`, so reading the default off the
@@ -112,9 +118,18 @@ class Tick:
     # Segments this pass attested to without copying a byte — reclaimed from the
     # generation directory rather than read out of the source. The manifest
     # records them permanently; this is so the operator hears about it at the
-    # time, since a repair that shows up only as "+0B" reads like a quiet pass.
+    # time, since a repair that shows up only as a "+0B" commit reads like a
+    # quiet pass: with nothing captured, the log has no `captured` line at all.
     # Not an error: after a killed capture it is the correct outcome. [E7 fs-F4]
     adopted: list[str] = field(default_factory=list)
+
+
+# Where each shipped adapter's agent writes its transcripts, as docs/agents.md
+# lists them. Not a default: `load_watches` never reads this. Only `gitmemory
+# init <agent>` does, and it writes the table into `config.toml` because the
+# user named the agent, so the config still names every root that is watched.
+# Here and not on the adapters, whose contract is two symbols and nothing else.
+ROOTS = {"claude-code": "~/.claude/projects", "pi": "~/.pi/agent/sessions"}
 
 
 def load_watches(home: str, log=None) -> list[Watch]:
@@ -168,6 +183,14 @@ def load_watches(home: str, log=None) -> list[Watch]:
         # this and the specific message is the better one. [E4, review: daemon 3]
         say(f"{path} is not readable as text ({exc.__class__.__name__}); watching nothing")
         return []
+    return watches_from(cfg, path, home, say)
+
+
+def watches_from(cfg: dict, path: str, home: str, say) -> list[Watch]:
+    """The `[[watch]]` tables of a config already parsed, with every refusal
+    `load_watches` applies. Split out so `gitmemory init` asks the watcher's own
+    question of the table it is about to write, rather than keep a second copy
+    of these rules that drifts from the first."""
     out = []
     for n, entry in enumerate(cfg.get("watch") or []):
         where = f"{path} [[watch]] #{n + 1}"
@@ -254,7 +277,13 @@ def load_watches(home: str, log=None) -> list[Watch]:
                 # `~/.gitmemory` is safe only because `_hits` skips dotted
                 # components, which is why that skip is preserved rather than
                 # inherited. [E4, review: CLI 3]
-                say(f"{where}: root {r} contains the store itself; skipped")
+                #
+                # Two directions, two sentences: `gitmemory init` prints this as
+                # its reason, and a root under the store does not contain it.
+                how = "contains the store itself"
+                if not _inside(resolved, home):
+                    how = "is inside the store"
+                say(f"{where}: root {r} {how}; skipped")
                 continue
             kept.append(resolved)
         if kept:
@@ -464,6 +493,29 @@ def drain_spool(
             _unlink(path)
             tick.spool_dropped += 1
     return wanted, tick
+
+
+def uncollected(home: str) -> tuple[int, float]:
+    """`(complete records in the spool, age of the oldest in seconds)`.
+
+    `drain_spool`'s rule for what a record is: a dot-name is a hook still
+    writing. A directory is not one either: no pass can unlink it, so counting
+    it warned for ever with a watcher running. Arrival is the record's own
+    mtime (hook/README.md). Read-only and total, because `recall` asks:
+    anything it cannot list is `(0, 0.0)`.
+    """
+    now = time.time()
+    ages = []
+    try:
+        with os.scandir(os.path.join(home, SPOOL)) as entries:
+            for entry in entries:
+                if not entry.name.startswith("."):
+                    with contextlib.suppress(OSError):
+                        if not entry.is_dir(follow_symlinks=False):
+                            ages.append(now - entry.stat(follow_symlinks=False).st_mtime)
+    except OSError:
+        return 0, 0.0
+    return len(ages), max(ages, default=0.0)
 
 
 def _file_key(path: str) -> tuple[int, int] | None:
@@ -964,6 +1016,25 @@ def tick(
     return result
 
 
+def size_text(n: int) -> str:
+    """How much a pass captured, for a person: `392.0 MB (391995999 B)`.
+
+    `+391995999B` made the reader count digits. The exact count stays beside the
+    rounded one for anyone doing byte arithmetic, and the units are decimal so
+    the two can be checked against each other by moving a point. Amounts only:
+    `size=` and every offset are coordinates, and stay plain bytes.
+    """
+    if n < 1000:
+        return f"{n} B"
+    x = float(n)
+    for unit in ("kB", "MB", "GB", "TB"):
+        x /= 1000
+        # 999.95 and not 1000: `.1f` would round 999.96 kB up to "1000.0 kB".
+        if x < 999.95 or unit == "TB":
+            break
+    return f"{x:.1f} {unit} ({n} B)"
+
+
 def run(
     home: str | None = None,
     *,
@@ -1125,7 +1196,7 @@ def run(
                 else ""
             )
             log(
-                f"captured {len(result.captured)} +{result.appended}B "
+                f"captured {len(result.captured)} +{size_text(result.appended)} "
                 f"commit={result.commit}{dropped}"
             )
         if once:

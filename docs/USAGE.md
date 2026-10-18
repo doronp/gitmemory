@@ -25,18 +25,30 @@ repository, and lets you search it. So:
 
 ## Set it up once
 
-1. Install and configure, as in the [README quickstart](../README.md#quickstart).
+1. Install, as in the [README quickstart](../README.md#quickstart), then name
+   what to watch:
+
+   ```sh
+   gitmemory init claude-code      # or: gitmemory init pi
+   ```
+
    Watch roots have no default; `config.toml` names each agent and where its
-   transcripts live. [agents.md](agents.md) lists what can be captured.
+   transcripts live, and `init` adds that table for you. [agents.md](agents.md)
+   lists what can be captured.
 2. Run the watcher and leave it running:
 
    ```sh
    gitmemory watch
    ```
 
-   How it stays running (a LaunchAgent, a systemd user unit, a terminal you
-   leave open) is your choice; [watching.md](watching.md#run-it) covers the
-   flags and how to tell a misconfigured watcher from an idle one.
+   How it stays running is your choice. `gitmemory service install` writes a
+   systemd user unit (Linux) or a LaunchAgent (macOS) that starts it at every
+   login, and prints the line that starts it now; it starts nothing itself. On
+   a Linux machine you reach over SSH, the `loginctl enable-linger` line it
+   prints keeps it running after you log out
+   ([watching.md](watching.md#keep-it-running)). A terminal you leave open
+   works too. [watching.md](watching.md#run-it) covers the flags and how to
+   tell a misconfigured watcher from an idle one.
 3. Optional: install the [hook shim](../hook/README.md) so a capture happens at
    the compaction boundary itself rather than at the next sweep. The watcher
    alone is enough for correctness.
@@ -45,7 +57,7 @@ To check the loop end to end without waiting, run one pass:
 
 ```console
 $ gitmemory watch --once
-captured 1 +1167B commit=f355b10ace4b872ffe77794cbf4183afb1dcf478
+captured 1 +1.2 kB (1167 B) commit=f355b10ace4b872ffe77794cbf4183afb1dcf478
 $ gitmemory verify
 0 problem(s)
 ```
@@ -75,9 +87,110 @@ newest first (see [When memories disagree](#when-memories-disagree)):
 | `2026-09-28T10:03Z` | When the turn was written, in UTC. `undated` if the transcript did not say |
 | `claude-code/<session>/g00` | Agent, session and generation. A new generation starts only when the source file was rewritten |
 | `@288` | The byte offset of the turn inside that generation's raw bytes |
-| `assistant/text` | Role and block kind |
+| `assistant/text` | Role and block kind. `subagent:` before them, as in `subagent:user/text` or `subagent:assistant/text`, marks a subagent's or workflow agent's turn, which the transcript marks `isSidechain`: its user text is the instructions your agent gave it, not your words |
 
 `-k` sets how many lines come back.
+
+If the [hook](../hook/README.md) has rung and no watcher has collected the
+record for an hour, `recall` says so on stderr, before the results it still
+prints:
+``1 hook record(s) uncollected, the oldest for 3 hours: is `gitmemory watch` running for <store>? These results may be missing everything said since.``
+A running watcher drains the spool on every pass, so none has run on that store
+since: start `gitmemory watch` with the hook's `$GITMEMORY_HOME`, and
+`gitmemory service install` to keep it running
+([watching.md](watching.md#keep-it-running)). [Check it](watching.md#check-it)
+covers the other causes, such as a watcher that runs passes less often than
+hourly. With `--db`, recall does not look.
+
+## Read the whole turn
+
+A line stops at 160 characters. `show` prints the whole turn at an address,
+read from the store rather than the index, so it needs no index and a stale
+one cannot change what it prints. Copy the address whole: the ones above are
+cut short with `…` to fit this page, and a shortened address is refused with
+`not an address` and exit 2.
+
+```console
+$ gitmemory show claude-code/0f3a9c2e-1b2d-4c5e-8f90-3a53cc4a5233-fc59494095426389/g00@288 --context 1
+- claude-code/0f3a9c2e-1b2d-4c5e-8f90-3a53cc4a5233-fc59494095426389/g00@0  2026-09-28T10:02Z  user
+  text
+    Don't add a retry loop around the upload; the API is idempotent only per request id.
+> claude-code/0f3a9c2e-1b2d-4c5e-8f90-3a53cc4a5233-fc59494095426389/g00@288  2026-09-28T10:03Z  assistant
+  text
+    Understood. I dropped the retry loop and pass a request id instead, so a replay cannot double-charge.
+- claude-code/0f3a9c2e-1b2d-4c5e-8f90-3a53cc4a5233-fc59494095426389/g00@592  2026-09-28T10:04Z  user
+  text
+    Good. Ship it.
+```
+
+Each turn starts with a header: `>` for the turn at the address, `-` for the
+neighbours `--context N` (or `-C N`) adds either side, then the turn's own
+address, date and role. A subagent's turns say `subagent:user` and
+`subagent:assistant`. Under the header comes each block's kind, with the tool's
+name for a tool call, and then its text, indented. Only headers start in
+column 0, so nothing in a transcript can print a line that reads as one.
+
+An offset inside a turn shows that turn, and its header gives where it starts.
+An address the store does not hold (`not in the store`, `no turn at byte N`)
+exits 1. `--redact` masks credentials in what it prints
+([below](#masking-credentials-in-what-it-prints)).
+
+## Masking credentials in what it prints
+
+`recall` and `show` print what the transcript says, credentials included,
+because the store is yours and on your disk. When their output is going
+further, to an agent and with it to the agent's model provider, `--redact`
+masks every shape the push gate knows, in the text and in the address, with
+one exception for a session id ([below](#what-it-does-not-guarantee)). That is
+twelve issuer-prefixed keys and four SUSPECT patterns, listed in
+[`redact.py`](../src/gitmemory/redact.py). This sample is from a second
+transcript, a one-turn session of its own:
+
+```console
+$ gitmemory recall --redact "staging key"
+  -0.000  2026-10-02T09:41Z  claude-code/7c41d2e9-…-61a9a184ea213ec3/g00@0  user/text  Use AKIA…[20 bytes] for the staging key, never the prod one.
+```
+
+A masked span keeps its first four bytes and its length; in an address the
+marker drops its space, so the address stays one field of a `recall` line or
+a `show` header. A private key is masked from its BEGIN line to its END line,
+or to the end of the text when there is none. Both commands mask the text as
+written, and also find a header that a line break split, as a flattened line
+would show it; `recall` then flattens its line and cuts it at 160 characters.
+`show --redact` masks each block of the turn whole before it splits it into
+lines, so a key's body goes with its header, and it masks a tool's name too.
+A masked address is not one `show` can look up: it refuses it, exit 2, and
+`recall` prints the full address when it is not masking.
+
+`GITMEMORY_REDACT=1` makes it standing for both: unset, empty or `0` is off,
+and any other value is on. There is no flag that turns a standing setting off;
+for one call, run `GITMEMORY_REDACT=0 gitmemory recall ...`.
+
+### What it does not guarantee
+
+- It masks only those sixteen shapes. Anything else prints as written: a bare
+  AWS secret key, `PGPASSWORD=…`, a custom `GH_TOKEN=…`, `glpat-` and `npm_`
+  tokens, an Azure `AccountKey=…`, a password in prose, `curl -u user:pass`, a
+  `.netrc` line.
+- Nothing is decoded. Base64, URL-encoding and a token wrapped across lines get
+  through. JSON `\u` escapes are masked, because both commands read the parsed
+  text, not the raw bytes.
+- It masks credentials; it does not make the output confidential. Hostnames,
+  customer data, personal data and code are untouched.
+- It covers only what `recall` and `show` print. `raw/`, the index database,
+  the dashboard, `derived/` and any file an agent opens are not masked by it.
+  The environment setting is a floor, not a boundary: an agent with a shell can
+  unset it, or read `raw/`.
+- A private key whose BEGIN line and body are in two blocks of one turn, such
+  as two tool results, is masked to the end of the first block only; `show`
+  prints the body under the second.
+- The store lowercases session ids, so an AWS key id, a Google API key or a
+  JWT used as a session id, by `capture --session-id` or as a transcript's
+  file name, prints in the address lowercased and unmasked: those detectors
+  match only the case the issuer writes. The manifest's `source_path` keeps
+  it as it was.
+- A mask shows the first four bytes and the length.
+- The SUSPECT patterns also mask some prose about configuration.
 
 ## When memories disagree
 
@@ -88,7 +201,7 @@ tends to act on.
 
 | Policy | Order | Use it when |
 |---|---|---|
-| `latest-user` (default) | The user's own words newest first, then the agent's turns and tool output newest first | The user's later word should win, and nothing else should |
+| `latest-user` (default) | The user's own words newest first, then the agent's turns and tool output newest first. A subagent's instructions are the agent's words | The user's later word should win, and nothing else should |
 | `latest` | Newest first, whoever said it | Any later turn should win, the agent's included |
 | `relevance` | Best BM25 match first | You want the agent to decide: every line carries its date, so it can see which turn came later |
 | `module:function` | Whatever your function returns | Anything else: pinned decisions, a cut-off date, a different rule per project |
@@ -116,8 +229,9 @@ If two lines disagree, the later date is the current decision; say so.
 
 A policy is a function from a list of `Hit`s to a list of `Hit`s. It can
 reorder and it can drop; it gets nothing that is not already in the store. A
-`Hit` has the fields `recall` prints, plus `text` and `ts`, and
-`gitmemory.index.when(hit)` reads `ts` as a UTC `datetime`.
+`Hit` has the fields `recall` prints, plus `text`, `ts` and `is_sidechain`
+(true for a subagent's turn), and `gitmemory.index.when(hit)` reads `ts` as a
+UTC `datetime`.
 
 A validity window, where everything before a date you name is out of date, is
 one such rule:
@@ -140,14 +254,32 @@ def since_reversal(hits):
 $ PYTHONPATH=. gitmemory recall "upload retries" --policy myrules:since_reversal
 ```
 
+Leaving subagents' turns out when you read, rather than never capturing them
+([watching.md](watching.md#main-sessions-only-claude-code)), is another rule
+for the same file:
+
+```python
+def main_only(hits):
+    """Drop every subagent's turn, then order as the default does."""
+    return latest_user([h for h in hits if not h.is_sidechain])
+```
+
+A policy that drops hits prints fewer than `-k` lines, because it sees only the
+top `-k`. Raise `-k` to make up for what it drops:
+
+```console
+$ PYTHONPATH=. gitmemory recall "upload retries" -k 30 --policy myrules:main_only
+```
+
 The module is imported and runs with your permissions, so name only code you
 would run anyway. A name that does not resolve is an error, not a silent
 fallback to the default.
 
 The offset is the point: it takes you back to the exact bytes, not to a
-paraphrase of them. The raw segments live under
-`raw/<agent>/<session>/g<NN>/`, named by the byte range they hold, so a turn at
-offset 288 is in the segment whose range contains 288.
+paraphrase of them. [`show`](#read-the-whole-turn) finds them for you. To check
+it by hand, the raw segments live under `raw/<agent>/<session>/g<NN>/`, named
+by the byte range they hold, so a turn at offset 288 is in the segment whose
+range contains 288.
 
 ## Put it back in front of the agent
 
@@ -171,7 +303,24 @@ decision or a rule from before a compaction or from an earlier session, or that
 you run with a topic: `/gitmemory:recall retry loop`. It runs `recall`, and
 `index` when there is no index yet or the one there is older than what you are
 asking about. It quotes each line with its address and says when a hit comes
-from another session. It writes nothing but the index.
+from another session. It writes nothing but the index. It runs
+`gitmemory --version` first and says when the CLI is older than the plugin;
+the [hook's README](../hook/README.md#as-a-claude-code-plugin) has how to hold
+the two at one release. To have it mask credentials
+([above](#masking-credentials-in-what-it-prints)), set the variable in Claude
+Code's own environment, in `~/.claude/settings.json`:
+
+```json
+{
+  "env": {
+    "GITMEMORY_REDACT": "1"
+  }
+}
+```
+
+The skill then passes `--redact` to every `recall` and `show` it runs, so a
+CLI too old to know the flag stops with an error instead of printing unmasked,
+and it reads nothing under the store by hand.
 
 ## Derive key ideas and decisions
 
@@ -220,6 +369,11 @@ the files, the seams between segments, and the git objects. It refuses on a
 finding, and there is no override flag. It does not send yet. If a credential
 has already landed in the store, [SECURITY.md](../SECURITY.md#if-a-credential-lands-in-the-store)
 says what to do.
+
+`recall` and `show` output that an agent reads goes to that agent's model
+provider, and no gate stands in that path. `--redact` masks the gate's shapes
+in it ([above](#masking-credentials-in-what-it-prints)); it masks, and it
+never refuses.
 
 ## What it does not do
 

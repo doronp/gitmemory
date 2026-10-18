@@ -59,17 +59,39 @@ dependencies.
 Requires Python 3.13+ and git.
 
 ```sh
-uv tool install git+https://github.com/doronp/gitmemory     # or: pipx install git+https://…
+uv tool install --python 3.13 git+https://github.com/doronp/gitmemory
 ```
 
-Tell it what to watch. Watch roots have no default, and the config lives in
-`$GITMEMORY_HOME/config.toml` (by default `~/.gitmemory`):
+`--python 3.13` has uv build the tool on 3.13, fetching one where the machine's
+own Python is older (Ubuntu 24.04 ships 3.12); left to choose, uv can settle on
+the older one and refuse. Where uv fetches Python only when asked
+(`python-downloads = "manual"`), run `uv python install 3.13` first; where it
+never does (`"never"`), put a Python 3.13 on `PATH`.[^pipx]
+
+[^pipx]: pipx installs into the Python it runs under, so it needs a 3.13
+  interpreter: `pipx install --python python3.13 git+https://github.com/doronp/gitmemory`.
+
+Tell it what to watch. Watch roots have no default, so name the agent:
+
+```sh
+gitmemory init claude-code       # or: gitmemory init pi
+```
+
+That adds these lines to `$GITMEMORY_HOME/config.toml` (by default
+`~/.gitmemory`):
 
 ```toml
+# added by `gitmemory init claude-code`
 [[watch]]
 agent = "claude-code"
 roots = ["~/.claude/projects"]
 ```
+
+It appends without changing a byte already there, does nothing if the table is
+already there, and refuses a root the watcher would skip. To write the table
+yourself, or for another agent or root,
+[docs/watching.md](docs/watching.md#configure-what-to-watch) has the rest of
+the keys.
 
 Then:
 
@@ -89,17 +111,27 @@ agent search the store and quote what it finds; the watcher still does the
 capturing. For watcher flags and troubleshooting, see
 [docs/watching.md](docs/watching.md).
 
+Budget disk for about twice what the store captures, and more if your
+transcripts compress poorly: git keeps a compressed second copy, and the
+search index holds the text again. `gitmemory index` rebuilds the index if
+you delete it; rebuilding over an existing one briefly needs room for both.
+[docs/watching.md](docs/watching.md#how-much-disk-it-takes) has the
+measurements.
+
 **What to do with it next** — reading `recall` output, handing it back to an
 agent after compaction, derived key ideas, the dashboard — is in
 [docs/USAGE.md](docs/USAGE.md).
 
 | Command | What it does |
 |---|---|
+| `gitmemory init <agent>` | Adds the standard watch table for `claude-code` or `pi` to `config.toml`; does nothing if it is already there |
 | `gitmemory watch` | Tails the configured roots, captures what grew, and commits |
+| `gitmemory service install` | Writes a systemd user unit (Linux) or a LaunchAgent (macOS) that keeps `watch` running, and prints the line that starts it; it starts nothing itself ([docs/watching.md](docs/watching.md#keep-it-running)) |
 | `gitmemory capture <file>` | Copies out one transcript's new bytes, by hand |
 | `gitmemory verify` | Checks every manifest's contiguity proof |
 | `gitmemory index` | Rebuilds the SQLite FTS5 index from the store |
-| `gitmemory recall "<query>"` | Searches the index and prints one line per turn, dated, the user's own words newest first ([`--policy`](docs/USAGE.md#when-memories-disagree)) |
+| `gitmemory recall "<query>"` | Searches the index and prints one line per turn, dated, the user's own words newest first ([`--policy`](docs/USAGE.md#when-memories-disagree); [`--redact`](docs/USAGE.md#masking-credentials-in-what-it-prints) masks credentials) |
+| `gitmemory show <address>` | Prints the whole turn at an address `recall` printed, read from the store; `--context N` adds N turns either side, `--redact` masks credentials ([more](docs/USAGE.md#read-the-whole-turn)) |
 | `gitmemory derive [--graph]` | Rebuilds key ideas and a timeline; `--graph` adds the decision graph (opt-in) |
 | `gitmemory dashboard` | Serves the index with Datasette, read-only, on loopback, behind a sign-in |
 | `gitmemory push` | Runs the redaction gate over what a push would send (it does not send yet) |
@@ -107,7 +139,7 @@ agent after compaction, derived key ideas, the dashboard — is in
 Optional extras: `hybrid` (what the benchmarks' dense and rerank arms need;
 `recall` does not use them), `derive` (key ideas and the graph), and
 `serve` (the dashboard). Example:
-`uv tool install "gitmemory[serve] @ git+https://github.com/doronp/gitmemory"`.
+`uv tool install --python 3.13 "gitmemory[serve] @ git+https://github.com/doronp/gitmemory"`.
 
 ## Results
 
@@ -185,13 +217,13 @@ real text, and that is a measurement rather than a suspicion.
 | What | How it was measured | Result |
 |---|---|---|
 | Hook cost in the agent's critical path | Timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | On a fresh checkout, no downloads | **1,037 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **606** negative controls |
+| The suite | On a fresh checkout, no downloads | **1,134 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **662** negative controls |
 
 The two suite counts do not add up, and should not. Switching the corpora on
-collects 1362, not 1365. Three conformance cases fill parametrisations that
+collects 1459, not 1462. Three conformance cases fill parametrisations that
 collect as one empty placeholder each while the corpora are absent, so they
-replace three of the 1037 rather than joining them. Every figure on this board
+replace three of the 1134 rather than joining them. Every figure on this board
 is pinned by a test, which is how it stays true.
 
 **What is not measured**, and is shown as a row on the dashboard rather than

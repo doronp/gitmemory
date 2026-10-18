@@ -126,11 +126,13 @@ def test_a_malformed_config_means_watch_nothing_not_watch_everything(tmp_path):
 
 
 def test_a_watch_missing_its_roots_is_skipped_and_the_rest_survive(tmp_path):
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"  # never created: a root that does not exist yet is kept
     _write(
-        os.path.join(str(tmp_path), "config.toml"),
-        '[[watch]]\nagent = "a"\n\n[[watch]]\nagent = "b"\nroots = ["/tmp/x"]\n',
+        os.path.join(home, "config.toml"),
+        f'[[watch]]\nagent = "a"\n\n[[watch]]\nagent = "b"\nroots = [{json.dumps(str(root))}]\n',
     )
-    got = daemon.load_watches(str(tmp_path))
+    got = daemon.load_watches(home)
     assert [w.agent for w in got] == ["b"]
 
 
@@ -867,6 +869,39 @@ def test_run_reports_a_failing_pass_in_its_exit_code(tmp_path):
         assert daemon.run(home, once=True, interval=0, log=lambda _: None) == 1
     finally:
         os.chmod(bad, 0o600)
+
+
+@pytest.mark.parametrize(
+    "n, said",
+    [
+        (0, "0 B"),
+        (999, "999 B"),
+        (1000, "1.0 kB (1000 B)"),
+        (999_949, "999.9 kB (999949 B)"),
+        (999_950, "1.0 MB (999950 B)"),  # not "1000.0 kB"
+        (391_995_999, "392.0 MB (391995999 B)"),
+        (10**15, "1000.0 TB (1000000000000000 B)"),  # the last unit has no next one
+    ],
+)
+def test_a_byte_count_is_said_for_a_person_and_exactly(n, said):
+    assert daemon.size_text(n) == said
+
+
+def test_the_watch_line_says_how_much_in_units_a_person_reads(tmp_path):
+    """`captured 470 +43025169B` made a person count digits to read the pass.
+
+    The commit subject keeps `+NB`: it is the durable record, the history
+    already written says it that way, and nobody reads it to size a pass.
+    """
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"
+    _write(str(root / "a.jsonl"), TURN * 40)  # 2400 bytes
+    _config(home, [root])
+    lines: list[str] = []
+    assert daemon.run(home, once=True, interval=0, log=lines.append) == 0
+    said = [line for line in lines if line.startswith("captured ")]
+    assert len(said) == 1 and said[0].startswith("captured 1 +2.4 kB (2400 B) commit="), lines
+    assert _subject(home).endswith("  +2400B"), _subject(home)
 
 
 # --- the seam the hook writes to -------------------------------------------
@@ -1963,7 +1998,7 @@ def test_a_fifo_with_a_writer_is_not_a_record_even_though_it_reads(tmp_path):
 
 
 def test_an_adoption_only_pass_names_what_it_reclaimed(tmp_path):
-    """`result.captured` is empty and `+0B` is the headline, so nothing else says it.
+    """`result.captured` is empty and the commit's `+0B` is the headline, so nothing else says it.
 
     Adoption attests to bytes found in the generation directory rather than
     copied out of the source. The manifest records that permanently; this is so

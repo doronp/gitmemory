@@ -14,7 +14,21 @@ Watch roots have no default, deliberately. A memory tool whose first run scans
 your home directory is a tool you have to audit before you can trust it, so
 gitmemory watches exactly what you name and nothing else.
 
-`$GITMEMORY_HOME/config.toml`:
+`gitmemory init claude-code` (or `gitmemory init pi`) writes the table for
+you, with the root [agents.md](agents.md) gives for that agent. That is still
+not a default: the root is written because you named the agent, and the watcher
+reads only the file. `init` appends to an existing `config.toml` and never
+changes a byte already there, since the file also holds any `[remote.*]` push
+opt-in, and it does nothing if the table is already there. When it cannot add
+the table safely it writes nothing, prints why, and exits 1: a root another
+agent watches or the watcher would skip (listed below); a file that is not
+valid TOML, has a `watch` of another shape, is a symlink or has a second hard
+link; or one another `init` changed while it ran, which a second run settles.
+An editor saving the file at that moment is not covered. A `config.toml` it
+cannot read is an error, exit 2. A running watcher picks the new table up on
+its next pass.
+
+By hand, or for any other agent or root, `$GITMEMORY_HOME/config.toml`:
 
 ```toml
 [[watch]]
@@ -26,12 +40,58 @@ roots = ["~/.claude/projects"]
 |---|---|---|
 | `agent` | yes | Which adapter finds compaction boundaries. See below. |
 | `roots` | yes | Directories to tail. `~` is expanded; symlinks are resolved. |
-| `pattern` | no | Glob under each root. Defaults to `**/*.jsonl`. |
+| `pattern` | no | Glob under each root, with `pathlib` semantics: `*` never crosses a `/`, and `**` spans any number of directories. Defaults to `**/*.jsonl`. |
 
 Repeat the table for each agent you run. Absent, unreadable, or malformed
 config means the watcher watches nothing — and says so on every pass, naming
 the file and the reason, because "nothing configured" and "misconfigured" must
 not look alike.
+
+### Main sessions only (Claude Code)
+
+The default pattern takes every transcript under the root, and under
+`~/.claude/projects` most of them are not a conversation you had. Claude Code
+writes each subagent to `<project>/<session>/subagents/agent-<id>.jsonl`, and
+each workflow agent, beside the workflow's `journal.jsonl`, under
+`<project>/<session>/subagents/workflows/<run>/`. A pattern one directory deep
+takes only the main sessions, `<project>/<session>.jsonl`:
+
+```toml
+[[watch]]
+agent = "claude-code"
+roots = ["~/.claude/projects"]
+pattern = "*/*.jsonl"
+```
+
+Put the `pattern` line in the `claude-code` table you already have, not in a
+second table beside it. The watcher takes the files of every table, so another
+table on the same root with the default pattern still finds every subagent.
+
+A hook doorbell for a subagent's file then captures nothing: the spool only
+hurries a file the pattern already found.
+
+Prefer the default unless the store's size matters more than what this costs.
+`recall` marks a subagent's turns `subagent:` (see
+[USAGE.md](USAGE.md#find-something)), so they can be told apart without
+leaving them out, and a policy can drop them from what it prints
+([USAGE.md](USAGE.md#your-own-rule)). What leaving them out costs:
+
+- **Those turns are never captured.** Once Claude Code cleans up old
+  transcripts, they are gone. Until then this is reversible: put the default
+  back, and the next pass captures each subagent file from its first byte.
+- **The dashboard's spend undercounts.** It counts only what was captured, and
+  subagents are where much of the spend goes: one measured session had 78% of
+  its cache-read tokens in `subagents/**` ([DESIGN.md §2.2](DESIGN.md#22-claude-code-adapter--the-traps-each-a-test-case)).
+- **What was sent survives, and usually what came back.** The parent session
+  keeps the tool call that started a subagent or a workflow, with its
+  instructions. A subagent's report comes back as that call's result. A
+  background agent or workflow gets only a launch receipt there; its report
+  comes later, as a task-notification turn in the parent, or not at all if the
+  session ended first. What is lost is the subagents' own working turns, and a
+  workflow's `journal.jsonl`, which holds each of its agents' results.
+- Older Claude Code wrote a subagent's turns into the parent's own file, each
+  line marked. A pattern cannot leave those out; the `subagent:` mark still
+  labels them.
 
 ### What gets refused, and why
 
@@ -87,10 +147,79 @@ Each pass prints what it did, or nothing when nothing happened. Errors are
 repeated only when they change or once an interval, so a permanently broken
 root does not drown the log it belongs in.
 
-Ctrl-C exits 130. There is no daemonisation, no pidfile, and no installer:
-`gitmemory watch` is a foreground process, and how you keep it alive — a user
-LaunchAgent, a systemd user unit, a terminal you leave open — is yours to
-choose. Nothing here needs root.
+Ctrl-C exits 130. There is no daemonisation and no pidfile: `gitmemory watch`
+is a foreground process, and how you keep it alive — a terminal you leave open,
+or a user service, which `gitmemory service install` writes for you
+([below](#keep-it-running)) — is yours to choose. Nothing here needs root.
+
+## Keep it running
+
+`gitmemory service install` writes one file for your user's service manager,
+and starts nothing:
+
+| Platform | File | Manager |
+|---|---|---|
+| Linux | `$XDG_CONFIG_HOME/systemd/user/gitmemory.service`, or under `~/.config` when that is unset or not an absolute path | systemd, as your user |
+| macOS | `~/Library/LaunchAgents/io.github.doronp.gitmemory.plist` | launchd, in your login session |
+
+It prints the file it wrote, the command line in it, and the commands below,
+and runs none of them: no `systemctl`, no `launchctl`, no `loginctl`. Starting
+it is yours to do, as installing the hook is. If the file is already there it
+refuses, exit 1, and leaves it alone; the refusal ends with the line that
+removes it, so paste that and install again. Any other platform exits 2, and so
+does a store path with a line break in it.
+
+A service starts with none of your shell's state, so the file carries it:
+
+- **This Python, as it is,** with `-P -m gitmemory`. `-P` because a systemd
+  user unit starts in `$HOME`, and `python -m` would run a `~/gitmemory.py` in
+  place of the package. Not the interpreter's real path either, which is
+  outside the virtual environment and cannot import gitmemory.
+- **The store, as `--home <store>`.** A service does not read your shell's rc
+  files, so an exported `$GITMEMORY_HOME` never reaches it, and the watcher
+  would read `~/.gitmemory` while the hook writes somewhere else. If you move
+  the store, remove the file and install again.
+- **`PATH`**: the directory `git` was found in, then `/usr/bin:/bin`. No git on
+  your `PATH` exits 2 and writes nothing.
+
+On Linux:
+
+```sh
+systemctl --user daemon-reload && systemctl --user enable --now gitmemory.service   # start, now and at every login
+loginctl enable-linger                        # keep it running after you log out
+systemctl --user status gitmemory.service     # check it
+journalctl --user -u gitmemory.service -f     # its log
+systemctl --user restart gitmemory.service    # after upgrading gitmemory
+systemctl --user disable --now gitmemory.service; rm ~/.config/systemd/user/gitmemory.service; systemctl --user daemon-reload
+```
+
+On macOS:
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.doronp.gitmemory.plist   # start, now and at every login
+launchctl print gui/$(id -u)/io.github.doronp.gitmemory          # check it
+tail -f ~/Library/Logs/gitmemory.log                             # its log
+launchctl kickstart -k gui/$(id -u)/io.github.doronp.gitmemory   # after upgrading gitmemory
+launchctl bootout gui/$(id -u)/io.github.doronp.gitmemory; rm ~/Library/LaunchAgents/io.github.doronp.gitmemory.plist
+```
+
+- **Linger** matters on a machine you reach only over SSH: without it, systemd
+  stops your user services when your last session ends. `loginctl
+  enable-linger` with no user name is for yourself, which stock systemd's
+  polkit policy allows without a password; a distribution can change that.
+- **It is restarted after a failure, 30 seconds later** (`Restart=on-failure`;
+  `KeepAlive` on an unsuccessful exit). A watcher that cannot start — a store
+  inside a git work tree, say — logs one line every 30 seconds until fixed.
+- **Editing `config.toml` needs no restart;** the watcher re-reads it every
+  pass. Upgrading gitmemory does, because the running process keeps the old
+  code.
+- **The macOS log is outside the store,** which commits everything in it.
+  Nothing rotates it. On Linux the log is the journal.
+- **Removing it stops it, then removes the file whether or not that worked.**
+  A file written and never started has nothing to stop: `launchctl bootout`
+  says `No such process` and exits 3, and the `rm` after the `;` runs anyway.
+  On Linux a `daemon-reload` after the `rm` has systemd drop the unit it had
+  loaded.
 
 ## Check it
 
@@ -105,8 +234,9 @@ anywhere useful. The two failures worth watching for are different shapes:
 
 | Symptom | Likely cause |
 |---|---|
-| `no .../config.toml; watching nothing` | The file is not where the watcher is looking. Check `$GITMEMORY_HOME`. |
-| Watcher quiet, store empty, no complaint | A root that **does not exist** is kept, not refused — before an agent has run for the first time that is the normal state, and `run` re-reads the config every pass, so it starts working the moment the directory appears. The cost is that a typo'd root and a not-yet-used one look identical. Check the path by hand. |
+| `no .../config.toml; watching nothing` | The file is not where the watcher is looking. Check `$GITMEMORY_HOME`, or run `gitmemory init <agent>` to write it there. |
+| Watcher quiet, store empty, no complaint | A root that **does not exist** is kept, not refused — before an agent has run for the first time that is the normal state, and `run` re-reads the config every pass, so it starts working the moment the directory appears. The cost is that a typo'd root and a not-yet-used one look identical. Check the path by hand; `gitmemory init` says so when the root it writes does not exist yet. |
+| `recall` says `N hook record(s) uncollected, the oldest for <age>` | No watcher has run a pass on that store for that long: it is stopped, it watches a store other than the hook's `$GITMEMORY_HOME` (a service's store is the `--home` written into it), or it runs a pass less often than once an hour (`--poll` of 3600 or more, or a supervisor re-running `--once` that seldom). Start `gitmemory watch` with the hook's `$GITMEMORY_HOME` and keep it running with `gitmemory service install` ([above](#keep-it-running)), or run passes more often. A service that is installed but not started, or failing, shows here too; its check and log lines are above. A pass drains the spool even when no watch covers the record, so silence here means a pass ran, not that this agent is captured. |
 | `compact_boundaries: []` everywhere | Adapter missing or `--no-parse`. The bytes are intact; only the boundaries are absent. |
 | `source changed while parsing` | The transcript was rewritten between the parse and the copy — a compaction landing mid-pass. The bytes are captured; that one generation has no boundaries. Nothing to do. |
 | `was captured from <path>, not <path>; pass a distinct --session-id` | Two transcripts collided on one session name, and the store refuses to mix them rather than duplicating both for ever. The advice in the message is for the CLI and there is no `--session-id` to pass here: rename or move either file — the name is derived from the path — and the next pass captures both. Until then the second one is **not being captured**, so this is not a warning to leave running. |
@@ -114,3 +244,55 @@ anywhere useful. The two failures worth watching for are different shapes:
 There is no discovery counter: a pass prints only when it captured something,
 so "found 12 transcripts, all unchanged" and "found nothing" are the same
 silence. Listing the roots yourself is currently the way to tell them apart.
+
+## How much disk it takes
+
+Budget about twice what you capture, and more if your transcripts compress
+poorly: the synthetic corpora below came to 2.3x and 3.4x. The store keeps the
+same bytes three ways:
+
+- **`raw/`** holds each captured byte once, so it is the size of the capture.
+  Each segment fills whole filesystem blocks, so a store grown in many small
+  passes runs a little over.
+- **`.git/`** holds them again, zlib-compressed and packed by `git gc --auto`.
+  That is roughly the capture divided by what gzip gets out of your
+  transcripts. For a store that holds what is under `~/.claude/projects` now,
+  `find ~/.claude/projects -name '*.jsonl' -exec cat {} + | gzip | wc -c`
+  estimates it, a little low. That count leaves out bytes the store captured
+  before a transcript was rewritten or deleted, and any other root you watch.
+- **`index/`** holds the searchable text a third time, uncompressed, beside its
+  FTS5 postings. Git ignores it and `gitmemory index` rebuilds it from the
+  store, so it is the one to delete when you need the space back. `recall`
+  and `dashboard` refuse until you rebuild it; `show` reads the store and
+  does not need it. A rebuild writes the new database beside the old one and
+  renames it into place when it is done, so while it runs `index/` takes
+  about twice its usual space. When space is tight, delete `index/` first,
+  then rebuild.
+
+`sessions/` is one small manifest per generation. `derived/`, if you run
+`derive`, adds a little more: 0.09x on the first corpus below.
+
+Measured with `du -sk` (APFS, 4 KiB blocks) on synthetic Claude-Code-shaped
+corpora of 470 transcripts, each captured in one pass and then indexed, as
+multiples of the bytes captured:
+
+| Captured | `raw/` | `.git/` | `index/` | `sessions/` | Total |
+|---|---|---|---|---|---|
+| 43 MB of prose and source code (gzip 4.6x) | 1.02 | 0.24 | 1.02 | 0.04 | 2.3x |
+| 163 MB, the same mix | 1.01 | 0.22 | 1.03 | 0.01 | 2.3x |
+| 44 MB of base64 tool output (gzip 2.6x) | 1.02 | 0.40 | 1.94 | 0.04 | 3.4x |
+
+The part you cannot rebuild, `raw/`, `.git/` and `sessions/`, came to 1.2-1.5x
+in each. Captured in ten passes instead of one, that part of the first corpus
+came to 1.6x: smaller segments round up to more blocks, and git held ten packs
+it had not yet merged.
+
+Only the text of a turn is indexed. The JSON around it is not, and an image goes
+in as its shape, never its payload, so the more of that your transcripts carry,
+the smaller `index/` is next to them. One real store was reported at 1.75x,
+684 MB for 392 MB captured. Yours depends on how well your transcripts
+compress, how much of them is text, and when git last packed.
+
+To capture less in the first place, [main sessions only](#main-sessions-only-claude-code)
+keeps subagent and workflow transcripts out of the store, at the cost that
+those turns are never captured and the dashboard's spend undercounts.
