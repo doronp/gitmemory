@@ -32,6 +32,14 @@ tell you.
 - `recall` now lists the user's own words newest first by default, not best
   match first. Pass `--policy relevance` for the old order. `index.search` is
   unchanged.
+- **Install commands name Python 3.13.** Every documented `uv tool install`
+  passes `--python 3.13`, so where the machine's own Python is older (Ubuntu
+  24.04 ships 3.12) uv builds the tool on 3.13. Left to choose, uv can settle
+  on the older one and refuse (it does with Python downloads off). pipx is
+  down to a footnote: it installs into the Python it runs under, so it needs a
+  3.13 interpreter. A test reads the floor from `pyproject.toml` and holds
+  every install line to it. See
+  [README.md](README.md#quickstart).
 
 ## [0.1.0] - 2026-09-28
 

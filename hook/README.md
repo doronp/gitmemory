@@ -93,8 +93,8 @@ The plugin installs the hook and one skill, `/gitmemory:recall`, which has the
 agent run `gitmemory recall` and quote what it returns
 ([USAGE.md](../docs/USAGE.md#put-it-back-in-front-of-the-agent)). Neither
 captures anything. **Nothing is captured until the watcher is installed and
-running** (`uv tool install git+https://github.com/doronp/gitmemory`, a watch
-root in `config.toml`, then `gitmemory watch`, as in the
+running** (`uv tool install --python 3.13 git+https://github.com/doronp/gitmemory`,
+a watch root in `config.toml`, then `gitmemory watch`, as in the
 [Quickstart](../README.md#quickstart)), and gitmemory is correct without the
 plugin, as it is without the hook. The hook and the skill run with Claude
 Code's environment, so a `GITMEMORY_HOME` you set for the watcher has to be set

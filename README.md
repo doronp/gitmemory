@@ -59,8 +59,17 @@ dependencies.
 Requires Python 3.13+ and git.
 
 ```sh
-uv tool install git+https://github.com/doronp/gitmemory     # or: pipx install git+https://…
+uv tool install --python 3.13 git+https://github.com/doronp/gitmemory
 ```
+
+`--python 3.13` has uv build the tool on 3.13, fetching one where the machine's
+own Python is older (Ubuntu 24.04 ships 3.12); left to choose, uv can settle on
+the older one and refuse. Where uv fetches Python only when asked
+(`python-downloads = "manual"`), run `uv python install 3.13` first; where it
+never does (`"never"`), put a Python 3.13 on `PATH`.[^pipx]
+
+[^pipx]: pipx installs into the Python it runs under, so it needs a 3.13
+  interpreter: `pipx install --python python3.13 git+https://github.com/doronp/gitmemory`.
 
 Tell it what to watch. Watch roots have no default, and the config lives in
 `$GITMEMORY_HOME/config.toml` (by default `~/.gitmemory`):
@@ -107,7 +116,7 @@ agent after compaction, derived key ideas, the dashboard — is in
 Optional extras: `hybrid` (what the benchmarks' dense and rerank arms need;
 `recall` does not use them), `derive` (key ideas and the graph), and
 `serve` (the dashboard). Example:
-`uv tool install "gitmemory[serve] @ git+https://github.com/doronp/gitmemory"`.
+`uv tool install --python 3.13 "gitmemory[serve] @ git+https://github.com/doronp/gitmemory"`.
 
 ## Results
 
@@ -185,13 +194,13 @@ real text, and that is a measurement rather than a suspicion.
 | What | How it was measured | Result |
 |---|---|---|
 | Hook cost in the agent's critical path | Timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | On a fresh checkout, no downloads | **1,037 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| The suite | On a fresh checkout, no downloads | **1,038 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
 | Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **606** negative controls |
 
 The two suite counts do not add up, and should not. Switching the corpora on
-collects 1362, not 1365. Three conformance cases fill parametrisations that
+collects 1363, not 1366. Three conformance cases fill parametrisations that
 collect as one empty placeholder each while the corpora are absent, so they
-replace three of the 1037 rather than joining them. Every figure on this board
+replace three of the 1038 rather than joining them. Every figure on this board
 is pinned by a test, which is how it stays true.
 
 **What is not measured**, and is shown as a row on the dashboard rather than

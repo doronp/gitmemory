@@ -82,7 +82,7 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
 - The shell cannot find `gitmemory`, or `index` prints `not a store: <path>`,
   or it reports `0 generation(s)`: nothing has been captured there. Tell the
   user how it gets set up, and stop. Do none of it yourself:
-  1. `uv tool install git+https://github.com/doronp/gitmemory`
+  1. `uv tool install --python 3.13 git+https://github.com/doronp/gitmemory`
   2. a `[[watch]]` table in `config.toml` in the store (`$GITMEMORY_HOME`, by
      default `~/.gitmemory`) naming the agent and where its transcripts live;
      for Claude Code, `agent = "claude-code"` and

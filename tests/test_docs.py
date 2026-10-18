@@ -16,6 +16,8 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
+from itertools import pairwise
 
 import pytest
 from test_claude_code import CC_FIXTURES, _corpus
@@ -275,6 +277,108 @@ def test_the_design_document_cites_nothing_in_tmp():
     for rel in ("docs/DESIGN.md", "README.md", "hook/README.md", "docs/watching.md"):
         for n, line in enumerate(_read(rel).splitlines(), 1):
             assert "/tmp/" not in line, f"{rel}:{n} cites a scratch path: {line.strip()}"
+
+
+_INSTALLERS = r"uv tool install|pipx install"
+# The tool, then its words up to the end of the code span, a `)`, a `#`, the end
+# of the line, or the next tool, so two commands on one line are two commands.
+_INSTALL = re.compile(rf"\b({_INSTALLERS})\b([^`)#\n]*?)(?=\b(?:{_INSTALLERS})\b|[`)#]|$)")
+
+
+def _installs(text: str):
+    """(line number, tool, its words, as written) for each install command in
+    `text`. A line that ends in a backslash goes on into the next, as in sh."""
+    lines, n = text.splitlines(), 0
+    while n < len(lines):
+        start, line = n + 1, lines[n]
+        while line.endswith("\\") and n + 1 < len(lines):
+            n += 1
+            line = line[:-1] + " " + lines[n]
+        n += 1
+        for m in _INSTALL.finditer(line):
+            yield start, m.group(1), m.group(2).split(), " ".join(m.group(0).split())
+
+
+def _names_python(tool: str, words: list[str], want: str) -> bool:
+    """`--python <want>` or `--python=<want>`, or uv's own `-p <want>`."""
+    flags = ("--python", "-p") if tool == "uv tool install" else ("--python",)
+    words = [w.strip("\"'") for w in words]
+    return f"--python={want}" in words or any(
+        a in flags and b == want for a, b in pairwise(words)
+    )
+
+
+def test_every_documented_install_names_the_python_floor():
+    """The README's install line did not install on Ubuntu 24.04; the same line
+    with `--python 3.13` did.
+
+    pyproject says `>=3.13`, and the README said so one line above a command
+    that did not. Left to choose, uv can settle on the machine's own Python
+    (3.12 there) and refuse the install, which is what it does with Python
+    downloads off (measured); named, it builds the tool on 3.13, fetching one
+    if it may, or says to install one. pipx installs into the Python it runs
+    under, so its line names an interpreter of that version. The floor is read
+    from pyproject, so the commands cannot drift from it a second time.
+
+    A command is the tool and what follows it, to the end of its code span, a
+    `)` or a `#`, the end of the line (a trailing backslash carries it on to the
+    next), or the next command. It names the floor as `--python X.Y`,
+    `--python=X.Y` or uv's `-p X.Y`; pipx's value is `pythonX.Y`. Prose that
+    names the tool with nothing after it ("if you installed with
+    `uv tool install`,") has no source, so it is not one. Prose with words after
+    the tool and no code span around it reads as a command and fails, so put the
+    tool in a code span or write the whole command. `tests/` is not scanned,
+    because its strings are fixtures and this one names the tools; nor are the
+    records, which quote what was run at the time. [install feedback 1]
+    """
+    with open(os.path.join(ROOT, "pyproject.toml"), "rb") as fh:
+        spec = tomllib.load(fh)["project"]["requires-python"]
+    floor = re.fullmatch(r">=(\d+\.\d+)", spec)
+    assert floor, f"requires-python is {spec!r}; this test knows only a bare lower bound"
+    v = floor.group(1)
+    want = {"uv tool install": v, "pipx install": f"python{v}"}
+
+    # The scanner first, on spellings a later line may use. [install review 2, 4]
+    probe = (
+        f"(uv tool install --python {v} git+x, or pipx install git+x)\n"
+        f"`uv tool install -p {v} git+x` and `uv tool install --python={v} git+x`\n"
+        f"uv tool install \\\n  --python {v} git+x\n"
+        f"`pipx install --python python{v} git+x` `pipx install -p python{v} git+x`\n"
+        "if you installed with `uv tool install`,\n"
+    )
+    found = [(n, t, _names_python(t, w, want[t])) for n, t, w, _ in _installs(probe) if w]
+    assert found == [
+        (1, "uv tool install", True),
+        (1, "pipx install", False),
+        (2, "uv tool install", True),
+        (2, "uv tool install", True),
+        (3, "uv tool install", True),
+        (5, "pipx install", True),
+        (5, "pipx install", False),
+    ], found
+
+    records = ("tests/", "docs/reviews/", "docs/tasks/", "docs/DESIGN-v0.md")
+    tracked = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.split("\0")
+    seen, wrong = set(), []
+    for rel in filter(None, tracked):
+        if rel.startswith(records):
+            continue
+        try:
+            text = _read(rel)
+        except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
+            continue  # a binary or a submodule; no command in it
+        for n, tool, words, said in _installs(text):
+            if not words:
+                continue
+            seen.add(rel)
+            if not _names_python(tool, words, want[tool]):
+                wrong.append(f"{rel}:{n}: `{said}` lacks --python {want[tool]}")
+    # The floor, because a scan that matches nothing passes loudest.
+    named = {"README.md", "hook/README.md", "skills/recall/SKILL.md", ".claude-plugin/plugin.json"}
+    assert named <= seen, named - seen
+    assert not wrong, f"requires-python is {spec}:\n" + "\n".join(wrong)
 
 
 def test_no_tracked_file_contains_an_invisible_character():
