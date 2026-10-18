@@ -243,3 +243,53 @@ anywhere useful. The two failures worth watching for are different shapes:
 There is no discovery counter: a pass prints only when it captured something,
 so "found 12 transcripts, all unchanged" and "found nothing" are the same
 silence. Listing the roots yourself is currently the way to tell them apart.
+
+## How much disk it takes
+
+Budget about twice what you capture. The store keeps the same bytes three ways:
+
+- **`raw/`** holds each captured byte once, so it is the size of the capture.
+  Each segment fills whole filesystem blocks, so a store grown in many small
+  passes runs a little over.
+- **`.git/`** holds them again, zlib-compressed and packed by `git gc --auto`.
+  That is roughly the capture divided by what gzip gets out of your
+  transcripts. For a store that holds what is under `~/.claude/projects` now,
+  `find ~/.claude/projects -name '*.jsonl' -exec cat {} + | gzip | wc -c`
+  estimates it, a little low. That count leaves out bytes the store captured
+  before a transcript was rewritten or deleted, and any other root you watch.
+- **`index/`** holds the searchable text a third time, uncompressed, beside its
+  FTS5 postings. Git ignores it and `gitmemory index` rebuilds it from the
+  store, so it is the one to delete when you need the space back. `recall`
+  and `dashboard` refuse until you rebuild it; `show` reads the store and
+  does not need it. A rebuild writes the new database beside the old one and
+  renames it into place when it is done, so while it runs `index/` takes
+  about twice its usual space. When space is tight, delete `index/` first,
+  then rebuild.
+
+`sessions/` is one small manifest per generation. `derived/`, if you run
+`derive`, adds a little more: 0.09x on the first corpus below.
+
+Measured with `du -sk` (APFS, 4 KiB blocks) on synthetic Claude-Code-shaped
+corpora of 470 transcripts, each captured in one pass and then indexed, as
+multiples of the bytes captured:
+
+| Captured | `raw/` | `.git/` | `index/` | `sessions/` | Total |
+|---|---|---|---|---|---|
+| 43 MB of prose and source code (gzip 4.6x) | 1.02 | 0.24 | 1.02 | 0.04 | 2.3x |
+| 163 MB, the same mix | 1.01 | 0.22 | 1.03 | 0.01 | 2.3x |
+| 44 MB of base64 tool output (gzip 2.6x) | 1.02 | 0.40 | 1.94 | 0.04 | 3.4x |
+
+The part you cannot rebuild, `raw/`, `.git/` and `sessions/`, came to 1.2-1.5x
+in each. Captured in ten passes instead of one, that part of the first corpus
+came to 1.6x: smaller segments round up to more blocks, and git held ten packs
+it had not yet merged.
+
+Only the text of a turn is indexed. The JSON around it is not, and an image goes
+in as its shape, never its payload, so the more of that your transcripts carry,
+the smaller `index/` is next to them. One real store was reported at 1.75x,
+684 MB for 392 MB captured. Yours depends on how well your transcripts
+compress, how much of them is text, and when git last packed.
+
+To capture less in the first place, [main sessions only](#main-sessions-only-claude-code)
+keeps subagent and workflow transcripts out of the store, at the cost that
+those turns are never captured and the dashboard's spend undercounts.

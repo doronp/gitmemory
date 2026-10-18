@@ -85,6 +85,13 @@ tell you.
   and only in what the two commands print; see
   [docs/USAGE.md](docs/USAGE.md#masking-credentials-in-what-it-prints) for
   what it does not cover.
+- **How much disk it takes.** Budget about twice what you capture: `raw/`
+  holds the bytes once, `.git/` a compressed copy, and `index/` the searchable
+  text again, which `gitmemory index` rebuilds (and, while it runs, needs room
+  for the old index and the new). Measured at 2.3x to 3.4x on synthetic
+  corpora; see [docs/watching.md](docs/watching.md#how-much-disk-it-takes).
+  ARCHITECTURE.md said the store holds each byte exactly once, and DESIGN.md
+  that it has zero duplication; both are true of `raw/` only.
 
 ### Changed
 

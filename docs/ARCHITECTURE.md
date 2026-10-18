@@ -97,9 +97,10 @@ $GITMEMORY_HOME/                      # default ~/.gitmemory; a git repository
 ```
 
 A capture commits **only the bytes appended since the last recorded offset**,
-so the store holds each byte the agent wrote exactly once. If the source is
-rewritten (its prefix no longer matches), capture starts a new *generation*
-`g<NN+1>` rather than treating the rewrite as corruption. §2.5a.
+so `raw/` holds each byte the agent wrote exactly once; git's object store keeps
+its own compressed copy ([how much disk](watching.md#how-much-disk-it-takes)).
+If the source is rewritten (its prefix no longer matches), capture starts a new
+*generation* `g<NN+1>` rather than treating the rewrite as corruption. §2.5a.
 
 ## Trust boundaries
 

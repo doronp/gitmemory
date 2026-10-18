@@ -216,6 +216,45 @@ def test_the_documented_manifest_fields_are_the_fields():
         assert field in design, f"DESIGN.md does not mention the manifest field {field!r}"
 
 
+def test_the_disk_section_calls_rebuildable_only_what_is_gitignored():
+    """ARCHITECTURE.md said the store "holds each byte the agent wrote exactly
+    once", and DESIGN.md "zero duplication". That is `raw/`. `.git` keeps a
+    second, compressed copy and `index/` the text a third time, so one store
+    came to 1.75x what it had captured, and no document said why.
+
+    The ratios are not pinned: they move with the filesystem's block size, the
+    git version, when `gc --auto` last packed, and the corpus. What is pinned is
+    the advice. Deleting `index/` to get space back is safe only while git
+    ignores `index/` and tracks `raw/` and `sessions/`, so that is checked
+    against the store's own `.gitignore`. The anchors pointing at the section
+    are checked against its heading, so renaming it breaks a test and not just a link.
+    Headings are read with fenced blocks cut out: a `# comment` in a shell or
+    TOML recipe is not a heading, and counting it let a link to no heading pass.
+    """
+    from gitmemory import gitrepo
+
+    watching = re.sub(r"^```.*?^```", "", _read("docs/watching.md"), flags=re.S | re.M)
+    section = re.search(r"^## How much disk it takes\n(.*?)(?=^## |\Z)", watching, re.S | re.M)
+    assert section, "docs/watching.md has no 'How much disk it takes' section"
+    body = section.group(1)
+    assert "`index/`" in body and "`gitmemory index`" in body, "it no longer says what rebuilds it"
+
+    ignored = gitrepo.GITIGNORE.splitlines()
+    assert "/index/" in ignored, "the section says to delete a directory git may be tracking"
+    for durable in ("/raw/", "/sessions/"):
+        assert durable not in ignored, f"{durable} is ignored, so git no longer holds it"
+
+    slugs = {
+        re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
+        for h in re.findall(r"^#+ (.+)$", watching, re.M)
+    }
+    for rel in ("README.md", "docs/ARCHITECTURE.md", "docs/DESIGN.md"):
+        anchors = re.findall(r"watching\.md#([\w-]+)", _read(rel))
+        assert "how-much-disk-it-takes" in anchors, f"{rel} does not point at the section"
+        for anchor in anchors:
+            assert anchor in slugs, f"{rel} links watching.md#{anchor}, which no heading makes"
+
+
 def test_the_documented_shim_length_is_the_shim_length():
     """ "~20 lines POSIX sh" outlived the sentence by a factor of five.
 
