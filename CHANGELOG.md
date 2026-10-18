@@ -99,6 +99,11 @@ tell you.
   3.13 interpreter. A test reads the floor from `pyproject.toml` and holds
   every install line to it. See
   [README.md](README.md#quickstart).
+- **Sizes for people.** `watch` and `capture` say how much a pass captured as
+  `+392.0 MB (391995999 B)` instead of `+391995999B`, keeping the exact count in
+  parentheses; under 1000 bytes it is `+N B`. A script that parsed `+NB` out of
+  either line needs the new form. `size=` stays an exact offset, and the commit
+  subject keeps `+NB`. See [USAGE.md](docs/USAGE.md#set-it-up-once).
 
 ### Fixed
 

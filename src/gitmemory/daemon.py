@@ -118,7 +118,8 @@ class Tick:
     # Segments this pass attested to without copying a byte — reclaimed from the
     # generation directory rather than read out of the source. The manifest
     # records them permanently; this is so the operator hears about it at the
-    # time, since a repair that shows up only as "+0B" reads like a quiet pass.
+    # time, since a repair that shows up only as a "+0B" commit reads like a
+    # quiet pass: with nothing captured, the log has no `captured` line at all.
     # Not an error: after a killed capture it is the correct outcome. [E7 fs-F4]
     adopted: list[str] = field(default_factory=list)
 
@@ -1015,6 +1016,25 @@ def tick(
     return result
 
 
+def size_text(n: int) -> str:
+    """How much a pass captured, for a person: `392.0 MB (391995999 B)`.
+
+    `+391995999B` made the reader count digits. The exact count stays beside the
+    rounded one for anyone doing byte arithmetic, and the units are decimal so
+    the two can be checked against each other by moving a point. Amounts only:
+    `size=` and every offset are coordinates, and stay plain bytes.
+    """
+    if n < 1000:
+        return f"{n} B"
+    x = float(n)
+    for unit in ("kB", "MB", "GB", "TB"):
+        x /= 1000
+        # 999.95 and not 1000: `.1f` would round 999.96 kB up to "1000.0 kB".
+        if x < 999.95 or unit == "TB":
+            break
+    return f"{x:.1f} {unit} ({n} B)"
+
+
 def run(
     home: str | None = None,
     *,
@@ -1176,7 +1196,7 @@ def run(
                 else ""
             )
             log(
-                f"captured {len(result.captured)} +{result.appended}B "
+                f"captured {len(result.captured)} +{size_text(result.appended)} "
                 f"commit={result.commit}{dropped}"
             )
         if once:

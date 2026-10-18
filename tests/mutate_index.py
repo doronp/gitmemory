@@ -4769,7 +4769,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "54 mutants",
+        "a full pass is 6" + "57 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5864,6 +5864,28 @@ MUTANTS = [
         'f"launchctl bootout {job} && rm {shlex.quote(target)}"',
         "test_the_printed_removal_works_when_the_job_was_never_started",
     ),
+    # --- a captured amount said for a person ---
+    (
+        "the watch line goes back to a bare byte count",
+        "daemon.py",
+        "+{size_text(result.appended)} ",
+        "+{result.appended}B ",
+        "test_the_watch_line_says_how_much_in_units_a_person_reads",
+    ),
+    (
+        "capture's result line goes back to a bare byte count",
+        "__main__.py",
+        "    added = daemon.size_text(cap.appended)",
+        '    added = f"{cap.appended}B"',
+        "test_cli_capture_says_how_much_in_units_and_where_in_bytes",
+    ),
+    (
+        "a size just under the next unit rounds up to 1000.0 of this one",
+        "daemon.py",
+        '        if x < 999.95 or unit == "TB":',
+        '        if x < 1000 or unit == "TB":',
+        "test_a_byte_count_is_said_for_a_person_and_exactly",
+    ),
 ]
 
 
@@ -6016,7 +6038,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 654 mutants × two suite runs —
+    The filter exists because a full pass is 657 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

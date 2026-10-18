@@ -55,7 +55,7 @@ To check the loop end to end without waiting, run one pass:
 
 ```console
 $ gitmemory watch --once
-captured 1 +1167B commit=f355b10ace4b872ffe77794cbf4183afb1dcf478
+captured 1 +1.2 kB (1167 B) commit=f355b10ace4b872ffe77794cbf4183afb1dcf478
 $ gitmemory verify
 0 problem(s)
 ```
