@@ -11,8 +11,14 @@ byte, and `gitmemory index` builds a search index from that record. This skill
 searches it with the `gitmemory` CLI and quotes the words as they were written.
 It reads the store and rebuilds the index when it has to; it captures and
 configures nothing. It sends nothing anywhere itself, but what it reads enters
-this conversation and goes to the model provider with the rest of it, past no
-redaction gate: that gate stands at `gitmemory push`.
+this conversation and goes to the model provider with the rest of it. The
+redaction gate stands at `gitmemory push`, not here. `--redact` masks the
+credential shapes that gate knows in what `recall` and `show` print, as
+`sk-a…[103 bytes]`. Pass it to both whenever `echo "${GITMEMORY_REDACT:-}"`
+prints anything but nothing or `0`, and whenever the user asks you to keep
+credentials out of the conversation. Masking covers only what those two print,
+so while you are masking, do not read a turn from `raw/` by hand, and if
+either command rejects the flag, do not run it without it.
 
 The store is `$GITMEMORY_HOME`, or `~/.gitmemory` when that is unset; the CLI
 reads it, so leave it as this session has it. If the user keeps the store
@@ -46,7 +52,8 @@ user is referring to, in the words they would have used. `recall` ranks by
 BM25: it matches words, not meaning.
 
 ```sh
-gitmemory recall "<topic>"        # 10 lines by default; -k N for more or fewer
+gitmemory recall "<topic>"            # 10 lines by default; -k N for more or fewer
+gitmemory recall --redact "<topic>"   # the same, masked
 ```
 
 One line per turn: what the user said first, newest first, then everything
@@ -142,17 +149,21 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
   and keep the address beside it.
 - The text stops at 160 characters. If the question needs the rest, run
   `gitmemory show <address>` with the address copied whole, or
-  `gitmemory show --context 2 <address>` for the two turns either side too. A
+  `gitmemory show --context 2 <address>` for the two turns either side too,
+  and `gitmemory show --redact <address>` if you passed `--redact` to
+  `recall`. A masked address (one with `…[` in it) is not one `show` can
+  look up: say the line stops there and give the address as printed. A
   header starts `>` for the turn at the address and `-` for a neighbour, and
   only headers start in column 0; quote the text under one without its indent.
   `subagent:user` in a header is a brief from the agent that started the
   subagent, not the user's words. If the CLI is older than `show` (exit 2,
   `invalid choice: 'show'`), tell the user as [When it fails](#when-it-fails)
-  says, and read the turn by hand: it is the JSON line that starts
-  `offset - start` bytes into the segment under
-  `<store>/raw/<agent>/<session>/g<NN>/` whose name, the byte range
-  `start-end` with the end excluded, holds the offset, and it may run on into
-  the next segment.
+  says. If you are masking, stop there: `raw/` is unmasked, so say the line
+  stops at 160 characters and give the address. Otherwise read the turn by
+  hand: it is the JSON line that starts `offset - start` bytes into the
+  segment under `<store>/raw/<agent>/<session>/g<NN>/` whose name, the byte
+  range `start-end` with the end excluded, holds the offset, and it may run
+  on into the next segment.
 - This session is `${CLAUDE_SESSION_ID}`. A hit's manifest,
   `<store>/sessions/<agent>/<session>/g<NN>.json`, has its transcript's
   `source_path`: `<project>/<session-id>.jsonl`, or for a subagent (a session
@@ -169,9 +180,10 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
 ## Read-only
 
 Run `gitmemory --version`, `gitmemory recall`, `gitmemory show` and
-`gitmemory index`, and read files under `<store>`. `index` writes only the
-derived index under `<store>/index/`. Do not run `gitmemory init`,
-`gitmemory capture`, `gitmemory watch`, `gitmemory service`,
-`gitmemory derive`, `gitmemory push` or `gitmemory dashboard`, and never
-`gitmemory dashboard --expose`. Do not edit `config.toml` or anything else in
-the store.
+`gitmemory index`, and read files under `<store>`, but not `raw/` while you
+are masking. `index` writes only the derived index under `<store>/index/`. Do
+not run `gitmemory init`, `gitmemory capture`, `gitmemory watch`,
+`gitmemory service`, `gitmemory derive`, `gitmemory push` or
+`gitmemory dashboard`, and never `gitmemory dashboard --expose`. Do not edit
+`config.toml` or anything else in the store. Leave `GITMEMORY_REDACT` as this
+session has it.

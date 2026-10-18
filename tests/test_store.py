@@ -1994,7 +1994,8 @@ def test_a_credential_in_an_exception_message_is_masked_on_the_way_out(home, cap
 
     An `OSError` carries the path it failed on. Nobody asked to see that string
     — it is a diagnostic — and `recall`, which prints transcript content because
-    that is what it is for, is deliberately not masked. Only exception text is.
+    that is what it is for, is not masked unless the owner asks (`--redact`).
+    Exception text always is.
     """
     from gitmemory.__main__ import main
 

@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from gitmemory import gitrepo, index, records, store
+from gitmemory import gitrepo, index, records, redact, store
 from gitmemory.__main__ import main
 
 
@@ -1720,3 +1720,190 @@ def test_one_watcher_pass_is_what_clears_it(home, src, capsys):
     capsys.readouterr()
     assert main(["--home", home, "recall", "marmoset"]) == 0
     assert "uncollected" not in capsys.readouterr().err
+
+
+# --------------------------------------------------------------------------- #
+# recall --redact: the owner asks for the gate's shapes to be masked
+# --------------------------------------------------------------------------- #
+
+# Synthetic, right shape, and assembled here so that no credential-shaped
+# literal sits in the tree for a push scanner to find.
+AKIA = "AKIA" + "ZQ" * 8
+PEM_BODY = "b" * 64
+PEM = (
+    "-----BEGIN RSA " + "PRIVATE KEY-----\n" + PEM_BODY + "\n" + PEM_BODY + "\n"
+    "-----END RSA " + "PRIVATE KEY-----"
+)
+
+
+def _recall_out(home: str, capsys, *argv: str) -> str:
+    assert main(["--home", home, "recall", *argv]) == 0
+    return capsys.readouterr().out
+
+
+def test_recall_redact_masks_a_key_the_160_character_cut_would_have_halved(home, src, capsys):
+    """Masked before the cut. The key starts at character 150, so the cut keeps
+    ten of its twenty characters, and ten match no detector: masking the
+    printed head instead would scan a fragment clean and print it."""
+    text = "zebra " * 25 + AKIA + " tail"
+    assert text.index(AKIA) == 150
+    built(home, src, [user("u1", text)]).close()
+    capsys.readouterr()
+    assert AKIA[:10] in _recall_out(home, capsys, "zebra"), "the default stays verbatim"
+    out = _recall_out(home, capsys, "zebra", "--redact")
+    assert "AKIA…[" in out and AKIA[4:10] not in out, out
+
+
+def test_recall_redact_masks_a_private_key_body_and_not_only_its_header(home, src, capsys):
+    """`private_key_block` matches the BEGIN line, and the key is the base64
+    under it. Masking the match alone printed `----…[31 bytes]` followed by
+    every byte of the key."""
+    built(home, src, [user("u1", "pemcase " + PEM + " after the key")]).close()
+    capsys.readouterr()
+    assert PEM_BODY[:8] in _recall_out(home, capsys, "pemcase"), "premise: the body is there"
+    out = _recall_out(home, capsys, "pemcase", "--redact")
+    assert PEM_BODY[:8] not in out and "PRIVATE KEY" not in out, out
+    assert "pemcase ----…[" in out and "after the key" in out, out
+
+
+def test_recall_redact_masks_a_header_that_only_the_collapse_assembles(home, src, capsys):
+    """`-----BEGIN RSA\\nPRIVATE KEY-----` scans clean as written and is a
+    header once the line is flattened, and the flattened line is what recall
+    prints. So the mask runs after the collapse, as `graph._label` found it
+    had to. [E7b L3-F1]"""
+    split = PEM.replace("RSA PRIVATE", "RSA\nPRIVATE", 1)
+    assert redact.mask(split) == split, "premise: nothing matches before the collapse"
+    built(home, src, [user("u1", "pemcase " + split)]).close()
+    capsys.readouterr()
+    out = _recall_out(home, capsys, "pemcase", "--redact")
+    assert PEM_BODY[:8] not in out and "PRIVATE KEY" not in out, out
+
+
+def test_recall_redact_masks_a_session_id_that_is_itself_a_credential(home, src, capsys):
+    """The address is printed too, and `_SAFE_RE` accepts a token as a session
+    id. Lowercase, because the store case-folds ids.
+
+    The masked address stays one column. The mask's marker has a space in it,
+    and with it `split()[3]` read `bytes]/g00@0` where role/kind belongs."""
+    ghp = "ghp_" + "a" * 36
+    write(src, [user("u1", "walrus note")])
+    store.capture(src, "claude-code", ghp, home=home)
+    index.build(home)
+    capsys.readouterr()
+    assert ghp in _recall_out(home, capsys, "walrus")
+    out = _recall_out(home, capsys, "walrus", "--redact")
+    assert ghp not in out and "/ghp_…[40bytes]/g00@0  user/text" in out, out
+    assert out.split()[3] == "user/text", out
+
+
+def test_recall_redact_masks_a_key_the_raw_bytes_only_spell_escaped(home, src, capsys):
+    """The push gate reads raw bytes and cannot see `\\u0073k-ant-…`. The index
+    holds the parsed text, where the escape is already the key, so recall's
+    mask sees what the push gate does not."""
+    key = "sk-ant-api03-" + "A1b2_-" * 15
+    with open(src, "ab") as fh:
+        fh.write(
+            b'{"type":"user","uuid":"u1","sessionId":"s1","message":{"role":"user",'
+            b'"content":"escaped \\u0073' + key[1:].encode() + b' unicorn"}}\n'
+        )
+    assert redact.scan_bytes(Path(src).read_bytes()) == [], "premise: the raw bytes scan clean"
+    store.capture(src, "claude-code", "sess", home=home)
+    index.build(home)
+    capsys.readouterr()
+    out = _recall_out(home, capsys, "unicorn", "--redact")
+    assert key[4:20] not in out and "sk-a…[103 bytes]" in out, out
+
+
+def test_gitmemory_redact_makes_masking_standing_and_0_turns_it_off(
+    home, src, capsys, monkeypatch
+):
+    """Unset, empty and `0` are off, and anything else is on, so a mistyped
+    value fails toward masking. Read when the parser is built, as
+    `GITMEMORY_POLICY` is."""
+    built(home, src, [user("u1", "aws " + AKIA + " done")]).close()
+    capsys.readouterr()
+    for value, masked in (("1", True), ("yes", True), ("0", False), ("", False)):
+        monkeypatch.setenv("GITMEMORY_REDACT", value)
+        assert (AKIA not in _recall_out(home, capsys, "aws")) is masked, value
+    monkeypatch.delenv("GITMEMORY_REDACT")
+    assert AKIA in _recall_out(home, capsys, "aws")
+    assert AKIA not in _recall_out(home, capsys, "aws", "--redact")
+
+
+def test_mask_returns_clean_text_unchanged_and_keeps_the_words_around_a_key():
+    clean = "the lock is held across the await, see a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0"
+    assert redact.mask(clean) is clean
+    assert redact.mask(f"use {AKIA} for staging") == "use AKIA…[20 bytes] for staging"
+    # Each header runs to its own END line, not the last one in the text.
+    two = redact.mask(f"one {PEM} between {PEM} two")
+    assert two == f"one ----…[{len(PEM)} bytes] between ----…[{len(PEM)} bytes] two", two
+    # Cut before its END line, the rest of the text is the key, so the rest goes.
+    assert redact.mask("x " + PEM[:80]) == "x ----…[80 bytes]"
+
+
+def test_recall_redact_masks_a_key_behind_a_character_the_index_spells_out(home, src, capsys):
+    """The push gate reads raw bytes, and a BOM, a zero-width space or a DEL in
+    front of a key is not a word character there, so the key's `\\b` holds and
+    the gate finds it. The index holds `records.safe_text`'s spelling of each,
+    `\\ufeff`, `\\u200b`, `\\x7f`, and every spelling ends in a word character:
+    the boundary was gone and `recall --redact` printed all three whole. A `cat`
+    of an `.env` saved with a BOM is the ordinary way in.
+
+    The password has a control inside its value, which a scan of the blanked
+    copy alone cuts to three characters and misses, so both scans stay."""
+    ghp = "ghp_" + "a" * 36
+    secret = "pass" + "word=abc" + "\x01" + "defghijklmn"
+    text = f"marmot \ufeff{AKIA} x\u200b{ghp} y\x7f{AKIA} z {secret} end"
+    line = {"type": "user", "uuid": "u1", "sessionId": "s1"}
+    line["message"] = {"role": "user", "content": text}
+    # Literal UTF-8, as Node's JSON.stringify writes it, which is what the gate reads.
+    with open(src, "wb") as fh:
+        fh.write(json.dumps(line, ensure_ascii=False).encode() + b"\n")
+    gate = [f.detector for f in redact.scan_bytes(Path(src).read_bytes())]
+    assert gate.count("aws_access_key_id") == 2 and "github_token" in gate, gate
+    assert "assigned_secret" in gate, gate
+    store.capture(src, "claude-code", "sess", home=home)
+    index.build(home)
+    capsys.readouterr()
+    assert AKIA in _recall_out(home, capsys, "marmot"), "premise: the default prints them"
+    out = _recall_out(home, capsys, "marmot", "--redact")
+    assert AKIA[4:10] not in out and ghp[4:20] not in out and "defghijklmn" not in out, out
+    assert "\\ufeffAKIA…[20 bytes] x\\u200bghp_…[40 bytes] y\\x7fAKIA…[20 bytes]" in out, out
+
+
+def test_mask_stays_linear_on_a_page_of_key_headers_and_an_end_line_that_never_closes():
+    """Two ways the PEM widening went quadratic on text an agent fetched.
+
+    Each header searched for its own END line, so headers with none cost
+    headers x length: 16,000 of them (437 KB) took 2.4 s where `scan_bytes`
+    took 0.06 s, and a 2 MB tool_result of them kept `recall --redact` for
+    41 s. And the END pattern's unbounded runs retried every `KEY` in a
+    `-----END KEY KEY …` line to its end: 125 KB took 4.1 s.
+
+    At these sizes each would be about 15 s and 10 s. 1.5 s is several times
+    what the linear code costs here, and fails long before anyone would wait.
+    """
+    header = "-----BEGIN " + "PRIVATE KEY-----\n"
+    for label, text in (
+        ("headers with no END", header * 40_000),
+        ("an END line that never closes", header + "-----END " + "KEY " * 50_000),
+    ):
+        started = time.monotonic()
+        out = redact.mask(text)
+        elapsed = time.monotonic() - started
+        assert out == f"----…[{len(text)} bytes]", (label, out[:80])
+        assert elapsed < 1.5, f"{label}: the PEM widening went quadratic again: {elapsed:.2f}s"
+
+
+def test_recall_redact_keeps_a_subagent_turn_marked(home, tmp_path, capsys):
+    """The mask and the subagent mark compose. `--redact` changes what the
+    address and the text say, never which field role/kind is in or whose turn
+    a line is."""
+    with_a_subagent(home, tmp_path)
+    capsys.readouterr()
+    out = _recall_out(home, capsys, "retry loop upload", "--redact")
+    assert [line.split()[3] for line in out.splitlines()] == [
+        "user/text",
+        "subagent:user/text",
+        "assistant/text",
+    ], out

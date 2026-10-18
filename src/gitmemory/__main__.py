@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import builtins
+import functools
 import ipaddress
 import os
 import re
@@ -48,9 +49,11 @@ def _safe_exc(exc: BaseException) -> str:
 
     Not in `print` itself, deliberately. `recall` prints transcript content
     because that is what it is for, and a store on the owner's own disk is not
-    an egress; masking there would make the tool withhold the user's own bytes
-    from them. Egress is `push` and `serve`, and an exception is neither — it is
-    the third case, and it is the one that leaks by accident.
+    an egress; masking there by default would make the tool withhold the user's
+    own bytes from them. `--redact` on `recall` and `show` is the owner choosing
+    to withhold them, because the output is going on: through the plugin's
+    skill, to the model provider. Egress is `push` and `serve`, and an exception
+    is neither — it is the third case, and it is the one that leaks by accident.
     """
     return redact.safe_path(str(exc))
 
@@ -454,17 +457,25 @@ def _recall(args) -> int:
         shown = list(resolve(hits))
     except Exception as exc:  # a custom policy is the user's code: report it, no traceback
         raise ValueError(f"policy {args.policy!r} failed: {exc!r}") from exc
+    # After the policy, so a custom one cannot route around it. After the
+    # collapse, which can join a PEM header a newline split, and before the cut:
+    # a key that straddles character 160 leaves a prefix no detector matches.
+    # `graph._label` measured both. The address too: a session id can be a key.
+    shown_as = redact.mask if args.redact else str
     for h in shown:
-        head = " ".join(h.text.split())[:160]
+        head = shown_as(" ".join(h.text.split()))[:160]
         # The date on every line, whatever the policy: it is what lets the
         # reader see that two disagreeing turns are three weeks apart.
         date = _date(h)
+        # One column still: a session key has no space in it (`store._SAFE_RE`),
+        # and the one a mask's marker adds would split the address in two.
+        where = shown_as(f"{h.session_key}@{h.byte_offset}").replace(" ", "")
         # In the role's column, not a column of its own: whatever parses these
         # lines reads role/kind as the fourth field, and a subagent's user/text
         # is the parent agent's instructions, which must not be quoted as the
         # user's.
         who = f"subagent:{h.role}" if h.is_sidechain else h.role
-        print(f"{h.score:8.3f}  {date}  {h.session_key}@{h.byte_offset}  {who}/{h.kind}  {head}")
+        print(f"{h.score:8.3f}  {date}  {where}  {who}/{h.kind}  {head}")
     if not hits:
         print("no matches", file=sys.stderr)
     elif not shown:
@@ -546,16 +557,40 @@ def _show(args) -> int:
     # here: a tool name is any string the transcript chose, so it is collapsed,
     # and `splitlines()` broke on "\r", "\x85" and U+2028 before `safe_text`
     # could escape them.
+    #
+    # `--redact` masks as recall's does, on each block whole, before the split:
+    # a private key's body is the lines under its header. These lines keep
+    # their breaks, where recall's are flattened first, so the mask is asked to
+    # join `-----BEGIN RSA` and `PRIVATE KEY-----` across one itself.
+    shown_as = functools.partial(redact.mask, collapse=True) if args.redact else str
     lo = max(0, at - args.context)
     for i, t in enumerate(turns[lo : at + args.context + 1], start=lo):
         # A subagent's user turn is the brief its parent wrote, not the user.
         who = f"subagent:{t.role}" if t.is_sidechain else t.role
-        print(f"{'>' if i == at else '-'} {key}@{t.byte_offset}  {_date(t)}  {who}")
+        # One field, as in recall: the marker's space would split the address.
+        where = shown_as(f"{key}@{t.byte_offset}").replace(" ", "")
+        print(f"{'>' if i == at else '-'} {where}  {_date(t)}  {who}")
         for b in t.blocks:
-            print("  " + " ".join([b.kind, *(b.tool_name or "").split()]))
-            for line in b.text.split("\n") if b.text else ():
+            print("  " + shown_as(" ".join([b.kind, *(b.tool_name or "").split()])))
+            for line in shown_as(b.text).split("\n") if b.text else ():
                 print(f"    {line}")
     return 0
+
+
+def _redact_flag(parser: argparse.ArgumentParser) -> None:
+    """`--redact`, defined once for each command that prints transcript text.
+
+    The flag can only turn masking on. A standing `GITMEMORY_REDACT` is undone
+    for one call by `GITMEMORY_REDACT=0`, and any value but empty or `0` means
+    on, so a mistyped one fails toward masking.
+    """
+    parser.add_argument(
+        "--redact",
+        action="store_true",
+        default=os.environ.get("GITMEMORY_REDACT", "") not in ("", "0"),
+        help="mask the credential shapes the push gate detects in what is printed "
+        "(default on when $GITMEMORY_REDACT is set and not 0)",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -648,6 +683,7 @@ def main(argv: list[str] | None = None) -> int:
         help="which hit goes first when they disagree: latest-user, latest, relevance, or "
         "module:function (default $GITMEMORY_POLICY or %(default)s)",
     )
+    _redact_flag(rec)
     rec.set_defaults(fn=_recall)
 
     sho = sub.add_parser("show", help="print the turn at an address recall printed, from the store")
@@ -655,6 +691,7 @@ def main(argv: list[str] | None = None) -> int:
     sho.add_argument(
         "-C", "--context", type=_count, default=0, metavar="N", help="also N turns either side"
     )
+    _redact_flag(sho)
     sho.set_defaults(fn=_show)
 
     args = ap.parse_args(argv)

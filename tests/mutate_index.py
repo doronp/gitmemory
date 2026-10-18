@@ -3902,6 +3902,128 @@ MUTANTS = [
         "            tick.spool_consumed += 1",
         "test_one_watcher_pass_is_what_clears_it",
     ),
+    # --- recall --redact: masked where the detectors can still see the key -- #
+    (
+        "recall --redact masks the head after the 160-character cut",
+        "__main__.py",
+        '        head = shown_as(" ".join(h.text.split()))[:160]',
+        '        head = shown_as(" ".join(h.text.split())[:160])',
+        "test_recall_redact_masks_a_key_the_160_character_cut_would_have_halved",
+    ),
+    (
+        "recall --redact masks the head before the collapse assembles a header",
+        "__main__.py",
+        '        head = shown_as(" ".join(h.text.split()))[:160]',
+        '        head = " ".join(shown_as(h.text).split())[:160]',
+        "test_recall_redact_masks_a_header_that_only_the_collapse_assembles",
+    ),
+    (
+        "recall --redact masks a private key's header and prints its body",
+        "redact.py",
+        "            f = replace(f, length=reach - f.offset)\n",
+        "",
+        "test_recall_redact_masks_a_private_key_body_and_not_only_its_header",
+    ),
+    (
+        "recall --redact prints a session id that is itself a credential",
+        "__main__.py",
+        '        where = shown_as(f"{h.session_key}@{h.byte_offset}").replace(" ", "")',
+        '        where = f"{h.session_key}@{h.byte_offset}".replace(" ", "")',
+        "test_recall_redact_masks_a_session_id_that_is_itself_a_credential",
+    ),
+    (
+        # The marker is `ghp_…[40 bytes]`, and its space moved role/kind to [4].
+        "recall --redact splits a masked address into two columns",
+        "__main__.py",
+        '        where = shown_as(f"{h.session_key}@{h.byte_offset}").replace(" ", "")',
+        '        where = shown_as(f"{h.session_key}@{h.byte_offset}")',
+        "test_recall_redact_masks_a_session_id_that_is_itself_a_credential",
+    ),
+    (
+        # The obvious spelling, and it reads `GITMEMORY_REDACT=0` as on.
+        "recall --redact reads GITMEMORY_REDACT=0 as on",
+        "__main__.py",
+        '        default=os.environ.get("GITMEMORY_REDACT", "") not in ("", "0"),',
+        '        default=bool(os.environ.get("GITMEMORY_REDACT")),',
+        "test_gitmemory_redact_makes_masking_standing_and_0_turns_it_off",
+    ),
+    (
+        # The index spells a BOM `\ufeff`, and its `f` takes away the key's `\b`.
+        "recall --redact prints a key behind a control the index spells out",
+        "redact.py",
+        '    plain = _SPELLED.sub(lambda m: b" " * len(m[0]), data)',
+        "    plain = data",
+        "test_recall_redact_masks_a_key_behind_a_character_the_index_spells_out",
+    ),
+    (
+        "recall --redact scans only the copy with the spellings blanked",
+        "redact.py",
+        "    found = scan_bytes(data) + (scan_bytes(plain) if plain != data else [])",
+        "    found = scan_bytes(plain)",
+        "test_recall_redact_masks_a_key_behind_a_character_the_index_spells_out",
+    ),
+    (
+        "every private key header searches for its own END line again",
+        "redact.py",
+        '        if f.detector == "private_key_block" and f.offset >= reach:',
+        '        if f.detector == "private_key_block":',
+        "test_mask_stays_linear_on_a_page_of_key_headers_and_an_end_line_that_never_closes",
+    ),
+    (
+        "the END line pattern's runs are unbounded again",
+        "redact.py",
+        "{0,40}KEY[A-Z ]{0,10}-----",
+        "*KEY[A-Z ]*-----",
+        "test_mask_stays_linear_on_a_page_of_key_headers_and_an_end_line_that_never_closes",
+    ),
+    # --- show --redact: the whole turn, masked as recall's line is ---------- #
+    (
+        # A private key's body is the lines under its header, and no detector
+        # matches a line of base64 on its own.
+        "show --redact masks each line apart and prints a private key's body",
+        "__main__.py",
+        '            for line in shown_as(b.text).split("\\n") if b.text else ():',
+        '            for line in map(shown_as, b.text.split("\\n")) if b.text else ():',
+        "test_show_redact_masks_a_whole_turn_and_the_default_prints_it",
+    ),
+    (
+        "show --redact prints a session id that is itself a credential",
+        "__main__.py",
+        '        where = shown_as(f"{key}@{t.byte_offset}").replace(" ", "")',
+        '        where = f"{key}@{t.byte_offset}"',
+        "test_show_redact_masks_a_whole_turn_and_the_default_prints_it",
+    ),
+    (
+        "show --redact splits a masked address into two fields",
+        "__main__.py",
+        '        where = shown_as(f"{key}@{t.byte_offset}").replace(" ", "")',
+        '        where = shown_as(f"{key}@{t.byte_offset}")',
+        "test_show_redact_masks_a_whole_turn_and_the_default_prints_it",
+    ),
+    (
+        "show --redact prints a tool's name unmasked",
+        "__main__.py",
+        '            print("  " + shown_as(" ".join([b.kind, *(b.tool_name or "").split()])))',
+        '            print("  " + " ".join([b.kind, *(b.tool_name or "").split()]))',
+        "test_show_redact_masks_a_whole_turn_and_the_default_prints_it",
+    ),
+    (
+        # recall flattens a turn before it masks; show prints the line breaks.
+        "show --redact masks without joining a key header a line break split",
+        "__main__.py",
+        "functools.partial(redact.mask, collapse=True)",
+        "functools.partial(redact.mask, collapse=False)",
+        "test_show_redact_joins_a_key_header_a_line_break_split",
+    ),
+    (
+        # The copy is shorter by every run it narrowed, so its offsets are not
+        # the text's: unmapped, the mask eats the bytes before the key.
+        "the collapsed scan masks at the copy's offsets, not the text's",
+        "redact.py",
+        "        return x if i < 0 else ends[i] + x - spaces[i] - 1",
+        "        return x",
+        "test_show_redact_joins_a_key_header_a_line_break_split",
+    ),
     # --- E7 index-F8: the caps bound the shape of the input, not its cost -- #
     (
         "sumy's own quadratic idf is used again",
@@ -4647,7 +4769,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "38 mutants",
+        "a full pass is 6" + "54 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5515,15 +5637,15 @@ MUTANTS = [
     (
         "show prints a tool name's newline, so a transcript forges a header",
         "__main__.py",
-        '            print("  " + " ".join([b.kind, *(b.tool_name or "").split()]))',
-        '            print("  " + " ".join([b.kind, *filter(None, [b.tool_name])]))',
+        '            print("  " + shown_as(" ".join([b.kind, *(b.tool_name or "").split()])))',
+        '            print("  " + shown_as(" ".join([b.kind, *filter(None, [b.tool_name])])))',
         "test_a_transcript_cannot_forge_a_show_header_or_reach_the_terminal",
     ),
     (
         "show splits block text before a carriage return is escaped",
         "__main__.py",
-        '            for line in b.text.split("\\n") if b.text else ():',
-        "            for line in b.text.splitlines() if b.text else ():",
+        '            for line in shown_as(b.text).split("\\n") if b.text else ():',
+        "            for line in shown_as(b.text).splitlines() if b.text else ():",
         "test_a_transcript_cannot_forge_a_show_header_or_reach_the_terminal",
     ),
     (
@@ -5894,7 +6016,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 638 mutants × two suite runs —
+    The filter exists because a full pass is 654 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

@@ -39,7 +39,8 @@ tell you.
   compaction or from an earlier session. It runs `gitmemory index` when the
   index is missing or stale, and writes nothing else. See
   [docs/USAGE.md](docs/USAGE.md#put-it-back-in-front-of-the-agent). What it
-  reads goes to the model provider, past no redaction gate. The plugin's
+  reads goes to the model provider, past no redaction gate; `recall --redact`
+  (below) masks credential shapes in it, and blocks nothing. The plugin's
   version is still 0.1.0, so a copy installed from 0.1.0 does not get the skill
   from `claude plugin update`; reinstall it, or wait for the next release
   ([hook/README.md](hook/README.md#as-a-claude-code-plugin)).
@@ -73,6 +74,17 @@ tell you.
   2, and one the store does not hold exits 1. The recall skill uses it in place
   of reading `raw/` by hand. See
   [USAGE.md](docs/USAGE.md#read-the-whole-turn).
+- **`recall --redact`** and **`show --redact`** mask the credential shapes
+  the push gate detects in what they print, the text and the address, as
+  `AKIA…[20 bytes]`; a private key is masked down to its END line, or to the
+  end of the text without one. `show` masks each block whole before it splits
+  it into lines, so a key's body goes with its header. Off by default.
+  `GITMEMORY_REDACT` makes it standing for both (unset, empty or `0` is off),
+  and the plugin's skill passes the flag to both whenever it is set and not
+  `0`, and then never reads a turn from `raw/`. It masks only those shapes,
+  and only in what the two commands print; see
+  [docs/USAGE.md](docs/USAGE.md#masking-credentials-in-what-it-prints) for
+  what it does not cover.
 
 ### Changed
 

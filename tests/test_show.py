@@ -15,9 +15,9 @@ import json
 import os
 
 import pytest
-from test_index import assistant, user, write
+from test_index import AKIA, PEM, PEM_BODY, assistant, user, write
 
-from gitmemory import store
+from gitmemory import redact, store
 from gitmemory.__main__ import main
 
 
@@ -241,3 +241,51 @@ def test_show_on_no_store_and_a_negative_context_exit_2(tmp_path, capsys):
     with pytest.raises(SystemExit) as done:
         main(["--home", str(tmp_path), "show", "claude-code/sess/g00@0", "-C", "-1"])
     assert done.value.code == 2
+
+
+def test_show_redact_masks_a_whole_turn_and_the_default_prints_it(home, src, capsys):
+    """What `recall --redact` masked one line of, whole. A private key's body is
+    the lines under its header, so a block is masked before it is split into
+    lines, never one line at a time. The address and a tool's name are masked
+    too, and the address stays one field, as recall's does."""
+    ghp = "ghp_" + "a" * 36  # lowercase, because the store case-folds a session id
+    text = f"the deploy key:\n{PEM}\nand {AKIA} for staging"
+    tool = {"type": "tool_use", "id": "t", "name": ghp, "input": {}}
+    write(src, [user("u1", text), assistant("a2", [tool])])
+    store.capture(src, "claude-code", ghp, home=home)
+    address = f"claude-code/{ghp}/g00@0"
+    code, out, _ = show(home, capsys, address, "-C", "1")
+    assert code == 0 and PEM_BODY in out and AKIA in out and out.count(ghp) == 3, out
+    code, out, err = show(home, capsys, address, "-C", "1", "--redact")
+    assert (code, err) == (0, "")
+    undated = "undated".ljust(17)
+    assert out.splitlines() == [
+        f"> claude-code/ghp_…[40bytes]/g00@0  {undated}  user",
+        "  text",
+        "    the deploy key:",
+        f"    ----…[{len(PEM)} bytes]",
+        "    and AKIA…[20 bytes] for staging",
+        f"- claude-code/ghp_…[40bytes]/g00@{size(user('u1', text))}  {undated}  assistant",
+        "  tool_use ghp_…[40 bytes]",
+    ], out
+    assert ghp[4:20] not in out and AKIA[4:10] not in out and PEM_BODY[:8] not in out, out
+
+
+def test_show_redact_joins_a_key_header_a_line_break_split(home, src, capsys):
+    """`-----BEGIN RSA\\nPRIVATE KEY-----` is no header until the line is
+    flattened. recall flattens a turn before it masks; show keeps the breaks, so
+    its mask flattens a copy itself and masks what that finds in the text as
+    written, leaving the lines around the key as they were. [E7b L3-F1]"""
+    split = PEM.replace("RSA PRIVATE", "RSA\nPRIVATE", 1)
+    text = f"first words\n\n  {split}\nlast words"
+    assert redact.mask(text) == text, "premise: nothing matches with the break in"
+    write(src, [user("u1", text)])
+    store.capture(src, "claude-code", "sess", home=home)
+    code, out, _ = show(home, capsys, "claude-code/sess/g00@0", "--redact")
+    assert code == 0
+    assert out.splitlines()[2:] == [
+        "    first words",
+        "    ",
+        f"      ----…[{len(split)} bytes]",
+        "    last words",
+    ], out

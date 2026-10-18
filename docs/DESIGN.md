@@ -215,6 +215,15 @@ coalescing only changes where the cut points are, never whether they tile.
 **Raw is committed locally, always** — that is the thesis. Redaction applies at exactly two
 boundaries: anything written to `derived/`, and anything **`gitmemory push`** sends. **`push` is
 opt-in per remote and refuses unless the redaction gate passed.** Default config has no remote.
+**[2026-10-18 — `recall --redact` and `show --redact` are a third point, and they mask; they are
+not a gate. Off by default, because a store on the owner's own disk is still not an egress. The
+owner turns it on, or makes it standing with `GITMEMORY_REDACT`, when their output goes on to a
+model provider through the plugin's skill. Both tiers are masked, unlike `derived/` below, because a
+mask costs the span and not the sentence; a PEM block from its BEGIN line to its END line, or to
+the end of the text when there is none; and the session id in the address. `recall` masks after
+the whitespace collapse and before the 160-character cut. `show` masks each block whole before it
+splits it into lines, and, because it keeps the line breaks, also scans a copy with each whitespace
+run collapsed. Neither refuses anything. `raw/` and the index stay verbatim.]**
 
 Not "anything that leaves the machine" — that claim was wider than the code and is withdrawn
 **[E7]**. The store is an ordinary git repository in a directory the owner can read. A `git push`
@@ -228,8 +237,8 @@ deleted is absent from the first two and present in the third **[E7]**.
 A startup assertion refuses to run if `$GITMEMORY_HOME` is inside another work tree, and every
 git call is explicit `git -C $GITMEMORY_HOME` — never cwd-inherited **[R1]**.
 
-The `derived/` boundary acts on the **HIGH tier only** — the nine issuer-anchored shapes, not the
-three SUSPECT ones. A sentence carrying a high-confidence key is dropped before ranking and
+The `derived/` boundary acts on the **HIGH tier only** — the twelve issuer-anchored shapes, not
+the four SUSPECT ones. A sentence carrying a high-confidence key is dropped before ranking and
 counted in `sentences_redacted`; `derive._write` then refuses outright to publish a payload that
 still contains one, because an artifact reaching that door with a key in it is a bug upstream, not
 a sentence to quietly lose. SUSPECT is excluded deliberately: it is `password: "..."`-shaped and

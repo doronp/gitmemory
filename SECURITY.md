@@ -38,7 +38,8 @@ maintained back-branches.
 
 In scope: anything in this repository that runs on a user's machine. That
 means capture, the store and its contiguity proof, `verify`, the redaction gate
-behind `push`, the index, `derive`, the dashboard, the watcher, the hook shim and the plugin's
+behind `push`, the masking behind `recall --redact` and `show --redact`, the
+index, `derive`, the dashboard, the watcher, the hook shim and the plugin's
 recall skill.
 
 Worth reporting, for example:
@@ -47,7 +48,9 @@ Worth reporting, for example:
   `derive` crash, hang, write outside `$GITMEMORY_HOME`, or cost superlinear time
 - a way to make `verify` accept a store whose segments do not tile, or whose
   bytes do not match the recorded digest
-- a secret that the redaction gate lets through on `push`
+- a secret that the redaction gate lets through on `push`, or that
+  `recall --redact` or `show --redact` prints unmasked, of a shape its
+  detectors are meant to catch
 - the dashboard being reachable without the sign-in URL, or writable
 
 Out of scope: vulnerabilities in the third-party dependencies themselves
@@ -90,7 +93,30 @@ that gets waved through on a deadline.
 
 The gate stands at `push` and nowhere else. The Claude Code plugin's recall
 skill reads the store into the agent's context, so each line it quotes goes to
-the model provider with the rest of the conversation, unscanned. That includes
-text another watched agent never sent to that provider, and a credential `push`
-would refuse to ship. The skill quotes what the question needs and no more,
-which is a rule it follows, not a gate.
+the model provider with the rest of the conversation, unscanned unless you turn
+on the masking below. That includes text another watched agent never sent to
+that provider, and a credential `push` would refuse to ship. The skill quotes
+what the question needs and no more, which is a rule it follows, not a gate.
+
+`recall --redact` and `show --redact`, or `GITMEMORY_REDACT` set to anything
+but empty or `0`, mask the gate's shapes in what those two commands print, and
+the skill passes the flag to both whenever the variable is set and not `0`,
+and then does not read `raw/`. It masks and never refuses, and it is off
+unless you turn it on. What it does not guarantee:
+
+- It masks only the sixteen shapes in [`redact.py`](src/gitmemory/redact.py):
+  twelve issuer-prefixed keys and four SUSPECT patterns. Anything else prints.
+  Measured examples: a bare AWS secret key, `PGPASSWORD=…`, a custom
+  `GH_TOKEN=…`, `glpat-` and `npm_` tokens, an Azure `AccountKey=…`, a password
+  in prose, `curl -u user:pass`, a `.netrc` line.
+- Nothing is decoded. Base64, URL-encoding and a token wrapped across lines get
+  through. JSON `\u` escapes are masked, because both commands read the parsed
+  text.
+- It is credential masking, not confidentiality. Hostnames, customer data,
+  personal data and code are untouched.
+- It covers only what `recall` and `show` print. `raw/`, the index database,
+  the dashboard, `derived/` and any file the agent opens are not masked by it.
+  The environment setting is a floor, not a boundary: an agent with a shell can
+  unset it, or read `raw/`.
+- A mask reveals the first four bytes and the length.
+- The SUSPECT patterns also mask some prose about configuration.
