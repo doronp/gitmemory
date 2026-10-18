@@ -4769,7 +4769,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "57 mutants",
+        "a full pass is 6" + "58 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5783,8 +5783,8 @@ MUTANTS = [
         # Unreadable taken for absent: the file is replaced by the table alone.
         "init takes a config.toml it cannot read for a missing one",
         "__main__.py",
-        '    except FileNotFoundError:\n        old = b""',
-        '    except OSError:\n        old = b""',
+        '    except FileNotFoundError:\n        return b""',
+        '    except OSError:\n        return b""',
         "test_cli_init_says_error_and_exits_2_when_it_could_not_look",
     ),
     (
@@ -5811,6 +5811,15 @@ MUTANTS = [
         '            return _refuse(f"{path} already watches {root} as {w.agent!r}")',
         "            continue",
         "test_cli_init_refuses_a_root_another_agent_already_watches",
+    ),
+    (
+        # Two inits read the same bytes; the later rename drops the other's
+        # table, and both say "added".
+        "init renames over a config another init wrote after it read it",
+        "__main__.py",
+        "        if _config_bytes(path) != old:",
+        "        if False:",
+        "test_cli_init_says_so_when_another_init_wrote_first",
     ),
     (
         "a killed init's temp copy of config.toml is committed",
@@ -5916,12 +5925,13 @@ def run(args: list[str]) -> int:
     figure depends on something the docstring used to get wrong. `addopts`
     carries `-m 'not corpus'`, but only one test is marked `corpus`; the ~328
     conformance cases are gated on the `.conformance/` clones being present, not
-    on a marker. So this is the 955-test offline suite on a machine without the
-    clones and the 1280-test suite on a machine with them — **measured**, 81 s
-    for the former on the author's laptop. It said "about a second" from E3
-    until somebody read it next to the "about a minute" nine lines down and
-    noticed the same call described twice, an order of magnitude apart.
-    [E3; review: docs, claims]
+    on a marker. So this is the offline suite on a machine without the clones
+    and the corpus-on suite on a machine with them — **measured**, 81 s for the
+    former on the author's laptop, when the two were 955 and 1280 tests; both
+    have grown since and it has not been re-timed. It said "about a second"
+    from E3 until somebody read it next to the "about a minute" nine lines
+    down and noticed the same call described twice, an order of magnitude
+    apart. [E3; review: docs, claims]
 
     `ANCHOR_TEST` as well, for the reason written where it is defined: it is the
     one test in the suite that is *supposed* to fail while a mutant is applied,
@@ -6038,19 +6048,20 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 657 mutants × two suite runs —
+    The filter exists because a full pass is 658 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
-    for the other 567 or trusting the new one untested.
+    for every other row or trusting the new one untested.
 
     Cost: **measured**, three rows timed end to end at 3.7 s, 17.1 s and
     17.2 s, on a machine with the `.conformance/` clones — so against the
-    1280-test suite, not the 955-test offline one (`run` explains why the two
-    differ). **Estimated** from those, a full pass is roughly one to two and a
-    half hours. The spread is not noise and does not average away — the first
-    of the two runs is `-x`, so a row costs however long the suite takes to
-    *reach* the test the mutant breaks, and that is a position in collection
-    order, not a property of the row. A row the suite misses entirely pays for
-    the whole suite instead.
+    corpus-on suite, not the offline one (`run` explains why the two differ),
+    when they were 1280 and 955 tests. **Estimated** from those, a full pass
+    was then roughly one to two and a half hours; the suite and the index have
+    both grown since, and neither figure has been re-timed. The spread is not
+    noise and does not average away — the first of the two runs is `-x`, so a
+    row costs however long the suite takes to *reach* the test the mutant
+    breaks, and that is a position in collection order, not a property of the
+    row. A row the suite misses entirely pays for the whole suite instead.
 
     Every figure in this paragraph had drifted: "41 s a row", "1,126-test",
     "71 verdicts in 49 minutes" and "about six hours" were all carried forward

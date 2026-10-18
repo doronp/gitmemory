@@ -484,17 +484,18 @@ uv run pytest -q --collect-only -p no:cacheprovider | tail -1
 uv run pytest -q --collect-only -p no:cacheprovider | grep -c '\.jsonl\]$'
 ```
 
-**Expected:** `1129/1130 tests collected (1 deselected)`, then
-`1454/1455 tests collected (1 deselected)`, then `328`. The deselected test is
+**Expected:** `1131/1132 tests collected (1 deselected)`, then
+`1456/1457 tests collected (1 deselected)`, then `328`. The deselected test is
 the LongMemEval corpus test, which is opt-in:
 `uv run pytest -q -m corpus` after `bench/fetch_longmemeval.sh`. The README's
-paragraph on why 1,129 + 328 is 1,454 and not 1,457 is the arithmetic of these
+paragraph on why 1,131 + 328 is 1,456 and not 1,459 is the arithmetic of these
 three numbers. All three were run while writing this guide.
 
-`tests/test_docs.py` holds the README to the first and third numbers, so a
-drifted count fails the suite. To run the suite rather than count it:
-`uv run pytest -q`, which CONTRIBUTING.md gives as about a minute and a half,
-no network.
+`tests/test_docs.py` holds the README to all three numbers, the second and
+third only where the corpora are cloned, and this guide, §5c's figure
+included, to the README, so a drifted count fails the suite. To run the suite
+rather than count it: `uv run pytest -q`, which CONTRIBUTING.md gives as about
+a minute and a half, no network.
 
 ### 5c. Negative controls
 
@@ -505,7 +506,7 @@ test fail. The count is the number of rows in `tests/mutate_index.py`.
 uv run python -c "import sys; sys.path.insert(0, 'tests'); from mutate_index import MUTANTS; print(len(MUTANTS))"
 ```
 
-**Expected:** `657`. Checked while writing this guide.
+**Expected:** `658`. Checked while writing this guide.
 
 To run the controls rather than count them:
 
@@ -518,7 +519,8 @@ uv run python tests/mutate_index.py "verify"   # only mutants whose name contain
 and `bench/` in place and restores each one after its row, so run it on a clean
 checkout that nothing else is editing. Its docstring estimates a full pass at
 one to two and a half hours, from three rows timed at 3.7 s, 17.1 s and
-17.2 s. It exits 0 only if every mutant is caught by its intended test.
+17.2 s on a smaller suite. It exits 0 only if every mutant is caught by its
+intended test.
 
 ## What cannot be reproduced exactly, and why
 

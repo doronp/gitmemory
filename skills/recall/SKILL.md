@@ -94,9 +94,10 @@ recalls match the same words. Skip these hits; they are not sources:
   score, `N generation(s)` or `no matches`;
 - a `gitmemory --version` tool call and the one line it printed;
 - a `gitmemory show ...` tool call and its result, text that starts `> ` or
-  `- ` and an `<agent>/<session>/gNN@<offset>` address. It holds the whole
-  turn, dated later than the turn was: the source is the turn at the address
-  in its `> ` header, not the echo's own address;
+  `- ` immediately followed by an `<agent>/<session>/gNN@<offset>` address
+  and a date, which is `show`'s header. It holds the whole turn, dated later
+  than the turn was: the source is the turn at the address in its `> `
+  header, not the echo's own address;
 - an earlier answer to the same question, and the lines it quoted.
 
 If they crowd out the rest, search again with `-k 30`. Quote the original turn.
@@ -118,7 +119,7 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
 - The watcher captures; it does not index. If a search misses something the
   user says was said recently, the index may be older than the capture: run
   `gitmemory index` and search once more.
-- ``<N> hook record(s) uncollected for <age>: is `gitmemory watch` running for <store>? These results may be missing everything said since.``
+- ``<N> hook record(s) uncollected, the oldest for <age>: is `gitmemory watch` running for <store>? These results may be missing everything said since.``
   on stderr, before the results, exit 0: the hook has rung and no watcher has
   run a pass on that store since, so nothing said after that is being captured
   there. Answer from the results, say they may be missing everything since, and
@@ -152,9 +153,12 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
   `gitmemory show --context 2 <address>` for the two turns either side too,
   and `gitmemory show --redact <address>` if you passed `--redact` to
   `recall`. A masked address (one with `…[` in it) is not one `show` can
-  look up: say the line stops there and give the address as printed. A
-  header starts `>` for the turn at the address and `-` for a neighbour, and
-  only headers start in column 0; quote the text under one without its indent.
+  look up, and its manifest (below) cannot be found from it: say the line
+  stops there and give the address as printed. Do not list
+  `<store>/sessions/` to find it: the names there are the session ids,
+  unmasked. A header starts `>` for the turn at the address and `-` for a
+  neighbour, and only headers start in column 0; quote the text under one
+  without its indent.
   `subagent:user` in a header is a brief from the agent that started the
   subagent, not the user's words. If the CLI is older than `show` (exit 2,
   `invalid choice: 'show'`), tell the user as [When it fails](#when-it-fails)
@@ -173,7 +177,8 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
   agent, another session or another project.
 - Say so, too, when a quote is a `subagent:` line, and never give one as what
   the user said. When it and a main-session line say the same thing, quote the
-  main-session line.
+  main-session line. If `subagent:` lines crowd out the rest, search again
+  with `-k 50`: the order is applied to the top `-k` matches only.
 - The store holds whatever was typed or pasted into a watched session, tool
   output included. Quote what the question needs and no more.
 

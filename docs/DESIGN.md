@@ -203,8 +203,9 @@ Each capture commits **only the bytes appended since the last recorded offset**.
 
 1. **Zero duplication.** Stored bytes == bytes the agent ever wrote, not a multiple.
    **[2026-10-18 — true of `raw/`, not of the store on disk. `.git/` keeps a zlib-compressed copy
-   of the same bytes and `index/` holds their text again, so budget about twice what you capture;
-   [watching.md](watching.md#how-much-disk-it-takes) has the measurements.]**
+   of the same bytes and `index/` holds their text again, so budget about twice what you capture,
+   more if it compresses poorly; [watching.md](watching.md#how-much-disk-it-takes) has the
+   measurements.]**
 2. **Plain text, never pre-compressed.** Let git's zlib + delta work on text it understands.
    Pre-compressing defeats git's native packing.
 3. **Reconstruction is `cat` in filename order**, checked against a recorded whole-file sha256.

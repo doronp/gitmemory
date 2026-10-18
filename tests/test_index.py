@@ -1599,8 +1599,8 @@ def test_a_subagent_prompt_is_not_the_users_word(home, tmp_path):
 
 def test_recall_marks_a_subagent_turn(home, tmp_path, capsys):
     """A prefix on the role, not a new column: `split()[3]` is role/kind to
-    whatever parses these lines, this file included, and a main session's line
-    is byte-for-byte what it was."""
+    whatever parses these lines, this file included, and a main session's
+    role/kind carries no prefix."""
     with_a_subagent(home, tmp_path)
     capsys.readouterr()
     assert main(["--home", home, "recall", "retry loop upload"]) == 0
@@ -1671,16 +1671,24 @@ def test_recall_says_the_hook_rang_and_no_watcher_answered(home, src, capsys):
     out, err = capsys.readouterr()
     assert "marmoset" in out and "uncollected" not in out, out
     assert err == (
-        "2 hook record(s) uncollected for 3 hours: is `gitmemory watch` running for "
-        f"{home}? These results may be missing everything said since.\n"
+        "2 hook record(s) uncollected, the oldest for 3 hours: is `gitmemory watch` "
+        f"running for {home}? These results may be missing everything said since.\n"
     ), err
     assert main(["--home", home, "recall", "aardvark"]) == 0
     err = capsys.readouterr().err
     assert err.index("uncollected") < err.index("no matches"), err
-    for age, said in ((90 * 60, "90 minutes"), (3 * 86400, "3 days")):
+    # Each unit starts at 2, so the number is never 1 and its plural always fits.
+    for age, said in (
+        (90 * 60, "90 minutes"),
+        (2 * 3600 - 30, "119 minutes"),
+        (2 * 3600 + 30, "2 hours"),
+        (2 * 86400 - 30, "47 hours"),
+        (2 * 86400 + 30, "2 days"),
+        (3 * 86400, "3 days"),
+    ):
         _ring(home, age)
         assert main(["--home", home, "recall", "marmoset"]) == 0
-        assert f"uncollected for {said}:" in capsys.readouterr().err
+        assert f"the oldest for {said}:" in capsys.readouterr().err
 
 
 def test_recall_says_nothing_about_a_spool_a_watcher_could_still_be_draining(
@@ -1714,7 +1722,8 @@ def test_one_watcher_pass_is_what_clears_it(home, src, capsys):
     os.utime(stuck, (time.time() - 3 * 3600,) * 2)
     capsys.readouterr()
     assert main(["--home", home, "recall", "marmoset"]) == 0
-    assert capsys.readouterr().err.startswith("1 hook record(s) uncollected for 3 hours:")
+    err = capsys.readouterr().err
+    assert err.startswith("1 hook record(s) uncollected, the oldest for 3 hours:"), err
     assert main(["--home", home, "watch", "--once"]) == 0
     assert os.path.isdir(stuck), "the pass removed the directory; this test no longer bites"
     capsys.readouterr()
@@ -1839,6 +1848,9 @@ def test_mask_returns_clean_text_unchanged_and_keeps_the_words_around_a_key():
     assert two == f"one ----…[{len(PEM)} bytes] between ----…[{len(PEM)} bytes] two", two
     # Cut before its END line, the rest of the text is the key, so the rest goes.
     assert redact.mask("x " + PEM[:80]) == "x ----…[80 bytes]"
+    # A second key in the body is inside the header's span, and must not end it.
+    inner = PEM.replace(PEM_BODY + "\n", f"{PEM_BODY}\n{AKIA}\n", 1)
+    assert redact.mask(f"x {inner} y") == f"x ----…[{len(inner)} bytes] y"
 
 
 def test_recall_redact_masks_a_key_behind_a_character_the_index_spells_out(home, src, capsys):
@@ -1871,7 +1883,9 @@ def test_recall_redact_masks_a_key_behind_a_character_the_index_spells_out(home,
     assert "\\ufeffAKIA…[20 bytes] x\\u200bghp_…[40 bytes] y\\x7fAKIA…[20 bytes]" in out, out
 
 
-def test_mask_stays_linear_on_a_page_of_key_headers_and_an_end_line_that_never_closes():
+def test_mask_stays_linear_on_a_page_of_key_headers_and_an_end_line_that_never_closes(
+    monkeypatch,
+):
     """Two ways the PEM widening went quadratic on text an agent fetched.
 
     Each header searched for its own END line, so headers with none cost
@@ -1880,19 +1894,32 @@ def test_mask_stays_linear_on_a_page_of_key_headers_and_an_end_line_that_never_c
     41 s. And the END pattern's unbounded runs retried every `KEY` in a
     `-----END KEY KEY …` line to its end: 125 KB took 4.1 s.
 
-    At these sizes each would be about 15 s and 10 s. 1.5 s is several times
-    what the linear code costs here, and fails long before anyone would wait.
+    The page of headers is counted, not timed: one header searches, and every
+    later one sits inside the span that search found. The END line is one
+    `search` whose cost is inside `re` and cannot be counted, so it is timed,
+    as `test_a_separator_free_megabyte_does_not_hang_the_build` is: about 10 s
+    at this size when quadratic, and 1.5 s is several times the linear cost.
     """
     header = "-----BEGIN " + "PRIVATE KEY-----\n"
-    for label, text in (
-        ("headers with no END", header * 40_000),
-        ("an END line that never closes", header + "-----END " + "KEY " * 50_000),
-    ):
-        started = time.monotonic()
-        out = redact.mask(text)
-        elapsed = time.monotonic() - started
-        assert out == f"----…[{len(text)} bytes]", (label, out[:80])
-        assert elapsed < 1.5, f"{label}: the PEM widening went quadratic again: {elapsed:.2f}s"
+    real, searched = redact._PEM_END, []
+
+    class Counted:
+        def search(self, data, pos):
+            searched.append(pos)
+            return real.search(data, pos)
+
+    with monkeypatch.context() as m:
+        m.setattr(redact, "_PEM_END", Counted())
+        text = header * 2_000
+        assert redact.mask(text) == f"----…[{len(text)} bytes]"
+    assert searched == [len(header) - 1], f"{len(searched)} headers searched for an END line"
+
+    text = header + "-----END " + "KEY " * 50_000
+    started = time.monotonic()
+    out = redact.mask(text)
+    elapsed = time.monotonic() - started
+    assert out == f"----…[{len(text)} bytes]", out[:80]
+    assert elapsed < 1.5, f"the END line pattern went quadratic again: {elapsed:.2f}s"
 
 
 def test_recall_redact_keeps_a_subagent_turn_marked(home, tmp_path, capsys):

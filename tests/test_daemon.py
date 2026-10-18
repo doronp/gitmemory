@@ -126,11 +126,13 @@ def test_a_malformed_config_means_watch_nothing_not_watch_everything(tmp_path):
 
 
 def test_a_watch_missing_its_roots_is_skipped_and_the_rest_survive(tmp_path):
+    home = str(tmp_path / "home")
+    root = tmp_path / "proj"  # never created: a root that does not exist yet is kept
     _write(
-        os.path.join(str(tmp_path), "config.toml"),
-        '[[watch]]\nagent = "a"\n\n[[watch]]\nagent = "b"\nroots = ["/tmp/x"]\n',
+        os.path.join(home, "config.toml"),
+        f'[[watch]]\nagent = "a"\n\n[[watch]]\nagent = "b"\nroots = [{json.dumps(str(root))}]\n',
     )
-    got = daemon.load_watches(str(tmp_path))
+    got = daemon.load_watches(home)
     assert [w.agent for w in got] == ["b"]
 
 

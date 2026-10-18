@@ -176,6 +176,24 @@ def test_cli_init_says_error_and_exits_2_when_it_could_not_look(tmp_path, capsys
     assert kept.read_text() == body
 
 
+def test_cli_init_says_so_when_another_init_wrote_first(tmp_path, capsys, monkeypatch):
+    """Two inits at once read the same bytes, and the later rename dropped the
+    other's table while both said "added". The other one is run here between
+    this one's read and its write: this one now sees the file move, and says so."""
+    home = str(tmp_path / "store")
+    watches_from = daemon.watches_from
+
+    def racer(*args):
+        monkeypatch.setattr(daemon, "watches_from", watches_from)
+        assert main(["--home", home, "init", "pi"]) == 0
+        return watches_from(*args)
+
+    monkeypatch.setattr(daemon, "watches_from", racer)
+    assert main(["--home", home, "init", "claude-code"]) == 1
+    assert "changed while init was reading it; run it again" in capsys.readouterr().err
+    assert [w.agent for w in daemon.load_watches(home)] == ["pi"]
+
+
 def test_cli_init_refuses_a_root_another_agent_already_watches(tmp_path, capsys, _no_real_home):
     """Two watches on one root at the same depth: `discover` keeps the first, so
     the table init would add is dead on arrival. Spelled absolute and with a
@@ -207,14 +225,24 @@ def test_cli_init_knows_only_adapters_that_ship_and_roots_the_docs_name():
     assert done.value.code == 2
 
 
-def test_cli_init_leaves_no_temp_the_watcher_would_commit(tmp_path):
+def test_cli_init_leaves_no_temp_the_watcher_would_commit(tmp_path, monkeypatch):
     """`init` publishes `config.toml` by rename, so an init killed between the
     write and the `os.replace` leaves a full copy of the file — push credential
-    included — beside it, and the watcher's `git add --all` would commit it."""
+    included — beside it, and the watcher's `git add --all` would commit it.
+    Asked of the temp the writer really made, while it exists: a name typed into
+    the test passed against a writer that spelled its temp any other way."""
     home = str(tmp_path / "store")
     gitrepo.init(home)
-    stray = "config.toml.tmp.4242.7f"
-    with open(os.path.join(home, stray), "w", encoding="utf-8") as fh:
-        fh.write('[remote.origin]\nurl = "https://example.invalid/x.git"\n')
-    ignored = subprocess.run(["git", "-C", home, "check-ignore", "-q", stray], check=False)
-    assert ignored.returncode == 0
+    asked = []
+    rename = os.replace
+
+    def spy(src, dst):
+        if os.path.basename(dst) == "config.toml":
+            rel = os.path.relpath(src, home)
+            ask = subprocess.run(["git", "-C", home, "check-ignore", "-q", rel], check=False)
+            asked.append((rel, ask.returncode))
+        return rename(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy)
+    assert main(["--home", home, "init", "pi"]) == 0
+    assert [code for _, code in asked] == [0], asked

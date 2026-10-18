@@ -111,10 +111,10 @@ agent search the store and quote what it finds; the watcher still does the
 capturing. For watcher flags and troubleshooting, see
 [docs/watching.md](docs/watching.md).
 
-Budget disk for about twice what the store captures: git keeps a compressed
-second copy, and the search index holds the text again. `gitmemory index`
-rebuilds the index if you delete it; rebuilding over an existing one briefly
-needs room for both.
+Budget disk for about twice what the store captures, and more if your
+transcripts compress poorly: git keeps a compressed second copy, and the
+search index holds the text again. `gitmemory index` rebuilds the index if
+you delete it; rebuilding over an existing one briefly needs room for both.
 [docs/watching.md](docs/watching.md#how-much-disk-it-takes) has the
 measurements.
 
@@ -217,13 +217,13 @@ real text, and that is a measurement rather than a suspicion.
 | What | How it was measured | Result |
 |---|---|---|
 | Hook cost in the agent's critical path | Timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | On a fresh checkout, no downloads | **1,129 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **657** negative controls |
+| The suite | On a fresh checkout, no downloads | **1,131 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **658** negative controls |
 
 The two suite counts do not add up, and should not. Switching the corpora on
-collects 1454, not 1457. Three conformance cases fill parametrisations that
+collects 1456, not 1459. Three conformance cases fill parametrisations that
 collect as one empty placeholder each while the corpora are absent, so they
-replace three of the 1129 rather than joining them. Every figure on this board
+replace three of the 1131 rather than joining them. Every figure on this board
 is pinned by a test, which is how it stays true.
 
 **What is not measured**, and is shown as a row on the dashboard rather than

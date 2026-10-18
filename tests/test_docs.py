@@ -185,6 +185,35 @@ def test_the_readme_arithmetic_paragraph_is_the_arithmetic():
     assert f"replace three of the {offline}" in text
 
 
+def test_the_reproduce_guide_states_the_readme_counts():
+    """docs/REPRODUCE.md repeats the board's four numbers, and nothing held them.
+
+    So they drifted: main said 1027 tests beside the README's 1,037, and an
+    install-feedback commit left 1043 beside 1,063. The README is pinned to the
+    suite by the tests above, so holding the guide to the README holds it to
+    the suite, with no second collection, and on a machine without the corpora
+    too. [review]
+    """
+    board = _read("README.md")
+    guide = " ".join(_read("docs/REPRODUCE.md").split())
+
+    def number(pattern: str) -> int:
+        found = re.search(pattern, board)
+        assert found, pattern
+        return int(found.group(1).replace(",", ""))
+
+    tests = number(r"\*\*([\d,]+) tests\*\*")
+    cases = number(r"(\d[\d,]*) conformance cases")
+    online = number(r"collects (\d+), not \d+\.")
+    controls = number(r"\*\*([\d,]+)\*\* negative controls")
+    assert (
+        f"**Expected:** `{tests}/{tests + 1} tests collected (1 deselected)`, then "
+        f"`{online}/{online + 1} tests collected (1 deselected)`, then `{cases}`."
+    ) in guide, "docs/REPRODUCE.md §5b does not expect the README's counts"
+    assert f"why {tests:,} + {cases:,} is {online:,} and not {tests + cases:,}" in guide
+    assert f"**Expected:** `{controls}`." in guide, "§5c does not expect the README's count"
+
+
 def test_the_design_document_does_not_promise_a_file_that_is_not_written():
     """`manifest.json` was the name in every version of the verification recipe.
 
@@ -224,10 +253,11 @@ def test_the_disk_section_calls_rebuildable_only_what_is_gitignored():
 
     The ratios are not pinned: they move with the filesystem's block size, the
     git version, when `gc --auto` last packed, and the corpus. What is pinned is
-    the advice. Deleting `index/` to get space back is safe only while git
-    ignores `index/` and tracks `raw/` and `sessions/`, so that is checked
-    against the store's own `.gitignore`. The anchors pointing at the section
-    are checked against its heading, so renaming it breaks a test and not just a link.
+    the advice. Every directory a sentence of the section tells you to delete
+    must be one the store's own `.gitignore` ignores, and `raw/` and `sessions/`
+    must stay tracked, because deleting either loses the only copy. The anchors
+    pointing at the section are checked against its heading, so renaming it
+    breaks a test and not just a link.
     Headings are read with fenced blocks cut out: a `# comment` in a shell or
     TOML recipe is not a heading, and counting it let a link to no heading pass.
     """
@@ -240,7 +270,15 @@ def test_the_disk_section_calls_rebuildable_only_what_is_gitignored():
     assert "`index/`" in body and "`gitmemory index`" in body, "it no longer says what rebuilds it"
 
     ignored = gitrepo.GITIGNORE.splitlines()
-    assert "/index/" in ignored, "the section says to delete a directory git may be tracking"
+    told = [
+        d
+        for sentence in re.split(r"(?<=\.)\s+", " ".join(body.split()))
+        if re.search(r"\b(?:delete|remove)\b", sentence, re.I)
+        for d in re.findall(r"`([\w.-]+/)`", sentence)
+    ]
+    assert told, "the section no longer names the directory to delete"
+    for d in told:
+        assert f"/{d}" in ignored, f"the section says to delete `{d}`, which git does not ignore"
     for durable in ("/raw/", "/sessions/"):
         assert durable not in ignored, f"{durable} is ignored, so git no longer holds it"
 
@@ -248,7 +286,7 @@ def test_the_disk_section_calls_rebuildable_only_what_is_gitignored():
         re.sub(r"[^\w\- ]", "", h.strip().lower()).replace(" ", "-")
         for h in re.findall(r"^#+ (.+)$", watching, re.M)
     }
-    for rel in ("README.md", "docs/ARCHITECTURE.md", "docs/DESIGN.md"):
+    for rel in ("README.md", "CHANGELOG.md", "docs/ARCHITECTURE.md", "docs/DESIGN.md"):
         anchors = re.findall(r"watching\.md#([\w-]+)", _read(rel))
         assert "how-much-disk-it-takes" in anchors, f"{rel} does not point at the section"
         for anchor in anchors:
@@ -326,7 +364,10 @@ _INSTALL = re.compile(rf"\b({_INSTALLERS})\b([^`)#\n]*?)(?=\b(?:{_INSTALLERS})\b
 
 def _installs(text: str):
     """(line number, tool, its words, as written) for each install command in
-    `text`. A line that ends in a backslash goes on into the next, as in sh."""
+    `text`. A line that ends in a backslash goes on into the next, as in sh. A
+    tool whose span holds nothing else takes the rest of the line, up to the
+    next tool, when that starts with a source or a flag: `` `uv tool install`
+    git+… `` is one command split across spans, not prose."""
     lines, n = text.splitlines(), 0
     while n < len(lines):
         start, line = n + 1, lines[n]
@@ -335,7 +376,13 @@ def _installs(text: str):
             line = line[:-1] + " " + lines[n]
         n += 1
         for m in _INSTALL.finditer(line):
-            yield start, m.group(1), m.group(2).split(), " ".join(m.group(0).split())
+            words = m.group(2).split()
+            if not words:
+                rest = re.split(_INSTALLERS, line[m.end() :], maxsplit=1)[0]
+                rest = rest.replace("`", " ").split()
+                if rest and rest[0].strip("\"'").startswith(("git+", "gitmemory", "-")):
+                    words = rest
+            yield start, m.group(1), words, " ".join([m.group(1), *words])
 
 
 def _names_python(tool: str, words: list[str], want: str) -> bool:
@@ -366,7 +413,9 @@ def test_every_documented_install_names_the_python_floor():
     names the tool with nothing after it ("if you installed with
     `uv tool install`,") has no source, so it is not one. Prose with words after
     the tool and no code span around it reads as a command and fails, so put the
-    tool in a code span or write the whole command. `tests/` is not scanned,
+    tool in a code span or write the whole command; a span holding the tool
+    alone still reads on when the next word is a source or a flag
+    (`` `uv tool install` git+… ``). `tests/` is not scanned,
     because its strings are fixtures and this one names the tools; nor are the
     records, which quote what was run at the time. [install feedback 1]
     """
@@ -384,6 +433,7 @@ def test_every_documented_install_names_the_python_floor():
         f"uv tool install \\\n  --python {v} git+x\n"
         f"`pipx install --python python{v} git+x` `pipx install -p python{v} git+x`\n"
         "if you installed with `uv tool install`,\n"
+        f"`uv tool install` git+x, then uv tool install `--python {v} git+x`\n"
     )
     found = [(n, t, _names_python(t, w, want[t])) for n, t, w, _ in _installs(probe) if w]
     assert found == [
@@ -394,6 +444,8 @@ def test_every_documented_install_names_the_python_floor():
         (3, "uv tool install", True),
         (5, "pipx install", True),
         (5, "pipx install", False),
+        (7, "uv tool install", False),
+        (7, "uv tool install", True),
     ], found
 
     records = ("tests/", "docs/reviews/", "docs/tasks/", "docs/DESIGN-v0.md")

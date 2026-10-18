@@ -63,6 +63,17 @@ def _refuse(why: str) -> int:
     return 1
 
 
+def _config_bytes(path: str) -> bytes:
+    """`config.toml` as it is now, or nothing when there is no file. One it
+    cannot read is not a missing one: taking it for absent would replace it,
+    push opt-ins and all, so that is main's `error:` and exit 2."""
+    try:
+        with open(path, "rb") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        return b""
+
+
 def _init(args) -> int:
     """Add the standard `[[watch]]` table for one agent to `config.toml`.
 
@@ -86,10 +97,9 @@ def _init(args) -> int:
         # name a new inode, and the other name keeps the old bytes.
         if st.st_nlink > 1:
             return _refuse(f"{path} has another hard link; add the table by hand")
-        with open(path, "rb") as fh:
-            old = fh.read()
     except FileNotFoundError:
-        old = b""
+        pass  # no file yet, so the table is the whole of it
+    old = _config_bytes(path)
     try:
         before = tomllib.loads(old.decode("utf-8"))
     except ValueError as exc:  # `TOMLDecodeError`, and `UnicodeDecodeError` on a bad byte
@@ -126,7 +136,15 @@ def _init(args) -> int:
     ):
         mine = f"{path} [[watch]] #{len(have) + 1}:"
         return _refuse("; ".join(n for n in notes if n.startswith(mine)))
-    store._write_atomic(path, new)  # 0600, and a running watcher reads old or new
+    # Two inits at once both read the same bytes, and the later rename dropped
+    # the other's table while both said "added". Each holds this across a second
+    # read and the rename, so the later one sees the file move and says so. Not
+    # taken earlier: it makes `.locks/`, and a refusal writes nothing. An editor
+    # saving in the same instant takes no lock, and is not covered.
+    with store._lockfile(os.path.join(home, ".locks", "config.toml.lock")):
+        if _config_bytes(path) != old:
+            return _refuse(f"{path} changed while init was reading it; run it again")
+        store._write_atomic(path, new)  # 0600, and a running watcher reads old or new
     print(f"{'added to' if old else 'wrote'} {path}: watch {root} for {args.agent}")
     if not os.path.isdir(real):
         print(f"note: {root} does not exist yet; it is watched once it does", file=sys.stderr)
@@ -437,8 +455,9 @@ def _recall(args) -> int:
         waiting, age = daemon.uncollected(home)
         if waiting and age >= daemon.STALE_RECORD:
             print(
-                f"{waiting} hook record(s) uncollected for {_ago(age)}: is `gitmemory watch` "
-                f"running for {home}? These results may be missing everything said since.",
+                f"{waiting} hook record(s) uncollected, the oldest for {_ago(age)}: is "
+                f"`gitmemory watch` running for {home}? These results may be missing "
+                "everything said since.",
                 file=sys.stderr,
             )
     db = index.open_db(path)
@@ -590,7 +609,7 @@ def _redact_flag(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         default=os.environ.get("GITMEMORY_REDACT", "") not in ("", "0"),
         help="mask the credential shapes the push gate detects in what is printed "
-        "(default on when $GITMEMORY_REDACT is set and not 0)",
+        "(default on when $GITMEMORY_REDACT is set to anything but empty or 0)",
     )
 
 

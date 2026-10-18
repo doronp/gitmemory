@@ -27,7 +27,11 @@ would skip (listed below; `init` prints the watcher's own message), a file that
 is not valid TOML or already has a `watch` of another shape, and a
 `config.toml` that is a symlink or has another hard link, because the rename
 would leave the other name holding the old file. A `config.toml` it cannot read
-is an error, exit 2. A running watcher picks the new table up on its next pass.
+is an error, exit 2. Two `init`s run at the same moment cannot drop each
+other's table: the later one sees the file change after it read it, leaves it
+as the other one wrote it, and exits 1, so run it again. An editor saving the
+file in that same instant is not covered. A running watcher picks the new table
+up on its next pass.
 
 By hand, or for any other agent or root, `$GITMEMORY_HOME/config.toml`:
 
@@ -235,7 +239,7 @@ anywhere useful. The two failures worth watching for are different shapes:
 |---|---|
 | `no .../config.toml; watching nothing` | The file is not where the watcher is looking. Check `$GITMEMORY_HOME`, or run `gitmemory init <agent>` to write it there. |
 | Watcher quiet, store empty, no complaint | A root that **does not exist** is kept, not refused — before an agent has run for the first time that is the normal state, and `run` re-reads the config every pass, so it starts working the moment the directory appears. The cost is that a typo'd root and a not-yet-used one look identical. Check the path by hand; `gitmemory init` says so when the root it writes does not exist yet. |
-| `recall` says `N hook record(s) uncollected for <age>` | No watcher has run a pass on that store for that long: it is stopped, it watches a store other than the hook's `$GITMEMORY_HOME` (a service's store is the `--home` written into it), or it runs a pass less often than once an hour (`--poll` of 3600 or more, or a supervisor re-running `--once` that seldom). Start `gitmemory watch` with the hook's `$GITMEMORY_HOME` and keep it running with `gitmemory service install` ([above](#keep-it-running)), or run passes more often. A service that is installed but not started, or failing, shows here too; its check and log lines are above. A pass drains the spool even when no watch covers the record, so silence here means a pass ran, not that this agent is captured. |
+| `recall` says `N hook record(s) uncollected, the oldest for <age>` | No watcher has run a pass on that store for that long: it is stopped, it watches a store other than the hook's `$GITMEMORY_HOME` (a service's store is the `--home` written into it), or it runs a pass less often than once an hour (`--poll` of 3600 or more, or a supervisor re-running `--once` that seldom). Start `gitmemory watch` with the hook's `$GITMEMORY_HOME` and keep it running with `gitmemory service install` ([above](#keep-it-running)), or run passes more often. A service that is installed but not started, or failing, shows here too; its check and log lines are above. A pass drains the spool even when no watch covers the record, so silence here means a pass ran, not that this agent is captured. |
 | `compact_boundaries: []` everywhere | Adapter missing or `--no-parse`. The bytes are intact; only the boundaries are absent. |
 | `source changed while parsing` | The transcript was rewritten between the parse and the copy — a compaction landing mid-pass. The bytes are captured; that one generation has no boundaries. Nothing to do. |
 | `was captured from <path>, not <path>; pass a distinct --session-id` | Two transcripts collided on one session name, and the store refuses to mix them rather than duplicating both for ever. The advice in the message is for the CLI and there is no `--session-id` to pass here: rename or move either file — the name is derived from the path — and the next pass captures both. Until then the second one is **not being captured**, so this is not a warning to leave running. |
@@ -246,7 +250,9 @@ silence. Listing the roots yourself is currently the way to tell them apart.
 
 ## How much disk it takes
 
-Budget about twice what you capture. The store keeps the same bytes three ways:
+Budget about twice what you capture, and more if your transcripts compress
+poorly: the synthetic corpora below came to 2.3x and 3.4x. The store keeps the
+same bytes three ways:
 
 - **`raw/`** holds each captured byte once, so it is the size of the capture.
   Each segment fills whole filesystem blocks, so a store grown in many small

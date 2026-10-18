@@ -233,6 +233,9 @@ def test_a_captured_show_result_is_an_echo_the_skill_lists(home, tmp_path, capsy
     with open(os.path.join(root, "skills", "recall", "SKILL.md")) as fh:
         echoes = fh.read().split("\n## Echoes\n")[1].split("\n## ")[0]
     assert "`gitmemory show ...`" in echoes and "`> `" in echoes, echoes
+    # The header's shape, not "a quote or a bullet that names an address":
+    # a real turn can open with either and cite one further on.
+    assert "`- ` immediately followed by an `<agent>/" in " ".join(echoes.split()), echoes
 
 
 def test_show_on_no_store_and_a_negative_context_exit_2(tmp_path, capsys):

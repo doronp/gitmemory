@@ -18,8 +18,9 @@ tell you.
   named the agent. It appends without changing a byte already there, because
   the file also holds the `[remote.*]` push opt-ins. It does nothing if the
   table is already there, and it refuses, writing nothing and exiting 1, a root
-  the watcher would skip or another agent already watches, and a `config.toml`
-  that is a symlink or a hard link. See
+  the watcher would skip or another agent already watches, a `config.toml`
+  that is a symlink or a hard link, and one another `init` changed while it
+  ran. See
   [docs/watching.md](docs/watching.md#configure-what-to-watch).
 - **`gitmemory service install`** writes a systemd user unit (Linux) or a
   LaunchAgent (macOS) that keeps `gitmemory watch` running, and prints the

@@ -42,8 +42,10 @@ repository, and lets you search it. So:
    ```
 
    How it stays running is your choice. `gitmemory service install` writes a
-   systemd user unit (Linux) or a LaunchAgent (macOS) that keeps it running
-   across logins, and prints the line that starts it; it starts nothing itself
+   systemd user unit (Linux) or a LaunchAgent (macOS) that starts it at every
+   login, and prints the line that starts it now; it starts nothing itself. On
+   a Linux machine you reach over SSH, the `loginctl enable-linger` line it
+   prints keeps it running after you log out
    ([watching.md](watching.md#keep-it-running)). A terminal you leave open
    works too. [watching.md](watching.md#run-it) covers the flags and how to
    tell a misconfigured watcher from an idle one.
@@ -92,7 +94,7 @@ newest first (see [When memories disagree](#when-memories-disagree)):
 If the [hook](../hook/README.md) has rung and no watcher has collected the
 record for an hour, `recall` says so on stderr, before the results it still
 prints:
-``1 hook record(s) uncollected for 3 hours: is `gitmemory watch` running for <store>? These results may be missing everything said since.``
+``1 hook record(s) uncollected, the oldest for 3 hours: is `gitmemory watch` running for <store>? These results may be missing everything said since.``
 A running watcher drains the spool on every pass, so none has run on that store
 since: start `gitmemory watch` with the hook's `$GITMEMORY_HOME`, and
 `gitmemory service install` to keep it running
@@ -148,11 +150,11 @@ $ gitmemory recall --redact "staging key"
 ```
 
 A masked span keeps its first four bytes and its length; in an address the
-marker drops its space, so each line keeps its columns and each header its
-fields. A private key is masked from its BEGIN line to its END line, or to the
-end of the text when there is none. `show --redact` masks each block of the
-turn whole before it splits it into lines, so a key's body goes with its
-header, and it masks a tool's name too. It keeps the turn's line breaks, where
+marker drops its space, so the address stays one field of a `recall` line or
+a `show` header. A private key is masked from its BEGIN line to its END
+line, or to the end of the text when there is none. `show --redact` masks
+each block of the turn whole before it splits it into lines, so a key's body
+goes with its header, and it masks a tool's name too. It keeps the turn's line breaks, where
 `recall` flattens a line before it masks, so it also finds a header that a
 line break split, as the flattened line would have shown it. A masked address
 is not one `show` can look up.
