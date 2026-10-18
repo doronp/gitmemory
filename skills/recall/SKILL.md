@@ -31,7 +31,7 @@ in its place from memory.
 ## The CLI's version
 
 The plugin and the CLI are installed separately, so they can come from
-different releases. This skill is written for gitmemory 0.1.0. Once per
+different releases. This skill is written for gitmemory 0.2.0. Once per
 session, before the first search, run:
 
 ```sh

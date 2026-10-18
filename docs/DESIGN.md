@@ -640,10 +640,14 @@ answers the token-burn objection.)*
 **UNVERIFIED, must be tested before claiming coexistence:** whether multiple `UserPromptSubmit`
 hooks' `additionalContext` outputs concatenate or last-wins.
 
-**As built:** the CLI only. There is no MCP server and no `UserPromptSubmit` hook in `src/`, so
-nothing is injected; injection cost is carried as `NOT BUILT` on the dashboard (§2.9). `recall`
-prints each hit's address, and `show` resolves one to the whole turn from the store, not the
-index, so a stale or tampered index cannot change what the address is shown to say.
+**As built:** the CLI, and the Claude Code plugin's recall skill (`skills/recall/SKILL.md`,
+`/gitmemory:recall`), which has the agent run `recall` and `show` itself and quote what they
+print with each line's address. The skill is a search the agent runs when the user refers to an
+earlier decision or runs the skill, not an injection: there is no MCP server and no
+`UserPromptSubmit` hook in `src/`, so nothing is injected; injection cost is carried as
+`NOT BUILT` on the dashboard (§2.9). `recall` prints each hit's address, and `show` resolves one
+to the whole turn from the store, not the index, so a stale or tampered index cannot change what
+the address is shown to say.
 
 ### 2.9 Dashboard
 

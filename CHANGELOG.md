@@ -8,6 +8,8 @@ tell you.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-18
+
 ### Added
 
 - **`gitmemory init claude-code`** (or `pi`) adds that agent's standard
@@ -40,9 +42,10 @@ tell you.
   index is missing or stale, and writes nothing else. See
   [docs/USAGE.md](docs/USAGE.md#put-it-back-in-front-of-the-agent). What it
   reads goes to the model provider, past no redaction gate; `recall --redact`
-  (below) masks credential shapes in it, and blocks nothing. The plugin's
-  version is still 0.1.0, so a copy installed from 0.1.0 does not get the skill
-  from `claude plugin update`; reinstall it, or wait for the next release
+  (below) masks credential shapes in it, and blocks nothing. The skill was
+  added after 0.1.0 without a version bump, so a copy installed from 0.1.0
+  lacks it; this release moves the plugin's version to 0.2.0, so
+  `claude plugin update` brings it
   ([hook/README.md](hook/README.md#as-a-claude-code-plugin)).
 - **`gitmemory --version`** prints the installed release. The recall skill
   runs it first and tells you when the CLI is older than the plugin; when the
@@ -156,5 +159,6 @@ The first public release. What it contains:
 - Two review rounds before publication: E7 (68 findings) and E7b (22 findings).
   See [SECURITY.md](SECURITY.md).
 
-[Unreleased]: https://github.com/doronp/gitmemory/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/doronp/gitmemory/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/doronp/gitmemory/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/doronp/gitmemory/releases/tag/v0.1.0

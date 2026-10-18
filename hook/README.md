@@ -118,11 +118,12 @@ does not read `raw/`. It masks; it is not a gate, and
 [USAGE.md](../docs/USAGE.md#masking-credentials-in-what-it-prints) lists what
 it does not cover.
 
-An install made before the skill was added does not have it. Claude Code keeps
-a plugin's cached copy until its version changes, and the skill was added
-without a version bump, so `claude plugin update gitmemory@gitmemory` reports
-that it is already at 0.1.0. The next release, which bumps the version, brings
-the skill; until then, `claude plugin uninstall gitmemory@gitmemory` and then
+An install made from 0.1.0 does not have the skill. Claude Code keeps a
+plugin's cached copy until its version changes, and the skill was added after
+0.1.0 without a version bump, so until 0.2.0 an update reported that the
+plugin was already at 0.1.0. Release 0.2.0 bumps the version, so
+`claude plugin update gitmemory@gitmemory` brings the skill; if it still says
+0.1.0, `claude plugin uninstall gitmemory@gitmemory` and then
 `claude plugin install gitmemory@gitmemory` fetch the current copy.
 
 The plugin and the CLI are installed separately, and nothing makes them one
