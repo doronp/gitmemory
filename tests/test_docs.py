@@ -558,7 +558,8 @@ def test_the_plugin_recall_skill_runs_only_commands_the_cli_has(tmp_path, capsys
     The commands it forbids are checked the same way, because a prohibition on
     a command that no longer exists guards nothing. The messages it tells the
     agent to branch on are the ones the CLI prints, got by running it on a path
-    that is no store and on an empty one.
+    that is no store, on an empty one, and on one whose spool no watcher has
+    drained.
     `skills/` holds this one skill and neither manifest adds a skills path; its
     name is the one the three documents that mention it tell you to type.
     """
@@ -622,6 +623,14 @@ def test_the_plugin_recall_skill_runs_only_commands_the_cli_has(tmp_path, capsys
     assert code == 0 and out.startswith("0 generation(s)") and "`0 generation(s)`" in flat
     code, _, err = run(empty, "recall", "x")
     assert code == 0 and err == "no matches\n" and "`no matches` on stderr, exit 0" in flat
+    os.makedirs(os.path.join(empty, "spool"))
+    with open(os.path.join(empty, "spool", "1-SessionEnd.json"), "w") as fh:
+        fh.write("{}")
+    os.utime(fh.name, (0, 0))
+    code, _, err = run(empty, "recall", "x")
+    said = err.splitlines()[0].replace("<path>", "<store>")
+    said = re.sub(r"for \d+ \w+:", "for <age>:", re.sub(r"^\d+", "<N>", said))
+    assert code == 0 and f"``{said}``" in flat, said
 
 
 def test_the_recall_skill_names_the_release_it_was_written_for(capsys):

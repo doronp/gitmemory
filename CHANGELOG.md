@@ -57,6 +57,13 @@ tell you.
   gives a Claude Code watch pattern, `pattern = "*/*.jsonl"`, that leaves
   subagent and workflow transcripts out, and what that costs: those turns are
   never captured, and the dashboard's spend leaves out what they cost.
+- **`recall` says when no watcher is collecting.** When a hook record has
+  waited in the spool for more than an hour, `recall` prints one line on
+  stderr before the results, naming the store and asking whether
+  `gitmemory watch` is running for it. The time since the last capture cannot
+  tell a stopped watcher from an idle one; a record no pass has drained can.
+  Not under `--db`, and never on a store the hook does not ring. See
+  [docs/watching.md](docs/watching.md#check-it).
 
 ### Changed
 

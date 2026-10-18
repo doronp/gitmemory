@@ -206,6 +206,11 @@ it and then re-derives everything — how many bytes are new, where the boundary
 is, whether the file was rewritten — from the transcript itself. A record naming
 a path outside the configured watch roots is dropped.
 
+Every pass removes every complete record, dropped or not, so a record older
+than an hour means no watcher has run a pass on this store since it arrived,
+and `gitmemory recall` says so on stderr. That is also how a hook and a watcher
+with different `$GITMEMORY_HOME`s show up: the message names the store.
+
 ## Latency
 
 The shim is in the agent's critical path, so it is measured rather than asserted.

@@ -58,6 +58,11 @@ INTERVAL = 3600.0  # seconds between idle captures of one session (DESIGN.md §2
 ERROR_REPEAT = 3600.0
 POLL = 5.0  # seconds between ticks
 STALE_TMP = 3600.0  # a `.tmp-` this old is a killed hook, not a live one
+# A complete spool record this old means no watcher pass has run on this store
+# since it arrived: every pass drains every record, whatever it names. 720
+# default polls, and no further behind than `INTERVAL` already leaves a growing
+# session. Read by `recall`. Its own constant, for `ERROR_REPEAT`'s reason.
+STALE_RECORD = 3600.0
 
 # A module constant, not `Watch.pattern`: on a `slots=True` dataclass the class
 # attribute is the slot's `member_descriptor`, so reading the default off the
@@ -487,6 +492,29 @@ def drain_spool(
             _unlink(path)
             tick.spool_dropped += 1
     return wanted, tick
+
+
+def uncollected(home: str, now: float | None = None) -> tuple[int, float]:
+    """`(complete records in the spool, age of the oldest in seconds)`.
+
+    `drain_spool`'s rule for what a record is: a dot-name is a hook still
+    writing. A directory is not one either: no pass can unlink it, so counting
+    it warned for ever with a watcher running. Arrival is the record's own
+    mtime (hook/README.md). Read-only and total, because `recall` asks:
+    anything it cannot list is `(0, 0.0)`.
+    """
+    now = time.time() if now is None else now
+    ages = []
+    try:
+        with os.scandir(os.path.join(home, SPOOL)) as entries:
+            for entry in entries:
+                if not entry.name.startswith("."):
+                    with contextlib.suppress(OSError):
+                        if not entry.is_dir(follow_symlinks=False):
+                            ages.append(now - entry.stat(follow_symlinks=False).st_mtime)
+    except OSError:
+        return 0, 0.0
+    return len(ages), max(ages, default=0.0)
 
 
 def _file_key(path: str) -> tuple[int, int] | None:

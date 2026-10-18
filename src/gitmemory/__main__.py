@@ -393,6 +393,15 @@ def _derive(args) -> int:
     return 0
 
 
+def _ago(seconds: float) -> str:
+    """Minutes, hours or days. Said only past `STALE_RECORD`, so never one."""
+    if seconds < 7200:
+        return f"{int(seconds // 60)} minutes"
+    if seconds < 172800:
+        return f"{int(seconds // 3600)} hours"
+    return f"{int(seconds // 86400)} days"
+
+
 def _recall(args) -> int:
     # First, so a mistyped policy is the error you see, with or without an index.
     resolve = index.policy(args.policy)
@@ -400,6 +409,18 @@ def _recall(args) -> int:
     if not os.path.exists(path):
         print(f"no index at {path}; run `gitmemory index` first", file=sys.stderr)
         return 2
+    # Nothing here said the watcher had stopped, and the time since the last
+    # capture cannot: a running one on an idle machine captures nothing either.
+    # A record no pass has drained can. Not under `--db`: an index names no store.
+    if args.db is None:
+        home = store.resolve_home(args.home)
+        waiting, age = daemon.uncollected(home)
+        if waiting and age >= daemon.STALE_RECORD:
+            print(
+                f"{waiting} hook record(s) uncollected for {_ago(age)}: is `gitmemory watch` "
+                f"running for {home}? These results may be missing everything said since.",
+                file=sys.stderr,
+            )
     db = index.open_db(path)
     try:
         hits = index.search(db, args.query, k=args.k)

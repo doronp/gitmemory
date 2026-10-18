@@ -3852,6 +3852,56 @@ MUTANTS = [
         "    if False:",
         "test_recall_says_a_query_was_truncated_before_it_says_no_matches",
     ),
+    # --- install feedback: the hook rang and no watcher answered ----------- #
+    (
+        "recall says nothing when the hook rang and no watcher collected it",
+        "__main__.py",
+        "        if waiting and age >= daemon.STALE_RECORD:",
+        "        if False:",
+        "test_recall_says_the_hook_rang_and_no_watcher_answered",
+    ),
+    (
+        "recall reports a spool record a watcher could still be draining",
+        "__main__.py",
+        "        if waiting and age >= daemon.STALE_RECORD:",
+        "        if waiting:",
+        "test_recall_says_nothing_about_a_spool_a_watcher_could_still_be_draining",
+    ),
+    (
+        "a hook's temp file counts as an uncollected record",
+        "daemon.py",
+        '                if not entry.name.startswith("."):',
+        "                if True:",
+        "test_recall_says_nothing_about_a_spool_a_watcher_could_still_be_draining",
+    ),
+    (
+        "a directory no pass can unlink counts as an uncollected record",
+        "daemon.py",
+        "                        if not entry.is_dir(follow_symlinks=False):",
+        "                        if True:",
+        "test_one_watcher_pass_is_what_clears_it",
+    ),
+    (
+        "recall reads a store's spool for an index named by --db",
+        "__main__.py",
+        "    if args.db is None:",
+        "    if True:",
+        "test_recall_says_nothing_about_a_spool_a_watcher_could_still_be_draining",
+    ),
+    (
+        "the uncollected age is the newest record's, not the oldest's",
+        "daemon.py",
+        "max(ages, default=0.0)",
+        "min(ages, default=0.0)",
+        "test_recall_says_the_hook_rang_and_no_watcher_answered",
+    ),
+    (
+        "a watcher pass leaves the records it consumed in the spool",
+        "daemon.py",
+        "            _unlink(path)\n            tick.spool_consumed += 1",
+        "            tick.spool_consumed += 1",
+        "test_one_watcher_pass_is_what_clears_it",
+    ),
     # --- E7 index-F8: the caps bound the shape of the input, not its cost -- #
     (
         "sumy's own quadratic idf is used again",
@@ -4597,7 +4647,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "23 mutants",
+        "a full pass is 6" + "30 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5787,7 +5837,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 623 mutants × two suite runs —
+    The filter exists because a full pass is 630 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

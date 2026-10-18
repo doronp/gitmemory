@@ -89,6 +89,17 @@ newest first (see [When memories disagree](#when-memories-disagree)):
 
 `-k` sets how many lines come back.
 
+If the [hook](../hook/README.md) has rung and no watcher has collected the
+record for an hour, `recall` says so on stderr, before the results it still
+prints:
+``1 hook record(s) uncollected for 3 hours: is `gitmemory watch` running for <store>? These results may be missing everything said since.``
+A running watcher drains the spool on every pass, so none has run on that store
+since: start `gitmemory watch` with the hook's `$GITMEMORY_HOME`, and
+`gitmemory service install` to keep it running
+([watching.md](watching.md#keep-it-running)). [Check it](watching.md#check-it)
+covers the other causes, such as a watcher that runs passes less often than
+hourly. With `--db`, recall does not look.
+
 ## When memories disagree
 
 A decision made three weeks ago and reversed last week are both in the store,

@@ -1633,3 +1633,90 @@ def test_a_sidechain_line_inside_a_main_file_is_marked(home, src):
         "keep the upload single-shot": False,
         "review the upload code": True,
     }
+
+
+# --------------------------------------------------------------------------- #
+# the hook rang and no watcher answered
+# --------------------------------------------------------------------------- #
+
+
+def _ring(home: str, age: float, name: str = "4242-SessionEnd.json") -> None:
+    """A spool record as the shim leaves it, arrived `age` seconds ago."""
+    spool = os.path.join(home, "spool")
+    os.makedirs(spool, exist_ok=True)
+    path = os.path.join(spool, name)
+    with open(path, "w") as fh:
+        fh.write('{"transcript_path": "/nowhere/s.jsonl"}')
+    then = time.time() - age
+    os.utime(path, (then, then))
+
+
+def _indexed(home: str, src: str) -> None:
+    write(src, [user("u1", "the peculiar marmoset")])
+    assert main(["--home", home, "capture", src]) == 0
+    assert main(["--home", home, "index"]) == 0
+
+
+def test_recall_says_the_hook_rang_and_no_watcher_answered(home, src, capsys):
+    """A stopped watcher was invisible from `recall`: it answered from the store
+    as it was when the watcher stopped, and said nothing. Time since the last
+    capture cannot say so, because a running watcher on an idle machine captures
+    nothing either. A record the watcher would have drained within one poll can.
+    Before the answer, like the truncation notice. [install feedback]"""
+    _indexed(home, src)
+    _ring(home, 3 * 3600 + 5)
+    _ring(home, 60, "4243-PreCompact.json")
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "marmoset"]) == 0
+    out, err = capsys.readouterr()
+    assert "marmoset" in out and "uncollected" not in out, out
+    assert err == (
+        "2 hook record(s) uncollected for 3 hours: is `gitmemory watch` running for "
+        f"{home}? These results may be missing everything said since.\n"
+    ), err
+    assert main(["--home", home, "recall", "aardvark"]) == 0
+    err = capsys.readouterr().err
+    assert err.index("uncollected") < err.index("no matches"), err
+    for age, said in ((90 * 60, "90 minutes"), (3 * 86400, "3 days")):
+        _ring(home, age)
+        assert main(["--home", home, "recall", "marmoset"]) == 0
+        assert f"uncollected for {said}:" in capsys.readouterr().err
+
+
+def test_recall_says_nothing_about_a_spool_a_watcher_could_still_be_draining(
+    home, src, capsys
+):
+    """Silent below the threshold, on a hook still writing, and under `--db`,
+    whose index records no store to look in."""
+    _indexed(home, src)
+    _ring(home, 30 * 60)
+    _ring(home, 3 * 3600, ".tmp-4242-0")
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "marmoset"]) == 0
+    assert capsys.readouterr().err == "", "a fresh record or a hook's temp was reported"
+    _ring(home, 3 * 3600)
+    assert main(["--home", home, "recall", "marmoset", "--db", index.db_path(home)]) == 0
+    assert capsys.readouterr().err == "", "--db names an index, not a store"
+
+
+def test_one_watcher_pass_is_what_clears_it(home, src, capsys):
+    """The notice is true exactly as long as `drain_spool` has not run: every
+    pass consumes every complete record, covered or not. A directory in the
+    spool is no record and no pass can unlink it, so counting it warned for
+    ever with a watcher running. [review]"""
+    root = json.dumps(os.path.dirname(src))
+    with open(os.path.join(home, "config.toml"), "w") as fh:
+        fh.write(f'[[watch]]\nagent = "claude-code"\nroots = [{root}]\n')
+    _indexed(home, src)
+    _ring(home, 3 * 3600)
+    stuck = os.path.join(home, "spool", "4244-Stop.json")
+    os.mkdir(stuck)
+    os.utime(stuck, (time.time() - 3 * 3600,) * 2)
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "marmoset"]) == 0
+    assert capsys.readouterr().err.startswith("1 hook record(s) uncollected for 3 hours:")
+    assert main(["--home", home, "watch", "--once"]) == 0
+    assert os.path.isdir(stuck), "the pass removed the directory; this test no longer bites"
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "marmoset"]) == 0
+    assert "uncollected" not in capsys.readouterr().err

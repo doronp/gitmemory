@@ -107,6 +107,16 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
 - The watcher captures; it does not index. If a search misses something the
   user says was said recently, the index may be older than the capture: run
   `gitmemory index` and search once more.
+- ``<N> hook record(s) uncollected for <age>: is `gitmemory watch` running for <store>? These results may be missing everything said since.``
+  on stderr, before the results, exit 0: the hook has rung and no watcher has
+  run a pass on that store since, so nothing said after that is being captured
+  there. Answer from the results, say they may be missing everything since, and
+  tell the user to start `gitmemory watch` with the `GITMEMORY_HOME` this
+  session has, and to keep it running with `gitmemory service install` (step 3
+  below). If they have installed a service already, it is not started, it is
+  failing (its log says why), or it watches another store. Do not run any of
+  it yourself. Reindexing cannot bring back what was said since; if the hits
+  miss something older, the bullet above still applies.
 - The shell cannot find `gitmemory`, or `index` prints `not a store: <path>`,
   or it reports `0 generation(s)`: nothing has been captured there. Tell the
   user how it gets set up, and stop. Do none of it yourself:
