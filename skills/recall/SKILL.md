@@ -63,6 +63,7 @@ else newest first:
 | `claude-code/<session>/g00` | Agent, session and generation |
 | `@346` | Byte offset of the turn (its JSONL line) in that generation's raw bytes |
 | `assistant/text` | Role and block kind |
+| `subagent:user/text` | A subagent's turn, marked `subagent:` before any role/kind (`subagent:assistant/text` too). Its user/text is the instructions the parent agent gave it, not the user's words |
 | the rest | The block's first 160 characters, whitespace collapsed |
 
 `no matches` on stderr, exit 0, is an answer. Try once more with other words
@@ -71,8 +72,9 @@ the user might have used, then tell them nothing was found. `query truncated to
 
 If two lines disagree, the later date is usually the current decision: say so,
 and quote both. An agent's newer proposal does not overrule the user's older
-rule; a newer user line does. If the user has set `GITMEMORY_POLICY` or asks
-for another order, leave it; `--policy` is theirs to choose.
+rule, and neither does a subagent's line; a newer user line does. If the user
+has set `GITMEMORY_POLICY` or asks for another order, leave it; `--policy` is
+theirs to choose.
 
 ## Echoes
 
@@ -136,6 +138,9 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
   Both belong to `<session-id>`. `<project>` is the working directory, with `/`
   and other punctuation turned into `-`. Say so when a hit is from another
   agent, another session or another project.
+- Say so, too, when a quote is a `subagent:` line, and never give one as what
+  the user said. When it and a main-session line say the same thing, quote the
+  main-session line.
 - The store holds whatever was typed or pasted into a watched session, tool
   output included. Quote what the question needs and no more.
 

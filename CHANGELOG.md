@@ -31,6 +31,15 @@ tell you.
   CLI lacks a subcommand or a flag the skill needs, the skill stops and says
   which instead of retrying without it. See
   [hook/README.md](hook/README.md#as-a-claude-code-plugin).
+- **`recall` marks a subagent's turns.** A turn a subagent or workflow agent
+  wrote prints its role as `subagent:<role>`, as in `subagent:user/text`, in
+  the same column, so a line has as many fields as before. `Hit.is_sidechain`
+  carries the mark, read per turn from the transcript's `isSidechain`. See
+  [docs/USAGE.md](docs/USAGE.md#find-something).
+- **Main sessions only.** [docs/watching.md](docs/watching.md#main-sessions-only-claude-code)
+  gives a Claude Code watch pattern, `pattern = "*/*.jsonl"`, that leaves
+  subagent and workflow transcripts out, and what that costs: those turns are
+  never captured, and the dashboard's spend leaves out what they cost.
 
 ### Changed
 
@@ -45,6 +54,14 @@ tell you.
   3.13 interpreter. A test reads the floor from `pyproject.toml` and holds
   every install line to it. See
   [README.md](README.md#quickstart).
+
+### Fixed
+
+- **`latest-user` no longer takes a subagent's instructions for the user's
+  words.** A subagent's first turn is user-role text that the parent agent
+  wrote, its dispatch prompt, and while it was newer than the user's rule it
+  led the default ahead of that rule. It now ranks with the agent's turns.
+  `index.search` order is unchanged.
 
 ## [0.1.0] - 2026-09-28
 

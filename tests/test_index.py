@@ -1550,3 +1550,86 @@ def test_the_default_does_not_let_a_forgetful_agent_outrank_the_users_rule(home,
 
     assert roles() == ["user/text", "user/tool_result", "assistant/text"]
     assert roles("--policy", "latest") == ["user/tool_result", "assistant/text", "user/text"]
+
+
+def sidechain(uid: str, text: str, ts: str) -> dict:
+    """A subagent's turn. Claude Code marks it `isSidechain` wherever it is
+    written, and its first one is user-role text the parent agent wrote: the
+    dispatch prompt."""
+    return dated(uid, text, ts) | {"isSidechain": True, "agentId": "a1"}
+
+
+def with_a_subagent(home: str, tmp_path: Path) -> None:
+    """The user's rule in a main session, then the opposite a day later in a
+    dispatch prompt to one of its subagents. Claude Code's own layout:
+    `<project>/<session>.jsonl` and `<project>/<session>/subagents/agent-<id>.jsonl`."""
+    parent = tmp_path / "proj" / "s1.jsonl"
+    child = tmp_path / "proj" / "s1" / "subagents" / "agent-a1.jsonl"
+    child.parent.mkdir(parents=True)
+    write(
+        str(parent),
+        [
+            dated("u1", "Don't add a retry loop around the upload.", "2026-09-28T10:00:00Z"),
+            assistant("a1", [{"type": "text", "text": "Understood: the upload has no retry loop."}])
+            | {"timestamp": "2026-09-28T11:00:00Z"},
+        ],
+    )
+    prompt = sidechain("u2", "Add a retry loop around the upload.", "2026-09-29T09:00:00Z")
+    write(str(child), [prompt])
+    store.capture(str(parent), "claude-code", "s1", home=home)
+    store.capture(str(child), "claude-code", "agent-a1", home=home)
+    index.build(home)
+
+
+def test_a_subagent_prompt_is_not_the_users_word(home, tmp_path):
+    """The forgetful agent again, arriving through a dispatch prompt rather than a
+    proposal. The prompt is user text, newer than the rule and matching it, so
+    the default led with it as the user's own words. The turn is marked, so it
+    is ranked with the agent's turns, where the parent's instructions belong."""
+    with_a_subagent(home, tmp_path)
+    db = index.open_db(index.db_path(home))
+    try:
+        hits = index.search(db, "retry loop upload")
+    finally:
+        db.close()
+    ordered = index.latest_user(hits)
+    assert ordered[0].text == "Don't add a retry loop around the upload."
+    assert [h.is_sidechain for h in ordered] == [False, True, False]
+
+
+def test_recall_marks_a_subagent_turn(home, tmp_path, capsys):
+    """A prefix on the role, not a new column: `split()[3]` is role/kind to
+    whatever parses these lines, this file included, and a main session's line
+    is byte-for-byte what it was."""
+    with_a_subagent(home, tmp_path)
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "retry loop upload"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert [line.split()[3] for line in lines] == [
+        "user/text",
+        "subagent:user/text",
+        "assistant/text",
+    ]
+    assert lines[1].split()[2].startswith("claude-code/agent-a1/")
+
+
+def test_a_sidechain_line_inside_a_main_file_is_marked(home, src):
+    """Older Claude Code wrote a subagent's turns into the parent's own file, each
+    line marked. The mark is read per turn, so those are caught too, which no
+    rule on the file's path can do."""
+    db = built(
+        home,
+        src,
+        [
+            dated("u1", "keep the upload single-shot", "2026-09-28T10:00:00Z"),
+            sidechain("u2", "review the upload code", "2026-09-28T10:05:00Z"),
+        ],
+    )
+    try:
+        hits = index.search(db, "upload")
+    finally:
+        db.close()
+    assert {h.text: h.is_sidechain for h in hits} == {
+        "keep the upload single-shot": False,
+        "review the upload code": True,
+    }

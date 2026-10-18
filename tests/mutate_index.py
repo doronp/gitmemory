@@ -4597,7 +4597,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "06 mutants",
+        "a full pass is 6" + "09 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5500,6 +5500,31 @@ MUTANTS = [
         "    except ZeroDivisionError as e:",
         "test_a_call_that_fails_every_retry_scores_wrong_and_is_counted",
     ),
+    # --- a subagent's dispatch prompt led `latest-user` as the user's word ---
+    (
+        "latest-user takes a subagent's dispatch prompt for the user's word",
+        "index.py",
+        "            and not h.is_sidechain\n",
+        "",
+        "test_a_subagent_prompt_is_not_the_users_word",
+    ),
+    (
+        "search reads every turn as a main session's",
+        "index.py",
+        "               COALESCE((\n"
+        "                   SELECT t.is_sidechain FROM turns t\n"
+        "                   WHERE t.session_key = ranked.session_key AND t.seq = ranked.turn_seq\n"
+        "               ), 0) AS is_sidechain",
+        "               0 AS is_sidechain",
+        "test_a_sidechain_line_inside_a_main_file_is_marked",
+    ),
+    (
+        "recall prints a subagent's turn with the user's role",
+        "__main__.py",
+        '        who = f"subagent:{h.role}" if h.is_sidechain else h.role',
+        "        who = h.role",
+        "test_recall_marks_a_subagent_turn",
+    ),
 ]
 
 
@@ -5652,7 +5677,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 606 mutants × two suite runs —
+    The filter exists because a full pass is 609 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

@@ -433,6 +433,9 @@ class Hit:
     score: float  # BM25; more negative is a better match, as FTS5 defines it
     text: str
     ts: str | None = None  # the turn's timestamp exactly as the agent wrote it
+    # A subagent's turn (`Turn.is_sidechain`), whichever file it was written in.
+    # Its user-role text is the parent agent's instructions, not the user's.
+    is_sidechain: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1016,7 +1019,7 @@ def search(
             SELECT b.byte_offset, b.byte_len, b.turn_id, b.session_key, b.agent,
                    b.session_id, b.generation, b.role, b.kind, b.block_seq,
                    b.prose || b.tool_use || b.tool_result AS text, s.score AS score,
-                   b.ts,
+                   b.ts, b.turn_seq,
                    -- Partitioned by turn *and session*, not by turn alone.
                    -- `turn_id` is content-derived over the record's sessionId,
                    -- which the Claude Code adapter warns is reused across a
@@ -1037,7 +1040,15 @@ def search(
             FROM scored s JOIN blocks b ON b.rowid = s.rid
         )
         SELECT byte_offset, byte_len, turn_id, session_key, agent,
-               session_id, generation, role, kind, text, score, ts
+               session_id, generation, role, kind, text, score, ts,
+               -- Only `turns` knows whose turn it was. A lookup on its primary
+               -- key, not a join, so the ORDER BY's names stay unambiguous; on
+               -- 120k turns, against queries that match most of them, it timed
+               -- within noise of no lookup at all.
+               COALESCE((
+                   SELECT t.is_sidechain FROM turns t
+                   WHERE t.session_key = ranked.session_key AND t.seq = ranked.turn_seq
+               ), 0) AS is_sidechain
         FROM ranked WHERE rn = 1
         -- Ties are broken by position, never by rowid: the answer must not
         -- depend on the order generations happened to be indexed in.
@@ -1060,6 +1071,7 @@ def search(
             score=r["score"],
             text=r["text"],
             ts=r["ts"],
+            is_sidechain=bool(r["is_sidechain"]),
         )
         for r in rows
     )
@@ -1131,9 +1143,14 @@ def latest_user(hits: list[Hit]) -> list[Hit]:
     an earlier session, which is newer than every turn it quotes. A user who
     reverses themselves still wins here, because their reversal is user text.
 
-    "The user's own words" is the admission rule `derive` uses for prose: a
-    `text` block in the user role that no program injected. A tool result is a
-    user-role line in Claude Code and is not something the user said.
+    "The user's own words" is the admission rule `derive` uses for prose, a
+    `text` block in the user role that no program injected, less a subagent's
+    turn. A tool result is a user-role line in Claude Code and is not something
+    the user said, and neither is a subagent's user text: that is the parent
+    agent's instructions, its dispatch prompt first, which led the default as
+    the user's word while it was newer than the rule it contradicted.
+    `derive._prose` still admits a subagent's text; excluding it there too would
+    move the secondary-set numbers, so that waits for a re-measurement.
 
     ponytail: a skill's loaded instructions and a slash command's expansion are
     user text with no marker, so they pass as the user's words — the same gap
@@ -1142,7 +1159,12 @@ def latest_user(hits: list[Hit]) -> list[Hit]:
     from .derive import _injected  # lazy: derive imports this module
 
     def typed(h: Hit) -> bool:
-        return h.role == "user" and h.kind == "text" and not _injected(h.text.strip())
+        return (
+            h.role == "user"
+            and h.kind == "text"
+            and not h.is_sidechain
+            and not _injected(h.text.strip())
+        )
 
     ordered = latest(hits)
     return [h for h in ordered if typed(h)] + [h for h in ordered if not typed(h)]

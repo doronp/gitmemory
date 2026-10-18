@@ -330,7 +330,12 @@ def _recall(args) -> int:
         # The date on every line, whatever the policy: it is what lets the
         # reader see that two disagreeing turns are three weeks apart.
         date = t.strftime("%Y-%m-%dT%H:%MZ") if t else "undated".ljust(17)
-        print(f"{h.score:8.3f}  {date}  {h.session_key}@{h.byte_offset}  {h.role}/{h.kind}  {head}")
+        # In the role's column, not a column of its own: whatever parses these
+        # lines reads role/kind as the fourth field, and a subagent's user/text
+        # is the parent agent's instructions, which must not be quoted as the
+        # user's.
+        who = f"subagent:{h.role}" if h.is_sidechain else h.role
+        print(f"{h.score:8.3f}  {date}  {h.session_key}@{h.byte_offset}  {who}/{h.kind}  {head}")
     if not hits:
         print("no matches", file=sys.stderr)
     elif not shown:

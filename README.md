@@ -194,13 +194,13 @@ real text, and that is a measurement rather than a suspicion.
 | What | How it was measured | Result |
 |---|---|---|
 | Hook cost in the agent's critical path | Timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | On a fresh checkout, no downloads | **1,039 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **606** negative controls |
+| The suite | On a fresh checkout, no downloads | **1,043 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **609** negative controls |
 
 The two suite counts do not add up, and should not. Switching the corpora on
-collects 1364, not 1367. Three conformance cases fill parametrisations that
+collects 1368, not 1371. Three conformance cases fill parametrisations that
 collect as one empty placeholder each while the corpora are absent, so they
-replace three of the 1039 rather than joining them. Every figure on this board
+replace three of the 1043 rather than joining them. Every figure on this board
 is pinned by a test, which is how it stays true.
 
 **What is not measured**, and is shown as a row on the dashboard rather than

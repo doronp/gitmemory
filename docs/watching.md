@@ -26,12 +26,58 @@ roots = ["~/.claude/projects"]
 |---|---|---|
 | `agent` | yes | Which adapter finds compaction boundaries. See below. |
 | `roots` | yes | Directories to tail. `~` is expanded; symlinks are resolved. |
-| `pattern` | no | Glob under each root. Defaults to `**/*.jsonl`. |
+| `pattern` | no | Glob under each root, with `pathlib` semantics: `*` never crosses a `/`, and `**` spans any number of directories. Defaults to `**/*.jsonl`. |
 
 Repeat the table for each agent you run. Absent, unreadable, or malformed
 config means the watcher watches nothing — and says so on every pass, naming
 the file and the reason, because "nothing configured" and "misconfigured" must
 not look alike.
+
+### Main sessions only (Claude Code)
+
+The default pattern takes every transcript under the root, and under
+`~/.claude/projects` most of them are not a conversation you had. Claude Code
+writes each subagent to `<project>/<session>/subagents/agent-<id>.jsonl`, and
+each workflow agent, beside the workflow's `journal.jsonl`, under
+`<project>/<session>/subagents/workflows/<run>/`. A pattern one directory deep
+takes only the main sessions, `<project>/<session>.jsonl`:
+
+```toml
+[[watch]]
+agent = "claude-code"
+roots = ["~/.claude/projects"]
+pattern = "*/*.jsonl"
+```
+
+Put the `pattern` line in the `claude-code` table you already have, not in a
+second table beside it. The watcher takes the files of every table, so another
+table on the same root with the default pattern still finds every subagent.
+
+A hook doorbell for a subagent's file then captures nothing: the spool only
+hurries a file the pattern already found.
+
+Prefer the default unless the store's size matters more than what this costs.
+`recall` marks a subagent's turns `subagent:` (see
+[USAGE.md](USAGE.md#find-something)), so they can be told apart without
+leaving them out, and a policy can drop them from what it prints
+([USAGE.md](USAGE.md#your-own-rule)). What leaving them out costs:
+
+- **Those turns are never captured.** Once Claude Code cleans up old
+  transcripts, they are gone. Until then this is reversible: put the default
+  back, and the next pass captures each subagent file from its first byte.
+- **The dashboard's spend undercounts.** It counts only what was captured, and
+  subagents are where much of the spend goes: one measured session had 78% of
+  its cache-read tokens in `subagents/**` ([DESIGN.md §2.2](DESIGN.md#22-claude-code-adapter--the-traps-each-a-test-case)).
+- **What was sent survives, and usually what came back.** The parent session
+  keeps the tool call that started a subagent or a workflow, with its
+  instructions. A subagent's report comes back as that call's result. A
+  background agent or workflow gets only a launch receipt there; its report
+  comes later, as a task-notification turn in the parent, or not at all if the
+  session ended first. What is lost is the subagents' own working turns, and a
+  workflow's `journal.jsonl`, which holds each of its agents' results.
+- Older Claude Code wrote a subagent's turns into the parent's own file, each
+  line marked. A pattern cannot leave those out; the `subagent:` mark still
+  labels them.
 
 ### What gets refused, and why
 

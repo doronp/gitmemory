@@ -75,7 +75,7 @@ newest first (see [When memories disagree](#when-memories-disagree)):
 | `2026-09-28T10:03Z` | When the turn was written, in UTC. `undated` if the transcript did not say |
 | `claude-code/<session>/g00` | Agent, session and generation. A new generation starts only when the source file was rewritten |
 | `@288` | The byte offset of the turn inside that generation's raw bytes |
-| `assistant/text` | Role and block kind |
+| `assistant/text` | Role and block kind. `subagent:` before them, as in `subagent:user/text` or `subagent:assistant/text`, marks a subagent's or workflow agent's turn, which the transcript marks `isSidechain`: its user text is the instructions your agent gave it, not your words |
 
 `-k` sets how many lines come back.
 
@@ -88,7 +88,7 @@ tends to act on.
 
 | Policy | Order | Use it when |
 |---|---|---|
-| `latest-user` (default) | The user's own words newest first, then the agent's turns and tool output newest first | The user's later word should win, and nothing else should |
+| `latest-user` (default) | The user's own words newest first, then the agent's turns and tool output newest first. A subagent's instructions are the agent's words | The user's later word should win, and nothing else should |
 | `latest` | Newest first, whoever said it | Any later turn should win, the agent's included |
 | `relevance` | Best BM25 match first | You want the agent to decide: every line carries its date, so it can see which turn came later |
 | `module:function` | Whatever your function returns | Anything else: pinned decisions, a cut-off date, a different rule per project |
@@ -116,8 +116,9 @@ If two lines disagree, the later date is the current decision; say so.
 
 A policy is a function from a list of `Hit`s to a list of `Hit`s. It can
 reorder and it can drop; it gets nothing that is not already in the store. A
-`Hit` has the fields `recall` prints, plus `text` and `ts`, and
-`gitmemory.index.when(hit)` reads `ts` as a UTC `datetime`.
+`Hit` has the fields `recall` prints, plus `text`, `ts` and `is_sidechain`
+(true for a subagent's turn), and `gitmemory.index.when(hit)` reads `ts` as a
+UTC `datetime`.
 
 A validity window, where everything before a date you name is out of date, is
 one such rule:
@@ -138,6 +139,23 @@ def since_reversal(hits):
 
 ```console
 $ PYTHONPATH=. gitmemory recall "upload retries" --policy myrules:since_reversal
+```
+
+Leaving subagents' turns out when you read, rather than never capturing them
+([watching.md](watching.md#main-sessions-only-claude-code)), is another rule
+for the same file:
+
+```python
+def main_only(hits):
+    """Drop every subagent's turn, then order as the default does."""
+    return latest_user([h for h in hits if not h.is_sidechain])
+```
+
+A policy that drops hits prints fewer than `-k` lines, because it sees only the
+top `-k`. Raise `-k` to make up for what it drops:
+
+```console
+$ PYTHONPATH=. gitmemory recall "upload retries" -k 30 --policy myrules:main_only
 ```
 
 The module is imported and runs with your permissions, so name only code you

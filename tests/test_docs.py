@@ -677,3 +677,61 @@ def test_the_recall_skill_names_the_release_it_was_written_for(capsys):
 
     echoes = skill.split("## Echoes ", 1)[1].split(" ## ", 1)[0]
     assert "`gitmemory --version`" in echoes, echoes
+
+
+def test_the_main_sessions_only_pattern_does_what_watching_md_says(tmp_path):
+    """`docs/watching.md` offers a pattern that leaves Claude Code's subagents out,
+    and says a hook cannot bring one back in. Both are claims about the watcher,
+    so the documented block is the config here, verbatim, over Claude Code's
+    layout: a Task subagent, a workflow agent and the workflow's journal beside
+    the main session. The default pattern finds all four, so the three this one
+    misses are files the watcher would otherwise capture. The page also says the
+    recipe must replace the default table, not sit beside it."""
+    import dataclasses
+
+    from gitmemory import daemon
+
+    doc = _read("docs/watching.md")
+    section = re.search(r"^### Main sessions only.*?(?=^#)", doc, re.M | re.S)
+    assert section, "docs/watching.md has no main-sessions-only recipe"
+    block = re.search(r"^```toml\n(.*?)^```", section.group(0), re.M | re.S)
+    assert block, section.group(0)
+
+    turn = '{"type":"user","message":{"role":"user","content":"hello"}}\n'
+    session = os.path.join(os.path.expanduser("~/.claude/projects"), "-proj", "s1")
+    parent = session + ".jsonl"
+    workflow = os.path.join(session, "subagents", "workflows", "wf_1")
+    child = os.path.join(session, "subagents", "agent-a1.jsonl")
+    others = [child, *(os.path.join(workflow, f) for f in ("agent-b2.jsonl", "journal.jsonl"))]
+    for path in (parent, *others):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(turn)
+    home = str(tmp_path / "store")
+    os.makedirs(os.path.join(home, daemon.SPOOL))
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as fh:
+        fh.write(block.group(1))
+
+    watches = daemon.load_watches(home)
+    found = [p for _, p in daemon.discover(watches)]
+    assert found == [os.path.realpath(parent)]
+    every = [dataclasses.replace(w, pattern=daemon.PATTERN) for w in watches]
+    assert len(daemon.discover(every)) == 4
+    first = daemon.tick(home, watches, commit=False)
+    assert [key.split("/")[1].startswith("s1-") for key in first.captured] == [True]
+
+    # A hook firing as the subagent ends rings for a file the pattern left out.
+    with open(child, "a", encoding="utf-8") as fh:
+        fh.write(turn)
+    with open(os.path.join(home, daemon.SPOOL, "1-2-SessionEnd.json"), "w") as fh:
+        json.dump({"transcript_path": child}, fh)
+    second = daemon.tick(home, watches, interval=1e9, commit=False)
+    assert second.captured == [] and second.spool_consumed == 1
+
+    # Added as a second table beside a default one on the same root, it leaves
+    # nothing out, which is why the page says to edit the table you have.
+    default = re.sub(r"^pattern = .*\n", "", block.group(1), flags=re.M)
+    assert default != block.group(1)
+    with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as fh:
+        fh.write(default + "\n" + block.group(1))
+    assert len(daemon.discover(daemon.load_watches(home))) == 4
