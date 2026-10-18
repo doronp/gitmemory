@@ -3906,16 +3906,26 @@ MUTANTS = [
     (
         "recall --redact masks the head after the 160-character cut",
         "__main__.py",
-        '        head = shown_as(" ".join(h.text.split()))[:160]',
+        '        head = " ".join(shown_as(h.text).split())[:160]',
         '        head = shown_as(" ".join(h.text.split())[:160])',
         "test_recall_redact_masks_a_key_the_160_character_cut_would_have_halved",
     ),
     (
+        # The mask joins a header a line break split itself, as show's does.
         "recall --redact masks the head before the collapse assembles a header",
         "__main__.py",
-        '        head = shown_as(" ".join(h.text.split()))[:160]',
-        '        head = " ".join(shown_as(h.text).split())[:160]',
+        "    shown_as = functools.partial(redact.mask, collapse=True) if args.redact else str\n"
+        "    for h in shown:",
+        "    shown_as = redact.mask if args.redact else str\n    for h in shown:",
         "test_recall_redact_masks_a_header_that_only_the_collapse_assembles",
+    ),
+    (
+        # `str.split()` breaks on a no-break space; the bytes patterns do not.
+        "recall --redact collapses a Unicode space out of a value before it masks",
+        "__main__.py",
+        '        head = " ".join(shown_as(h.text).split())[:160]',
+        '        head = shown_as(" ".join(h.text.split()))[:160]',
+        "test_recall_redact_masks_a_value_with_a_unicode_space_in_it",
     ),
     (
         "recall --redact masks a private key's header and prints its body",
@@ -4008,12 +4018,29 @@ MUTANTS = [
         "test_show_redact_masks_a_whole_turn_and_the_default_prints_it",
     ),
     (
-        # recall flattens a turn before it masks; show prints the line breaks.
+        # show prints the line breaks, so only the mask's own collapse joins one.
         "show --redact masks without joining a key header a line break split",
         "__main__.py",
-        "functools.partial(redact.mask, collapse=True)",
-        "functools.partial(redact.mask, collapse=False)",
+        "functools.partial(redact.mask, collapse=True) if args.redact else str\n"
+        "    lo = max(0, at - args.context)",
+        "functools.partial(redact.mask, collapse=False) if args.redact else str\n"
+        "    lo = max(0, at - args.context)",
         "test_show_redact_joins_a_key_header_a_line_break_split",
+    ),
+    (
+        # `surrogateescape` round-trips U+DC80-U+DCFF only; `\ud83d` raised.
+        "show --redact stops on a lone surrogate the mask cannot encode",
+        "redact.py",
+        '    data = text.encode("utf-8", "surrogatepass")',
+        '    data = text.encode("utf-8", "surrogateescape")',
+        "test_show_redact_prints_a_turn_that_holds_a_lone_surrogate",
+    ),
+    (
+        "show refuses a masked address as one recall never printed",
+        "__main__.py",
+        '        if "…[" in args.address:',
+        "        if False:",
+        "test_a_masked_address_is_refused_as_masked_not_as_mistyped",
     ),
     (
         # The copy is shorter by every run it narrowed, so its offsets are not
@@ -4769,7 +4796,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "58 mutants",
+        "a full pass is 6" + "62 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5873,6 +5900,13 @@ MUTANTS = [
         'f"launchctl bootout {job} && rm {shlex.quote(target)}"',
         "test_the_printed_removal_works_when_the_job_was_never_started",
     ),
+    (
+        "the printed systemd removal leaves the manager holding the unit it removed",
+        "service.py",
+        "; rm {shlex.quote(target)}; {ctl} daemon-reload",
+        "; rm {shlex.quote(target)}",
+        "test_service_install_writes_a_systemd_user_unit_and_starts_nothing",
+    ),
     # --- a captured amount said for a person ---
     (
         "the watch line goes back to a bare byte count",
@@ -6048,7 +6082,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 658 mutants × two suite runs —
+    The filter exists because a full pass is 662 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for every other row or trusting the new one untested.
 

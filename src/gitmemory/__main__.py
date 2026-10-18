@@ -104,7 +104,6 @@ def _init(args) -> int:
         before = tomllib.loads(old.decode("utf-8"))
     except ValueError as exc:  # `TOMLDecodeError`, and `UnicodeDecodeError` on a bad byte
         return _refuse(f"{path} is not valid TOML ({exc}); fix it first")
-    have = before.get("watch", [])
     table = (
         f"# added by `gitmemory init {args.agent}`\n"
         f'[[watch]]\nagent = "{args.agent}"\nroots = ["{root}"]\n'
@@ -113,11 +112,10 @@ def _init(args) -> int:
     new = old + sep + table.encode()
     # Re-parsed whole, because appending is not always joining: after a plain
     # `[watch]` or an inline `watch = [...]` the result does not parse at all.
+    # When it parses, the header added one table, last in the `watch` array.
     try:
         after = tomllib.loads(new.decode("utf-8"))
     except ValueError:
-        after = {}
-    if not isinstance(have, list) or len(after.get("watch") or []) != len(have) + 1:
         return _refuse(f"{path} has a `watch` a [[watch]] table cannot join; add it by hand")
     for w in daemon.watches_from(before, path, home, lambda _m: None):
         if real in w.roots:
@@ -134,7 +132,7 @@ def _init(args) -> int:
         w.agent == args.agent and real in w.roots
         for w in daemon.watches_from(after, path, home, notes.append)
     ):
-        mine = f"{path} [[watch]] #{len(have) + 1}:"
+        mine = f"{path} [[watch]] #{len(after['watch'])}:"
         return _refuse("; ".join(n for n in notes if n.startswith(mine)))
     # Two inits at once both read the same bytes, and the later rename dropped
     # the other's table while both said "added". Each holds this across a second
@@ -477,13 +475,16 @@ def _recall(args) -> int:
         shown = list(resolve(hits))
     except Exception as exc:  # a custom policy is the user's code: report it, no traceback
         raise ValueError(f"policy {args.policy!r} failed: {exc!r}") from exc
-    # After the policy, so a custom one cannot route around it. After the
-    # collapse, which can join a PEM header a newline split, and before the cut:
+    # After the policy, so a custom one cannot route around it. Before the cut:
     # a key that straddles character 160 leaves a prefix no detector matches.
-    # `graph._label` measured both. The address too: a session id can be a key.
-    shown_as = redact.mask if args.redact else str
+    # Before the collapse too, with the mask's own, as `show`'s: it joins a PEM
+    # header a newline split, where `str.split()` also broke on a no-break
+    # space, which the patterns read as part of a token, and cut the value under
+    # its floor. `graph._label` measured the cut and the split header. The
+    # address too: a session id can be a key.
+    shown_as = functools.partial(redact.mask, collapse=True) if args.redact else str
     for h in shown:
-        head = shown_as(" ".join(h.text.split()))[:160]
+        head = " ".join(shown_as(h.text).split())[:160]
         # The date on every line, whatever the policy: it is what lets the
         # reader see that two disagreeing turns are three weeks apart.
         date = _date(h)
@@ -537,6 +538,12 @@ def _show(args) -> int:
     except ValueError:
         m = None
     if not m:
+        # The marker fits `_ADDRESS` and fails `identity`: the user copied it
+        # whole, from a recall that was masking, and did not mistype it.
+        if "…[" in args.address:
+            hint = "recall prints one show can look up when it is not masking"
+            print(f"a masked address: {redact.safe_path(args.address)!r}; {hint}", file=sys.stderr)
+            return 2
         want = "expected <agent>/<session>/gNN@<offset>, as recall prints it"
         print(f"not an address: {redact.safe_path(args.address)!r}; {want}", file=sys.stderr)
         return 2
@@ -580,8 +587,8 @@ def _show(args) -> int:
     #
     # `--redact` masks as recall's does, on each block whole, before the split:
     # a private key's body is the lines under its header. These lines keep
-    # their breaks, where recall's are flattened first, so the mask is asked to
-    # join `-----BEGIN RSA` and `PRIVATE KEY-----` across one itself.
+    # their breaks, so only the mask's own collapse joins `-----BEGIN RSA` and
+    # `PRIVATE KEY-----` across one.
     shown_as = functools.partial(redact.mask, collapse=True) if args.redact else str
     lo = max(0, at - args.context)
     for i, t in enumerate(turns[lo : at + args.context + 1], start=lo):

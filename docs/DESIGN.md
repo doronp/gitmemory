@@ -223,11 +223,9 @@ opt-in per remote and refuses unless the redaction gate passed.** Default config
 not a gate. Off by default, because a store on the owner's own disk is still not an egress. The
 owner turns it on, or makes it standing with `GITMEMORY_REDACT`, when their output goes on to a
 model provider through the plugin's skill. Both tiers are masked, unlike `derived/` below, because a
-mask costs the span and not the sentence; a PEM block from its BEGIN line to its END line, or to
-the end of the text when there is none; and the session id in the address. `recall` masks after
-the whitespace collapse and before the 160-character cut. `show` masks each block whole before it
-splits it into lines, and, because it keeps the line breaks, also scans a copy with each whitespace
-run collapsed. Neither refuses anything. `raw/` and the index stay verbatim.]**
+mask costs the span and not the sentence. Neither refuses anything, and `raw/` and the index stay
+verbatim. [USAGE.md](USAGE.md#masking-credentials-in-what-it-prints) says what is masked, and
+what is not.]**
 
 Not "anything that leaves the machine" — that claim was wider than the code and is withdrawn
 **[E7]**. The store is an ordinary git repository in a directory the owner can read. A `git push`

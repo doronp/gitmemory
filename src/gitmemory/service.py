@@ -108,8 +108,10 @@ def render(platform: str, home: str) -> tuple[str, bytes, list[tuple[str, str]]]
             ("Check it", f"{ctl} status {UNIT}"),
             ("Its log", f"journalctl --user -u {UNIT} -f"),
             ("After upgrading gitmemory", f"{ctl} restart {UNIT}"),
-            # `;`: the file goes even when the manager cannot be reached.
-            ("Remove it", f"{ctl} disable --now {UNIT}; rm {shlex.quote(target)}"),
+            # `;`: the file goes even when the manager cannot be reached. The
+            # reload after it is so the manager drops the unit it had loaded.
+            ("Remove it",
+             f"{ctl} disable --now {UNIT}; rm {shlex.quote(target)}; {ctl} daemon-reload"),
         ]
         return target, body, steps
     target = os.path.expanduser(f"~/Library/LaunchAgents/{LABEL}.plist")

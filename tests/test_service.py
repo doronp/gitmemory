@@ -122,7 +122,8 @@ def test_service_install_writes_a_systemd_user_unit_and_starts_nothing(
     ctl = "systemctl --user"
     assert f"{ctl} daemon-reload && {ctl} enable --now gitmemory.service" in out
     assert "loginctl enable-linger" in out
-    assert f"{ctl} disable --now gitmemory.service; rm {shlex.quote(str(path))}" in out
+    removal = f"{ctl} disable --now gitmemory.service; rm {shlex.quote(str(path))}"
+    assert f"  {removal}; {ctl} daemon-reload\n" in out
 
 
 def test_service_install_writes_a_launch_agent_and_starts_nothing(
@@ -307,7 +308,8 @@ def test_a_unit_lands_under_dot_config_without_an_absolute_xdg_config_home(
     assert _words(_unit(path)["ExecStart"], dollars=True) == _expected(tmp_path / "store")
     assert not (tmp_path / "rel").exists()
     out = capsys.readouterr().out
-    assert out.startswith(f"wrote {path}\n") and f"; rm {shlex.quote(path)}\n" in out
+    removal = f"; rm {shlex.quote(path)}; systemctl --user daemon-reload\n"
+    assert out.startswith(f"wrote {path}\n") and removal in out
 
 
 @pytest.mark.parametrize("platform", ["linux", "darwin"])

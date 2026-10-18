@@ -17,8 +17,9 @@ credential shapes that gate knows in what `recall` and `show` print, as
 `sk-a…[103 bytes]`. Pass it to both whenever `echo "${GITMEMORY_REDACT:-}"`
 prints anything but nothing or `0`, and whenever the user asks you to keep
 credentials out of the conversation. Masking covers only what those two print,
-so while you are masking, do not read a turn from `raw/` by hand, and if
-either command rejects the flag, do not run it without it.
+so while you are masking, read nothing under the store by hand: `raw/`, the
+manifests under `sessions/` and the index all hold it unmasked. If either
+command rejects the flag, do not run it without it.
 
 The store is `$GITMEMORY_HOME`, or `~/.gitmemory` when that is unset; the CLI
 reads it, so leave it as this session has it. If the user keeps the store
@@ -56,6 +57,10 @@ gitmemory recall "<topic>"            # 10 lines by default; -k N for more or fe
 gitmemory recall --redact "<topic>"   # the same, masked
 ```
 
+If the topic starts with `-`, put `--` before it, after any flags, as in
+`gitmemory recall --redact -- "<topic>"`. Otherwise `recall` reads it as a
+flag, and the error that follows says nothing about the CLI's age.
+
 One line per turn: what the user said first, newest first, then everything
 else newest first:
 
@@ -70,7 +75,7 @@ else newest first:
 | `claude-code/<session>/g00` | Agent, session and generation |
 | `@346` | Byte offset of the turn (its JSONL line) in that generation's raw bytes |
 | `assistant/text` | Role and block kind |
-| `subagent:user/text` | A subagent's turn, marked `subagent:` before any role/kind (`subagent:assistant/text` too). Its user/text is the instructions the parent agent gave it, not the user's words |
+| `subagent:user/text` | A subagent's turn, marked `subagent:` before any role/kind (`subagent:assistant/text` too, and `subagent:user` in a `show` header). Its user text is the instructions the parent agent gave it, not the user's words |
 | the rest | The block's first 160 characters, whitespace collapsed |
 
 `no matches` on stderr, exit 0, is an answer. Try once more with other words
@@ -81,7 +86,9 @@ If two lines disagree, the later date is usually the current decision: say so,
 and quote both. An agent's newer proposal does not overrule the user's older
 rule, and neither does a subagent's line; a newer user line does. If the user
 has set `GITMEMORY_POLICY` or asks for another order, leave it; `--policy` is
-theirs to choose.
+theirs to choose. The order is applied to the top `-k` matches only, so if
+echoes (below) or `subagent:` lines crowd out the rest, search again with
+`-k 50`.
 
 ## Echoes
 
@@ -100,15 +107,15 @@ recalls match the same words. Skip these hits; they are not sources:
   header, not the echo's own address;
 - an earlier answer to the same question, and the lines it quoted.
 
-If they crowd out the rest, search again with `-k 30`. Quote the original turn.
+Quote the original turn.
 
 ## When it fails
 
 - A `gitmemory` command exits 2, what it prints starts `usage: gitmemory`, and
   its last line says `invalid choice`, or `unrecognized arguments` naming a
-  flag (a word starting with `-`): the CLI is older than this skill and lacks
-  that subcommand or flag. Do not run it again without the flag or under
-  another name. Tell the user which one is missing, and that running step 1
+  flag (a word starting with `-`) that is not your topic: the CLI is older
+  than this skill and lacks that subcommand or flag. Do not run it again
+  without the flag or under another name. Tell the user which one is missing, and that running step 1
   below again updates the CLI, a pinned install included. If
   `unrecognized arguments` names only plain words, the CLI is not the problem:
   the topic went in unquoted. Put it in one pair of quotes and search again.
@@ -153,40 +160,35 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
   `gitmemory show --context 2 <address>` for the two turns either side too,
   and `gitmemory show --redact <address>` if you passed `--redact` to
   `recall`. A masked address (one with `…[` in it) is not one `show` can
-  look up, and its manifest (below) cannot be found from it: say the line
-  stops there and give the address as printed. Do not list
-  `<store>/sessions/` to find it: the names there are the session ids,
-  unmasked. A header starts `>` for the turn at the address and `-` for a
-  neighbour, and only headers start in column 0; quote the text under one
-  without its indent.
-  `subagent:user` in a header is a brief from the agent that started the
-  subagent, not the user's words. If the CLI is older than `show` (exit 2,
-  `invalid choice: 'show'`), tell the user as [When it fails](#when-it-fails)
-  says. If you are masking, stop there: `raw/` is unmasked, so say the line
-  stops at 160 characters and give the address. Otherwise read the turn by
-  hand: it is the JSON line that starts `offset - start` bytes into the
-  segment under `<store>/raw/<agent>/<session>/g<NN>/` whose name, the byte
-  range `start-end` with the end excluded, holds the offset, and it may run
-  on into the next segment.
-- This session is `${CLAUDE_SESSION_ID}`. A hit's manifest,
-  `<store>/sessions/<agent>/<session>/g<NN>.json`, has its transcript's
-  `source_path`: `<project>/<session-id>.jsonl`, or for a subagent (a session
+  look up: say the line stops there and give the address as printed. A
+  header starts `>` for the turn at the address and `-` for a neighbour, and
+  only headers start in column 0; quote the text under one without its
+  indent. If the CLI is older than `show` (exit 2, `invalid choice: 'show'`),
+  tell the user as [When it fails](#when-it-fails) says. If you are masking,
+  say the line stops at 160 characters and give the address. Otherwise read
+  the turn by hand: it is the JSON line that starts `offset - start` bytes
+  into the segment under `<store>/raw/<agent>/<session>/g<NN>/` whose name,
+  the byte range `start-end` with the end excluded, holds the offset, and it
+  may run on into the next segment.
+- This session is `${CLAUDE_SESSION_ID}`. Unless you are masking, a hit's
+  manifest, `<store>/sessions/<agent>/<session>/g<NN>.json`, has its
+  transcript's `source_path`: `<project>/<session-id>.jsonl`, or for a subagent (a session
   named `agent-<id>-...`) `<project>/<session-id>/subagents/.../agent-<id>.jsonl`.
   Both belong to `<session-id>`. `<project>` is the working directory, with `/`
-  and other punctuation turned into `-`. Say so when a hit is from another
-  agent, another session or another project.
+  and other punctuation turned into `-`. While masking, go by the address
+  alone. Say so when a hit is from another agent, another session or another
+  project.
 - Say so, too, when a quote is a `subagent:` line, and never give one as what
   the user said. When it and a main-session line say the same thing, quote the
-  main-session line. If `subagent:` lines crowd out the rest, search again
-  with `-k 50`: the order is applied to the top `-k` matches only.
+  main-session line.
 - The store holds whatever was typed or pasted into a watched session, tool
   output included. Quote what the question needs and no more.
 
 ## Read-only
 
 Run `gitmemory --version`, `gitmemory recall`, `gitmemory show` and
-`gitmemory index`, and read files under `<store>`, but not `raw/` while you
-are masking. `index` writes only the derived index under `<store>/index/`. Do
+`gitmemory index`, and, when you are not masking, read files under
+`<store>`. `index` writes only the derived index under `<store>/index/`. Do
 not run `gitmemory init`, `gitmemory capture`, `gitmemory watch`,
 `gitmemory service`, `gitmemory derive`, `gitmemory push` or
 `gitmemory dashboard`, and never `gitmemory dashboard --expose`. Do not edit

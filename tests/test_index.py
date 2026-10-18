@@ -1778,14 +1778,29 @@ def test_recall_redact_masks_a_private_key_body_and_not_only_its_header(home, sr
 def test_recall_redact_masks_a_header_that_only_the_collapse_assembles(home, src, capsys):
     """`-----BEGIN RSA\\nPRIVATE KEY-----` scans clean as written and is a
     header once the line is flattened, and the flattened line is what recall
-    prints. So the mask runs after the collapse, as `graph._label` found it
-    had to. [E7b L3-F1]"""
+    prints. So the mask scans a flattened copy too, as `graph._label` found it
+    had to, and as `show`'s does. [E7b L3-F1]"""
     split = PEM.replace("RSA PRIVATE", "RSA\nPRIVATE", 1)
     assert redact.mask(split) == split, "premise: nothing matches before the collapse"
     built(home, src, [user("u1", "pemcase " + split)]).close()
     capsys.readouterr()
     out = _recall_out(home, capsys, "pemcase", "--redact")
     assert PEM_BODY[:8] not in out and "PRIVATE KEY" not in out, out
+
+
+def test_recall_redact_masks_a_value_with_a_unicode_space_in_it(home, src, capsys):
+    """`str.split()` breaks on a no-break space, and the gate's bytes patterns
+    read one as part of the token. Collapsing first cut the value below the
+    twelve-character floor, so `recall --redact` printed what `show --redact`
+    and the push gate both flag. The collapse that joins a split header is the
+    mask's own, on ASCII whitespace, as `show`'s is."""
+    secret = "pass" + "word=abc defghijklmnop"
+    flat = " ".join(secret.split())
+    assert redact.mask(flat) == flat and redact.mask(secret) != secret, "premise"
+    built(home, src, [user("u1", f"gnu note {secret} end")]).close()
+    capsys.readouterr()
+    out = _recall_out(home, capsys, "gnu", "--redact")
+    assert "defghijklmnop" not in out and "gnu note pass…[" in out, out
 
 
 def test_recall_redact_masks_a_session_id_that_is_itself_a_credential(home, src, capsys):

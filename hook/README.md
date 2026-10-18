@@ -102,21 +102,13 @@ there too, and be absolute, as above. What the skill reads from the store goes
 to the model provider with the rest of the conversation, and no redaction gate
 stands in that path ([SECURITY.md](../SECURITY.md#if-a-credential-lands-in-the-store)).
 To have `recall` and `show` mask the credential shapes the gate knows in what
-they print, set `GITMEMORY_REDACT` in that environment, in
-`~/.claude/settings.json`:
-
-```json
-{
-  "env": {
-    "GITMEMORY_REDACT": "1"
-  }
-}
-```
-
-The skill then passes `--redact` to every `recall` and `show` it runs, and
-does not read `raw/`. It masks; it is not a gate, and
-[USAGE.md](../docs/USAGE.md#masking-credentials-in-what-it-prints) lists what
-it does not cover.
+they print, set `GITMEMORY_REDACT=1` in that environment, in
+`~/.claude/settings.json` as
+[USAGE.md](../docs/USAGE.md#put-it-back-in-front-of-the-agent) shows. The
+skill then passes `--redact` to every `recall` and `show` it runs. It masks; it
+is not a gate, and
+[USAGE.md](../docs/USAGE.md#what-it-does-not-guarantee) lists what it does not
+cover.
 
 An install made from 0.1.0 does not have the skill. Claude Code keeps a
 plugin's cached copy until its version changes, and the skill was added after

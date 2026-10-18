@@ -98,25 +98,11 @@ on the masking below. That includes text another watched agent never sent to
 that provider, and a credential `push` would refuse to ship. The skill quotes
 what the question needs and no more, which is a rule it follows, not a gate.
 
-`recall --redact` and `show --redact`, or `GITMEMORY_REDACT` set to anything
-but empty or `0`, mask the gate's shapes in what those two commands print, and
-the skill passes the flag to both whenever the variable is set and not `0`,
-and then does not read `raw/`. It masks and never refuses, and it is off
-unless you turn it on. What it does not guarantee:
-
-- It masks only the sixteen shapes in [`redact.py`](src/gitmemory/redact.py):
-  twelve issuer-prefixed keys and four SUSPECT patterns. Anything else prints.
-  Measured examples: a bare AWS secret key, `PGPASSWORD=…`, a custom
-  `GH_TOKEN=…`, `glpat-` and `npm_` tokens, an Azure `AccountKey=…`, a password
-  in prose, `curl -u user:pass`, a `.netrc` line.
-- Nothing is decoded. Base64, URL-encoding and a token wrapped across lines get
-  through. JSON `\u` escapes are masked, because both commands read the parsed
-  text.
-- It is credential masking, not confidentiality. Hostnames, customer data,
-  personal data and code are untouched.
-- It covers only what `recall` and `show` print. `raw/`, the index database,
-  the dashboard, `derived/` and any file the agent opens are not masked by it.
-  The environment setting is a floor, not a boundary: an agent with a shell can
-  unset it, or read `raw/`.
-- A mask reveals the first four bytes and the length.
-- The SUSPECT patterns also mask some prose about configuration.
+`recall --redact` and `show --redact` mask the gate's shapes in what those two
+commands print. `GITMEMORY_REDACT` set to anything but empty or `0` turns it on
+for both, and the skill then passes the flag to both and reads nothing under
+the store by hand. It masks and never refuses, and it is off unless you turn it
+on. What it does not guarantee is listed in
+[USAGE.md](docs/USAGE.md#what-it-does-not-guarantee): it masks sixteen shapes
+and nothing else, decodes nothing, and covers only what those two commands
+print.

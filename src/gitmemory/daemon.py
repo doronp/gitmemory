@@ -495,7 +495,7 @@ def drain_spool(
     return wanted, tick
 
 
-def uncollected(home: str, now: float | None = None) -> tuple[int, float]:
+def uncollected(home: str) -> tuple[int, float]:
     """`(complete records in the spool, age of the oldest in seconds)`.
 
     `drain_spool`'s rule for what a record is: a dot-name is a hook still
@@ -504,7 +504,7 @@ def uncollected(home: str, now: float | None = None) -> tuple[int, float]:
     mtime (hook/README.md). Read-only and total, because `recall` asks:
     anything it cannot list is `(0, 0.0)`.
     """
-    now = time.time() if now is None else now
+    now = time.time()
     ages = []
     try:
         with os.scandir(os.path.join(home, SPOOL)) as entries:

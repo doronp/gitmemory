@@ -24,7 +24,8 @@ tell you.
   [docs/watching.md](docs/watching.md#configure-what-to-watch).
 - **`gitmemory service install`** writes a systemd user unit (Linux) or a
   LaunchAgent (macOS) that keeps `gitmemory watch` running, and prints the
-  commands that start it, check it, follow its log, restart it after an
+  commands that start it, keep it running after you log out (Linux:
+  `loginctl enable-linger`), check it, follow its log, restart it after an
   upgrade and remove it. It starts nothing itself, and it refuses, exiting 1,
   to overwrite a file that is already there. The file names the Python, the
   store and git's directory outright, because a user service inherits none of
@@ -74,28 +75,30 @@ tell you.
   index, so it needs no index and a stale one cannot change the answer.
   `--context N` (`-C N`) adds N turns either side; a turn cut by a segment
   boundary comes back whole; an offset inside a turn shows that turn; a
-  subagent's turn is headed `subagent:<role>`. An address that is not one exits
-  2, and one the store does not hold exits 1. The recall skill uses it in place
-  of reading `raw/` by hand. See
+  subagent's turn is headed `subagent:<role>`. An address that is not one, or
+  is masked, exits 2, and one the store does not hold exits 1. The recall
+  skill uses it in place of reading `raw/` by hand. See
   [USAGE.md](docs/USAGE.md#read-the-whole-turn).
-- **`recall --redact`** and **`show --redact`** mask the credential shapes
-  the push gate detects in what they print, the text and the address, as
+- **`recall --redact`** and **`show --redact`** mask the credential shapes the
+  push gate detects in what they print, the text and the address (except, in
+  a session id, a key the store's lowercasing hides from its detector), as
   `AKIA…[20 bytes]`; a private key is masked down to its END line, or to the
-  end of the text without one. `show` masks each block whole before it splits
-  it into lines, so a key's body goes with its header. Off by default.
+  end of the text without one. `show` masks each block whole before it splits it into
+  lines, so a key's body goes with its header. Off by default.
   `GITMEMORY_REDACT` makes it standing for both (unset, empty or `0` is off),
-  and the plugin's skill passes the flag to both whenever it is set and not
-  `0`, and then never reads a turn from `raw/`. It masks only those shapes,
-  and only in what the two commands print; see
+  and the plugin's skill passes the flag to both whenever it is set to
+  anything but empty or `0`, and then reads nothing under the store by hand.
+  It masks only those shapes, and only in what the two commands print; see
   [docs/USAGE.md](docs/USAGE.md#masking-credentials-in-what-it-prints) for
   what it does not cover.
-- **How much disk it takes.** Budget about twice what you capture: `raw/`
-  holds the bytes once, `.git/` a compressed copy, and `index/` the searchable
-  text again, which `gitmemory index` rebuilds (and, while it runs, needs room
-  for the old index and the new). Measured at 2.3x to 3.4x on synthetic
-  corpora; see [docs/watching.md](docs/watching.md#how-much-disk-it-takes).
-  ARCHITECTURE.md said the store holds each byte exactly once, and DESIGN.md
-  that it has zero duplication; both are true of `raw/` only.
+- **How much disk it takes.** Budget about twice what you capture, and more if
+  your transcripts compress poorly: `raw/` holds the bytes once, `.git/` a
+  compressed copy, and `index/` the searchable text again, which
+  `gitmemory index` rebuilds (and, while it runs, needs room for the old index
+  and the new). Measured at 2.3x to 3.4x on synthetic corpora; see
+  [docs/watching.md](docs/watching.md#how-much-disk-it-takes). ARCHITECTURE.md
+  said the store holds each byte exactly once, and DESIGN.md that it has zero
+  duplication; both are true of `raw/` only.
 
 ### Changed
 
@@ -115,6 +118,10 @@ tell you.
   parentheses; under 1000 bytes it is `+N B`. A script that parsed `+NB` out of
   either line needs the new form. `size=` stays an exact offset, and the commit
   subject keeps `+NB`. See [USAGE.md](docs/USAGE.md#set-it-up-once).
+- The watcher's warning for a root inside the store now reads
+  `root <r> is inside the store; skipped`. A root that contains the store
+  still says `contains the store itself`. `gitmemory init` prints the same
+  sentence as its reason when it refuses such a root.
 
 ### Fixed
 

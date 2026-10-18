@@ -148,6 +148,24 @@ def test_a_malformed_or_escaping_address_is_not_an_address(home, src, capsys, ad
     assert err.count("\n") == 1
 
 
+def test_a_masked_address_is_refused_as_masked_not_as_mistyped(home, src, capsys):
+    """`recall --redact` masks a credential-shaped session id in the address,
+    and a masked address is not one `show` can look up. The refusal said
+    `expected <agent>/<session>/gNN@<offset>, as recall prints it` about the
+    string recall had just printed, so it now says which it is. Still exit 2."""
+    ghp = "ghp_" + "a" * 36  # lowercase, because the store case-folds a session id
+    write(src, [user("u1", "walrus note")])
+    store.capture(src, "claude-code", ghp, home=home)
+    assert main(["--home", home, "index"]) == 0
+    capsys.readouterr()
+    assert main(["--home", home, "recall", "walrus", "--redact"]) == 0
+    address = capsys.readouterr().out.split()[2]
+    assert address == "claude-code/ghp_…[40bytes]/g00@0", address
+    code, out, err = show(home, capsys, address)
+    assert (code, out) == (2, "") and err.count("\n") == 1, err
+    assert err.startswith("a masked address: ") and "as recall prints it" not in err, err
+
+
 def test_an_address_the_store_does_not_hold_is_an_answer_exit_1(home, src, capsys):
     write(src, [user("u1", "aardvark")])
     store.capture(src, "claude-code", "sess", home=home)
@@ -292,3 +310,24 @@ def test_show_redact_joins_a_key_header_a_line_break_split(home, src, capsys):
         f"      ----…[{len(split)} bytes]",
         "    last words",
     ], out
+
+
+def test_show_redact_prints_a_turn_that_holds_a_lone_surrogate(home, src, capsys):
+    """Half an emoji is what `JSON.stringify` writes for a tool result cut
+    mid-pair, `\\ud83d`, and the parse keeps it as a lone surrogate. `show`
+    printed it as `?`. `show --redact` printed the headers and then stopped,
+    exit 2, because the mask encoded with `surrogateescape`, which round-trips
+    only U+DC80-U+DCFF. At the address and in a `-C` neighbour alike, and the
+    key beside it is still masked."""
+    result = {"type": "tool_result", "tool_use_id": "t", "content": f"build ok \ud83d {AKIA}"}
+    first, second = user("u1", "the first turn"), user("u2", "")
+    second["message"]["content"] = [result]
+    write(src, [first, second])
+    store.capture(src, "claude-code", "sess", home=home)
+    at = f"claude-code/sess/g00@{size(first)}"
+    code, out, err = show(home, capsys, at)
+    assert (code, err) == (0, "") and f"    build ok ? {AKIA}\n" in out, out
+    for argv in ([at], ["-C", "1", "claude-code/sess/g00@0"]):
+        code, out, err = show(home, capsys, *argv, "--redact")
+        assert (code, err) == (0, ""), (argv, err)
+        assert "    build ok " in out and out.endswith(" AKIA…[20 bytes]\n"), (argv, out)

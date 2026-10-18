@@ -475,21 +475,28 @@ which is the load and not the shim.
 conformance cases the three third-party corpora add.
 
 ```sh
-# the fresh-checkout count: point both corpus variables at nothing
+# the fresh-checkout count: point both corpus variables at nothing, and HOME
+# at a new directory
+HOME=$(mktemp -d)/isolated-home \
 GITMEMORY_CC_FIXTURES=$PWD/no-such-corpus GITMEMORY_PI_FIXTURES=$PWD/no-such-corpus \
     uv run pytest -q --collect-only -p no:cacheprovider | tail -1
 
 # with the corpora cloned by tests/fetch_fixtures.sh
-uv run pytest -q --collect-only -p no:cacheprovider | tail -1
+HOME=$(mktemp -d)/isolated-home uv run pytest -q --collect-only -p no:cacheprovider | tail -1
 uv run pytest -q --collect-only -p no:cacheprovider | grep -c '\.jsonl\]$'
 ```
 
-**Expected:** `1131/1132 tests collected (1 deselected)`, then
-`1456/1457 tests collected (1 deselected)`, then `328`. The deselected test is
+**Expected:** `1134/1135 tests collected (1 deselected)`, then
+`1459/1460 tests collected (1 deselected)`, then `328`. The deselected test is
 the LongMemEval corpus test, which is opt-in:
 `uv run pytest -q -m corpus` after `bench/fetch_longmemeval.sh`. The README's
-paragraph on why 1,131 + 328 is 1,456 and not 1,459 is the arithmetic of these
+paragraph on why 1,134 + 328 is 1,459 and not 1,462 is the arithmetic of these
 three numbers. All three were run while writing this guide.
+
+The `HOME` is the one the suite gives itself. The owner-data scan adds two
+cases named after your account, the last part of `$HOME`, and leaves them out
+when that name is shorter than four characters or a generic one such as
+`ubuntu`, `runner` or `root`. Without it, such an account collects two fewer.
 
 `tests/test_docs.py` holds the README to all three numbers, the second and
 third only where the corpora are cloned, and this guide, §5c's figure
@@ -506,7 +513,7 @@ test fail. The count is the number of rows in `tests/mutate_index.py`.
 uv run python -c "import sys; sys.path.insert(0, 'tests'); from mutate_index import MUTANTS; print(len(MUTANTS))"
 ```
 
-**Expected:** `658`. Checked while writing this guide.
+**Expected:** `662`. Checked while writing this guide.
 
 To run the controls rather than count them:
 

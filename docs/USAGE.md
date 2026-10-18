@@ -140,30 +140,33 @@ exits 1. `--redact` masks credentials in what it prints
 `recall` and `show` print what the transcript says, credentials included,
 because the store is yours and on your disk. When their output is going
 further, to an agent and with it to the agent's model provider, `--redact`
-masks every shape the push gate knows, in the text and in the address. That is
+masks every shape the push gate knows, in the text and in the address, with
+one exception for a session id ([below](#what-it-does-not-guarantee)). That is
 twelve issuer-prefixed keys and four SUSPECT patterns, listed in
-[`redact.py`](../src/gitmemory/redact.py):
+[`redact.py`](../src/gitmemory/redact.py). This sample is from a second
+transcript, a one-turn session of its own:
 
 ```console
 $ gitmemory recall --redact "staging key"
-  -0.000  2026-09-28T10:02Z  claude-code/0f3a9c2e-…-fc59494095426389/g00@0  user/text  Use AKIA…[20 bytes] for the staging key, never the prod one.
+  -0.000  2026-10-02T09:41Z  claude-code/7c41d2e9-…-61a9a184ea213ec3/g00@0  user/text  Use AKIA…[20 bytes] for the staging key, never the prod one.
 ```
 
 A masked span keeps its first four bytes and its length; in an address the
 marker drops its space, so the address stays one field of a `recall` line or
-a `show` header. A private key is masked from its BEGIN line to its END
-line, or to the end of the text when there is none. `show --redact` masks
-each block of the turn whole before it splits it into lines, so a key's body
-goes with its header, and it masks a tool's name too. It keeps the turn's line breaks, where
-`recall` flattens a line before it masks, so it also finds a header that a
-line break split, as the flattened line would have shown it. A masked address
-is not one `show` can look up.
+a `show` header. A private key is masked from its BEGIN line to its END line,
+or to the end of the text when there is none. Both commands mask the text as
+written, and also find a header that a line break split, as a flattened line
+would show it; `recall` then flattens its line and cuts it at 160 characters.
+`show --redact` masks each block of the turn whole before it splits it into
+lines, so a key's body goes with its header, and it masks a tool's name too.
+A masked address is not one `show` can look up: it refuses it, exit 2, and
+`recall` prints the full address when it is not masking.
 
 `GITMEMORY_REDACT=1` makes it standing for both: unset, empty or `0` is off,
 and any other value is on. There is no flag that turns a standing setting off;
 for one call, run `GITMEMORY_REDACT=0 gitmemory recall ...`.
 
-What it does not guarantee:
+### What it does not guarantee
 
 - It masks only those sixteen shapes. Anything else prints as written: a bare
   AWS secret key, `PGPASSWORD=…`, a custom `GH_TOKEN=…`, `glpat-` and `npm_`
@@ -178,6 +181,14 @@ What it does not guarantee:
   the dashboard, `derived/` and any file an agent opens are not masked by it.
   The environment setting is a floor, not a boundary: an agent with a shell can
   unset it, or read `raw/`.
+- A private key whose BEGIN line and body are in two blocks of one turn, such
+  as two tool results, is masked to the end of the first block only; `show`
+  prints the body under the second.
+- The store lowercases session ids, so an AWS key id, a Google API key or a
+  JWT used as a session id, by `capture --session-id` or as a transcript's
+  file name, prints in the address lowercased and unmasked: those detectors
+  match only the case the issuer writes. The manifest's `source_path` keeps
+  it as it was.
 - A mask shows the first four bytes and the length.
 - The SUSPECT patterns also mask some prose about configuration.
 
@@ -309,7 +320,7 @@ Code's own environment, in `~/.claude/settings.json`:
 
 The skill then passes `--redact` to every `recall` and `show` it runs, so a
 CLI too old to know the flag stops with an error instead of printing unmasked,
-and it does not read a turn from `raw/` by hand.
+and it reads nothing under the store by hand.
 
 ## Derive key ideas and decisions
 

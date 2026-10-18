@@ -19,19 +19,14 @@ you, with the root [agents.md](agents.md) gives for that agent. That is still
 not a default: the root is written because you named the agent, and the watcher
 reads only the file. `init` appends to an existing `config.toml` and never
 changes a byte already there, since the file also holds any `[remote.*]` push
-opt-in. It writes the result to a new file and renames it into place, so a
-running watcher reads the old file or the new one, and the new one is mode
-0600. It does nothing if the table is already there. It refuses, writing
-nothing and exiting 1, a root another agent already watches, a root the watcher
-would skip (listed below; `init` prints the watcher's own message), a file that
-is not valid TOML or already has a `watch` of another shape, and a
-`config.toml` that is a symlink or has another hard link, because the rename
-would leave the other name holding the old file. A `config.toml` it cannot read
-is an error, exit 2. Two `init`s run at the same moment cannot drop each
-other's table: the later one sees the file change after it read it, leaves it
-as the other one wrote it, and exits 1, so run it again. An editor saving the
-file in that same instant is not covered. A running watcher picks the new table
-up on its next pass.
+opt-in, and it does nothing if the table is already there. When it cannot add
+the table safely it writes nothing, prints why, and exits 1: a root another
+agent watches or the watcher would skip (listed below); a file that is not
+valid TOML, has a `watch` of another shape, is a symlink or has a second hard
+link; or one another `init` changed while it ran, which a second run settles.
+An editor saving the file at that moment is not covered. A `config.toml` it
+cannot read is an error, exit 2. A running watcher picks the new table up on
+its next pass.
 
 By hand, or for any other agent or root, `$GITMEMORY_HOME/config.toml`:
 
@@ -195,7 +190,7 @@ loginctl enable-linger                        # keep it running after you log ou
 systemctl --user status gitmemory.service     # check it
 journalctl --user -u gitmemory.service -f     # its log
 systemctl --user restart gitmemory.service    # after upgrading gitmemory
-systemctl --user disable --now gitmemory.service; rm ~/.config/systemd/user/gitmemory.service
+systemctl --user disable --now gitmemory.service; rm ~/.config/systemd/user/gitmemory.service; systemctl --user daemon-reload
 ```
 
 On macOS:
@@ -223,6 +218,8 @@ launchctl bootout gui/$(id -u)/io.github.doronp.gitmemory; rm ~/Library/LaunchAg
 - **Removing it stops it, then removes the file whether or not that worked.**
   A file written and never started has nothing to stop: `launchctl bootout`
   says `No such process` and exits 3, and the `rm` after the `;` runs anyway.
+  On Linux a `daemon-reload` after the `rm` has systemd drop the unit it had
+  loaded.
 
 ## Check it
 

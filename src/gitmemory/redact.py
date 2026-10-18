@@ -210,14 +210,18 @@ def mask(text: str, *, collapse: bool = False) -> str:
     are the text's. The first stays, because a spelling can sit inside a match
     (`password=abc\\x01defghijklmn`) that the blanked copy cuts short.
 
-    `collapse` is for a caller that prints the line breaks. `recall` flattens
-    each line before it masks, and `-----BEGIN RSA\\nPRIVATE KEY-----` is a
-    header only once flattened, so a caller that keeps the break asks for a
-    third scan, of the blanked copy with every whitespace run one space. Its END
+    `collapse` is for a caller that masks before it flattens, or never does.
+    `-----BEGIN RSA\\nPRIVATE KEY-----` is a header only once flattened, so such
+    a caller asks for a third scan, of the blanked copy with every whitespace
+    run one space. `recall` and `show` both do: flattening first with
+    `str.split()` broke on a no-break space, which is a token byte here. Its END
     line is still looked for as written, so one a break split is not found, and
     the mask runs to the end of the text.
     """
-    data = text.encode("utf-8", "surrogateescape")
+    # `surrogatepass`, as `records` hashes: `show` masks the parsed text, where
+    # a JSON `\ud83d` is a lone surrogate, and `surrogateescape` raised on any
+    # outside U+DC80-U+DCFF. The patterns are bytes; the result decodes lossily.
+    data = text.encode("utf-8", "surrogatepass")
     plain = _SPELLED.sub(lambda m: b" " * len(m[0]), data)
     found = scan_bytes(data) + (scan_bytes(plain) if plain != data else [])
     if collapse:
