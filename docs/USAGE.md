@@ -25,9 +25,16 @@ repository, and lets you search it. So:
 
 ## Set it up once
 
-1. Install and configure, as in the [README quickstart](../README.md#quickstart).
+1. Install, as in the [README quickstart](../README.md#quickstart), then name
+   what to watch:
+
+   ```sh
+   gitmemory init claude-code      # or: gitmemory init pi
+   ```
+
    Watch roots have no default; `config.toml` names each agent and where its
-   transcripts live. [agents.md](agents.md) lists what can be captured.
+   transcripts live, and `init` adds that table for you. [agents.md](agents.md)
+   lists what can be captured.
 2. Run the watcher and leave it running:
 
    ```sh

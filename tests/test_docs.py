@@ -735,3 +735,24 @@ def test_the_main_sessions_only_pattern_does_what_watching_md_says(tmp_path):
     with open(os.path.join(home, "config.toml"), "w", encoding="utf-8") as fh:
         fh.write(default + "\n" + block.group(1))
     assert len(daemon.discover(daemon.load_watches(home))) == 4
+
+
+def test_the_documented_watch_table_is_the_one_init_writes(tmp_path, capsys):
+    """The README and watching.md show the table and say `gitmemory init` writes
+    it. Two copies of one config in prose and one in `daemon.ROOTS` is how a doc
+    ends up telling people to hand-write a table the command no longer writes,
+    so the block under each section heading is looked for in what init wrote.
+    By section, because watching.md may hold other `toml` recipes init does
+    not write; split on `##` because a TOML comment is a `#` at column 0."""
+    from gitmemory.__main__ import main
+
+    home = str(tmp_path / "store")
+    assert main(["--home", home, "init", "claude-code"]) == 0
+    capsys.readouterr()
+    with open(os.path.join(home, "config.toml"), encoding="utf-8") as fh:
+        written = fh.read()
+    for rel, heading in [("README.md", "## Quickstart"), ("docs/watching.md", "## Configure")]:
+        section = _read(rel).split(f"\n{heading}", 1)[1].split("\n##", 1)[0]
+        block = re.search(r"^```toml\n(.*?)^```", section, re.M | re.S)
+        assert block, f"{rel} {heading} no longer shows the table"
+        assert block.group(1) in written, rel

@@ -505,7 +505,7 @@ test fail. The count is the number of rows in `tests/mutate_index.py`.
 uv run python -c "import sys; sys.path.insert(0, 'tests'); from mutate_index import MUTANTS; print(len(MUTANTS))"
 ```
 
-**Expected:** `609`. Checked while writing this guide.
+**Expected:** `617`. Checked while writing this guide.
 
 To run the controls rather than count them:
 

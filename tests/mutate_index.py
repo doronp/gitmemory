@@ -4597,7 +4597,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "09 mutants",
+        "a full pass is 6" + "17 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5525,6 +5525,71 @@ MUTANTS = [
         "        who = h.role",
         "test_recall_marks_a_subagent_turn",
     ),
+    # --- `gitmemory init <agent>`: the config is appended to, or left alone ---
+    (
+        # `config.toml` also holds `[remote.*] allow_push`, so a rewrite revokes
+        # a push opt-in nobody asked to revoke.
+        "init overwrites config.toml instead of appending to it",
+        "__main__.py",
+        "    new = old + sep + table.encode()",
+        "    new = table.encode()",
+        "test_cli_init_appends_and_keeps_every_byte_already_there",
+    ),
+    (
+        "init follows a symlinked config.toml and replaces the link with a file",
+        "__main__.py",
+        "        st = os.lstat(path)",
+        "        st = os.stat(path)",
+        "test_cli_init_does_not_replace_a_symlinked_config",
+    ),
+    (
+        # The rename gives the name a new inode; the dotfile keeps the old bytes.
+        "init replaces a hard-linked config.toml and splits it from the other name",
+        "__main__.py",
+        "        if st.st_nlink > 1:",
+        "        if False:",
+        "test_cli_init_does_not_split_a_hard_linked_config",
+    ),
+    (
+        # Unreadable taken for absent: the file is replaced by the table alone.
+        "init takes a config.toml it cannot read for a missing one",
+        "__main__.py",
+        '    except FileNotFoundError:\n        old = b""',
+        '    except OSError:\n        old = b""',
+        "test_cli_init_says_error_and_exits_2_when_it_could_not_look",
+    ),
+    (
+        # init prints this as its reason; the store contains the root, not
+        # the other way round.
+        "a root inside the store is said to contain the store",
+        "daemon.py",
+        '                    how = "is inside the store"',
+        '                    how = "contains the store itself"',
+        "test_cli_init_refuses_a_table_the_watcher_would_skip_and_writes_nothing",
+    ),
+    (
+        # The table is written, and then skipped by the watcher on every pass.
+        "init writes a table the watcher would skip",
+        "__main__.py",
+        "    if not any(\n        w.agent == args.agent and real in w.roots\n",
+        "    if False and not any(\n        w.agent == args.agent and real in w.roots\n",
+        "test_cli_init_refuses_a_table_the_watcher_would_skip_and_writes_nothing",
+    ),
+    (
+        # `discover` gives a root to the first watch naming it: dead on arrival.
+        "init adds a second watch on a root another agent already watches",
+        "__main__.py",
+        '            return _refuse(f"{path} already watches {root} as {w.agent!r}")',
+        "            continue",
+        "test_cli_init_refuses_a_root_another_agent_already_watches",
+    ),
+    (
+        "a killed init's temp copy of config.toml is committed",
+        "gitrepo.py",
+        "/config.toml.tmp.*\n",
+        "",
+        "test_cli_init_leaves_no_temp_the_watcher_would_commit",
+    ),
 ]
 
 
@@ -5677,7 +5742,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 609 mutants × two suite runs —
+    The filter exists because a full pass is 617 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 

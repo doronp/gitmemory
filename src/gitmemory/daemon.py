@@ -16,7 +16,8 @@ Three rules that are easy to get wrong and are therefore stated here:
   `config.toml` names. A product whose first run scans `~/.claude/projects`
   ingests its owner's entire history on install, which is the one thing this
   project promises not to do. The adapter documents the conventional path; the
-  config has to name it.
+  config has to name it. `gitmemory init <agent>` writes it there when asked
+  by name, and nothing reads `ROOTS` as a default.
 - **A spool record is a doorbell, not data.** It says something happened to a
   transcript. Everything else — how many bytes, where the boundary is, whether
   the file was rewritten — is re-derived from the source file. A record naming a
@@ -117,6 +118,14 @@ class Tick:
     adopted: list[str] = field(default_factory=list)
 
 
+# Where each shipped adapter's agent writes its transcripts, as docs/agents.md
+# lists them. Not a default: `load_watches` never reads this. Only `gitmemory
+# init <agent>` does, and it writes the table into `config.toml` because the
+# user named the agent, so the config still names every root that is watched.
+# Here and not on the adapters, whose contract is two symbols and nothing else.
+ROOTS = {"claude-code": "~/.claude/projects", "pi": "~/.pi/agent/sessions"}
+
+
 def load_watches(home: str, log=None) -> list[Watch]:
     """`[[watch]]` tables from `config.toml`. No config means watch nothing.
 
@@ -168,6 +177,14 @@ def load_watches(home: str, log=None) -> list[Watch]:
         # this and the specific message is the better one. [E4, review: daemon 3]
         say(f"{path} is not readable as text ({exc.__class__.__name__}); watching nothing")
         return []
+    return watches_from(cfg, path, home, say)
+
+
+def watches_from(cfg: dict, path: str, home: str, say) -> list[Watch]:
+    """The `[[watch]]` tables of a config already parsed, with every refusal
+    `load_watches` applies. Split out so `gitmemory init` asks the watcher's own
+    question of the table it is about to write, rather than keep a second copy
+    of these rules that drifts from the first."""
     out = []
     for n, entry in enumerate(cfg.get("watch") or []):
         where = f"{path} [[watch]] #{n + 1}"
@@ -254,7 +271,13 @@ def load_watches(home: str, log=None) -> list[Watch]:
                 # `~/.gitmemory` is safe only because `_hits` skips dotted
                 # components, which is why that skip is preserved rather than
                 # inherited. [E4, review: CLI 3]
-                say(f"{where}: root {r} contains the store itself; skipped")
+                #
+                # Two directions, two sentences: `gitmemory init` prints this as
+                # its reason, and a root under the store does not contain it.
+                how = "contains the store itself"
+                if not _inside(resolved, home):
+                    how = "is inside the store"
+                say(f"{where}: root {r} {how}; skipped")
                 continue
             kept.append(resolved)
         if kept:

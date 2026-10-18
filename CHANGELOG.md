@@ -10,6 +10,15 @@ tell you.
 
 ### Added
 
+- **`gitmemory init claude-code`** (or `pi`) adds that agent's standard
+  `[[watch]]` table to `config.toml`, so setup no longer means writing TOML by
+  hand. Watch roots still have no default: the root is written only because you
+  named the agent. It appends without changing a byte already there, because
+  the file also holds the `[remote.*]` push opt-ins. It does nothing if the
+  table is already there, and it refuses, writing nothing and exiting 1, a root
+  the watcher would skip or another agent already watches, and a `config.toml`
+  that is a symlink or a hard link. See
+  [docs/watching.md](docs/watching.md#configure-what-to-watch).
 - **`recall --policy`** decides which of two disagreeing hits comes first:
   `latest-user` (the user's own words newest first, then the rest), `latest`
   (newest first, whoever said it), `relevance` (best match first), or your own

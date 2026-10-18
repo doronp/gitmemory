@@ -111,10 +111,9 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
   or it reports `0 generation(s)`: nothing has been captured there. Tell the
   user how it gets set up, and stop. Do none of it yourself:
   1. `uv tool install --python 3.13 git+https://github.com/doronp/gitmemory`
-  2. a `[[watch]]` table in `config.toml` in the store (`$GITMEMORY_HOME`, by
-     default `~/.gitmemory`) naming the agent and where its transcripts live;
-     for Claude Code, `agent = "claude-code"` and
-     `roots = ["~/.claude/projects"]`
+  2. `gitmemory init claude-code`, which adds the `[[watch]]` table for
+     `~/.claude/projects` to `config.toml` in the store (`$GITMEMORY_HOME`, by
+     default `~/.gitmemory`)
   3. `gitmemory watch`, left running.
 
   The [Quickstart](https://github.com/doronp/gitmemory#quickstart) has the
@@ -149,6 +148,7 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
 Run `gitmemory --version`, `gitmemory recall` and `gitmemory index`, and read
 files under `<store>`.
 `index` writes only the derived index under `<store>/index/`. Do not run
-`gitmemory capture`, `gitmemory watch`, `gitmemory derive`, `gitmemory push`
-or `gitmemory dashboard`, and never `gitmemory dashboard --expose`. Do not
-edit `config.toml` or anything else in the store.
+`gitmemory init`, `gitmemory capture`, `gitmemory watch`, `gitmemory derive`,
+`gitmemory push` or `gitmemory dashboard`, and never
+`gitmemory dashboard --expose`. Do not edit `config.toml` or anything else in
+the store.

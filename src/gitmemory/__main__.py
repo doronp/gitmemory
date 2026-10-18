@@ -16,7 +16,9 @@ import ipaddress
 import os
 import socket
 import sqlite3
+import stat
 import sys
+import tomllib
 
 from . import __version__, daemon, dashboard, derive, gitrepo, index, redact, store
 from .records import safe_text
@@ -49,6 +51,82 @@ def _safe_exc(exc: BaseException) -> str:
     the third case, and it is the one that leaks by accident.
     """
     return redact.safe_path(str(exc))
+
+
+def _refuse(why: str) -> int:
+    print(f"refusing: {why}", file=sys.stderr)
+    return 1
+
+
+def _init(args) -> int:
+    """Add the standard `[[watch]]` table for one agent to `config.toml`.
+
+    Watch roots still have no default: this writes one only because the user
+    named the agent. It appends and never changes a byte already there, because
+    the same file holds the `[remote.*]` push opt-ins; it does nothing when the
+    table is already there; and it refuses, writing nothing, a table the watcher
+    would skip.
+    """
+    home = store.resolve_home(args.home)
+    path = os.path.join(home, "config.toml")
+    root = daemon.ROOTS[args.agent]
+    real = os.path.realpath(os.path.expanduser(root))
+    try:
+        # `lstat`: `os.replace` over a symlink swaps the link for a file, so the
+        # user's dotfile would silently stop being the config. And a FIFO hangs.
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode):
+            return _refuse(f"{path} is not a regular file; add the table by hand")
+        # A hard link is the same trap without the `l`: the rename gives the
+        # name a new inode, and the other name keeps the old bytes.
+        if st.st_nlink > 1:
+            return _refuse(f"{path} has another hard link; add the table by hand")
+        with open(path, "rb") as fh:
+            old = fh.read()
+    except FileNotFoundError:
+        old = b""
+    try:
+        before = tomllib.loads(old.decode("utf-8"))
+    except ValueError as exc:  # `TOMLDecodeError`, and `UnicodeDecodeError` on a bad byte
+        return _refuse(f"{path} is not valid TOML ({exc}); fix it first")
+    have = before.get("watch", [])
+    table = (
+        f"# added by `gitmemory init {args.agent}`\n"
+        f'[[watch]]\nagent = "{args.agent}"\nroots = ["{root}"]\n'
+    )
+    sep = b"" if not old else b"\n" if old.endswith(b"\n") else b"\n\n"
+    new = old + sep + table.encode()
+    # Re-parsed whole, because appending is not always joining: after a plain
+    # `[watch]` or an inline `watch = [...]` the result does not parse at all.
+    try:
+        after = tomllib.loads(new.decode("utf-8"))
+    except ValueError:
+        after = {}
+    if not isinstance(have, list) or len(after.get("watch") or []) != len(have) + 1:
+        return _refuse(f"{path} has a `watch` a [[watch]] table cannot join; add it by hand")
+    for w in daemon.watches_from(before, path, home, lambda _m: None):
+        if real in w.roots:
+            if w.agent == args.agent:
+                print(f"{path} already watches {root} for {args.agent}; nothing to do")
+                return 0
+            # `discover` gives each file under a shared root to the first watch
+            # in the file, so a table appended after it gets nothing it takes.
+            return _refuse(f"{path} already watches {root} as {w.agent!r}")
+    # The watcher's own rules and its own sentence, so the two cannot disagree
+    # about why: a table it would skip on every pass is not written at all.
+    notes: list[str] = []
+    if not any(
+        w.agent == args.agent and real in w.roots
+        for w in daemon.watches_from(after, path, home, notes.append)
+    ):
+        mine = f"{path} [[watch]] #{len(have) + 1}:"
+        return _refuse("; ".join(n for n in notes if n.startswith(mine)))
+    store._write_atomic(path, new)  # 0600, and a running watcher reads old or new
+    print(f"{'added to' if old else 'wrote'} {path}: watch {root} for {args.agent}")
+    if not os.path.isdir(real):
+        print(f"note: {root} does not exist yet; it is watched once it does", file=sys.stderr)
+    print("next: run `gitmemory watch`; a watcher already running reads this on its next pass")
+    return 0
 
 
 def _capture(args) -> int:
@@ -355,6 +433,10 @@ def main(argv: list[str] | None = None) -> int:
         "--home", default=None, help="store root (default $GITMEMORY_HOME or ~/.gitmemory)"
     )
     sub = ap.add_subparsers(dest="cmd", required=True)
+
+    ini = sub.add_parser("init", help="add an agent's standard [[watch]] table to config.toml")
+    ini.add_argument("agent", choices=sorted(daemon.ROOTS), help="whose transcript root to watch")
+    ini.set_defaults(fn=_init)
 
     cap = sub.add_parser("capture", help="copy out bytes appended since the last capture")
     cap.add_argument("source")

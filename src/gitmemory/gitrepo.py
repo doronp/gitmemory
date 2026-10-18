@@ -79,6 +79,10 @@ derived/*/*/*/.deriving-*
 # about to push to that same remote. `push_allowed` now refuses an inline
 # credential outright; this line is the belt to that brace, and it also keeps a
 # store's remote list out of a repository other people can read. [E7]
+#
+# And its temp. `gitmemory init` publishes the file by rename, so an init killed
+# between the write and the `os.replace` leaves a whole copy of it beside it.
+/config.toml.tmp.*
 /config.toml
 """
 

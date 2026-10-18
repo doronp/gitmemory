@@ -14,7 +14,22 @@ Watch roots have no default, deliberately. A memory tool whose first run scans
 your home directory is a tool you have to audit before you can trust it, so
 gitmemory watches exactly what you name and nothing else.
 
-`$GITMEMORY_HOME/config.toml`:
+`gitmemory init claude-code` (or `gitmemory init pi`) writes the table for
+you, with the root [agents.md](agents.md) gives for that agent. That is still
+not a default: the root is written because you named the agent, and the watcher
+reads only the file. `init` appends to an existing `config.toml` and never
+changes a byte already there, since the file also holds any `[remote.*]` push
+opt-in. It writes the result to a new file and renames it into place, so a
+running watcher reads the old file or the new one, and the new one is mode
+0600. It does nothing if the table is already there. It refuses, writing
+nothing and exiting 1, a root another agent already watches, a root the watcher
+would skip (listed below; `init` prints the watcher's own message), a file that
+is not valid TOML or already has a `watch` of another shape, and a
+`config.toml` that is a symlink or has another hard link, because the rename
+would leave the other name holding the old file. A `config.toml` it cannot read
+is an error, exit 2. A running watcher picks the new table up on its next pass.
+
+By hand, or for any other agent or root, `$GITMEMORY_HOME/config.toml`:
 
 ```toml
 [[watch]]
@@ -151,8 +166,8 @@ anywhere useful. The two failures worth watching for are different shapes:
 
 | Symptom | Likely cause |
 |---|---|
-| `no .../config.toml; watching nothing` | The file is not where the watcher is looking. Check `$GITMEMORY_HOME`. |
-| Watcher quiet, store empty, no complaint | A root that **does not exist** is kept, not refused — before an agent has run for the first time that is the normal state, and `run` re-reads the config every pass, so it starts working the moment the directory appears. The cost is that a typo'd root and a not-yet-used one look identical. Check the path by hand. |
+| `no .../config.toml; watching nothing` | The file is not where the watcher is looking. Check `$GITMEMORY_HOME`, or run `gitmemory init <agent>` to write it there. |
+| Watcher quiet, store empty, no complaint | A root that **does not exist** is kept, not refused — before an agent has run for the first time that is the normal state, and `run` re-reads the config every pass, so it starts working the moment the directory appears. The cost is that a typo'd root and a not-yet-used one look identical. Check the path by hand; `gitmemory init` says so when the root it writes does not exist yet. |
 | `compact_boundaries: []` everywhere | Adapter missing or `--no-parse`. The bytes are intact; only the boundaries are absent. |
 | `source changed while parsing` | The transcript was rewritten between the parse and the copy — a compaction landing mid-pass. The bytes are captured; that one generation has no boundaries. Nothing to do. |
 | `was captured from <path>, not <path>; pass a distinct --session-id` | Two transcripts collided on one session name, and the store refuses to mix them rather than duplicating both for ever. The advice in the message is for the CLI and there is no `--session-id` to pass here: rename or move either file — the name is derived from the path — and the next pass captures both. Until then the second one is **not being captured**, so this is not a warning to leave running. |

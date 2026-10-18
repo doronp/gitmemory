@@ -92,7 +92,7 @@ $GITMEMORY_HOME/                      # default ~/.gitmemory; a git repository
   index/                                   # gitignored: SQLite is not diffable
   spool/                                   # gitignored: one file per hook fire
   .locks/                                  # gitignored: one per session
-  config.toml                              # watch roots; there is no default
+  config.toml                              # watch roots; no default (`init` writes one)
 ```
 
 A capture commits **only the bytes appended since the last recorded offset**,
