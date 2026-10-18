@@ -32,6 +32,9 @@ Two properties, and they are the whole product:
   **No data from this machine is ingested, copied, or committed. Ever.**
 - Test corpora are synthetic or public-benchmark-derived.
 - Userspace only: no `crontab`, no `sudo`, no Docker. LaunchAgent is the keep-alive.
+  **[2026-10-18 — and on Linux a systemd user unit. `gitmemory service install` writes either
+  one, as the user, and starts neither: enabling it is the user's step, as installing the hook
+  is.]**
 - Local-first. No network by default. No remote configured by default.
 - Apache-2.0.
 

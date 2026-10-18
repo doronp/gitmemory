@@ -119,6 +119,7 @@ agent after compaction, derived key ideas, the dashboard — is in
 |---|---|
 | `gitmemory init <agent>` | Adds the standard watch table for `claude-code` or `pi` to `config.toml`; does nothing if it is already there |
 | `gitmemory watch` | Tails the configured roots, captures what grew, and commits |
+| `gitmemory service install` | Writes a systemd user unit (Linux) or a LaunchAgent (macOS) that keeps `watch` running, and prints the line that starts it; it starts nothing itself ([docs/watching.md](docs/watching.md#keep-it-running)) |
 | `gitmemory capture <file>` | Copies out one transcript's new bytes, by hand |
 | `gitmemory verify` | Checks every manifest's contiguity proof |
 | `gitmemory index` | Rebuilds the SQLite FTS5 index from the store |
@@ -208,13 +209,13 @@ real text, and that is a measurement rather than a suspicion.
 | What | How it was measured | Result |
 |---|---|---|
 | Hook cost in the agent's critical path | Timed against spawning `true` the same way, three runs of 400 | p50 **7.4 – 7.5 ms**, p99 **10.2 – 11.5 ms** |
-| The suite | On a fresh checkout, no downloads | **1,063 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
-| Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **617** negative controls |
+| The suite | On a fresh checkout, no downloads | **1,084 tests**, and **328 conformance cases** against three third-party corpora, one gated on the LongMemEval download and one on `pip install -e '.[serve]'` |
+| Whether the tests hold anything | Every fix mutated to remove its behaviour; the named test must fail | **623** negative controls |
 
 The two suite counts do not add up, and should not. Switching the corpora on
-collects 1388, not 1391. Three conformance cases fill parametrisations that
+collects 1409, not 1412. Three conformance cases fill parametrisations that
 collect as one empty placeholder each while the corpora are absent, so they
-replace three of the 1063 rather than joining them. Every figure on this board
+replace three of the 1084 rather than joining them. Every figure on this board
 is pinned by a test, which is how it stays true.
 
 **What is not measured**, and is shown as a row on the dashboard rather than

@@ -148,10 +148,77 @@ Each pass prints what it did, or nothing when nothing happened. Errors are
 repeated only when they change or once an interval, so a permanently broken
 root does not drown the log it belongs in.
 
-Ctrl-C exits 130. There is no daemonisation, no pidfile, and no installer:
-`gitmemory watch` is a foreground process, and how you keep it alive — a user
-LaunchAgent, a systemd user unit, a terminal you leave open — is yours to
-choose. Nothing here needs root.
+Ctrl-C exits 130. There is no daemonisation and no pidfile: `gitmemory watch`
+is a foreground process, and how you keep it alive — a terminal you leave open,
+or a user service, which `gitmemory service install` writes for you
+([below](#keep-it-running)) — is yours to choose. Nothing here needs root.
+
+## Keep it running
+
+`gitmemory service install` writes one file for your user's service manager,
+and starts nothing:
+
+| Platform | File | Manager |
+|---|---|---|
+| Linux | `$XDG_CONFIG_HOME/systemd/user/gitmemory.service`, or under `~/.config` when that is unset or not an absolute path | systemd, as your user |
+| macOS | `~/Library/LaunchAgents/io.github.doronp.gitmemory.plist` | launchd, in your login session |
+
+It prints the file it wrote, the command line in it, and the commands below,
+and runs none of them: no `systemctl`, no `launchctl`, no `loginctl`. Starting
+it is yours to do, as installing the hook is. If the file is already there it
+refuses, exit 1, and leaves it alone; the refusal ends with the line that
+removes it, so paste that and install again. Any other platform exits 2, and so
+does a store path with a line break in it.
+
+A service starts with none of your shell's state, so the file carries it:
+
+- **This Python, as it is,** with `-P -m gitmemory`. `-P` because a systemd
+  user unit starts in `$HOME`, and `python -m` would run a `~/gitmemory.py` in
+  place of the package. Not the interpreter's real path either, which is
+  outside the virtual environment and cannot import gitmemory.
+- **The store, as `--home <store>`.** A service does not read your shell's rc
+  files, so an exported `$GITMEMORY_HOME` never reaches it, and the watcher
+  would read `~/.gitmemory` while the hook writes somewhere else. If you move
+  the store, remove the file and install again.
+- **`PATH`**: the directory `git` was found in, then `/usr/bin:/bin`. No git on
+  your `PATH` exits 2 and writes nothing.
+
+On Linux:
+
+```sh
+systemctl --user daemon-reload && systemctl --user enable --now gitmemory.service   # start, now and at every login
+loginctl enable-linger                        # keep it running after you log out
+systemctl --user status gitmemory.service     # check it
+journalctl --user -u gitmemory.service -f     # its log
+systemctl --user restart gitmemory.service    # after upgrading gitmemory
+systemctl --user disable --now gitmemory.service; rm ~/.config/systemd/user/gitmemory.service
+```
+
+On macOS:
+
+```sh
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/io.github.doronp.gitmemory.plist   # start, now and at every login
+launchctl print gui/$(id -u)/io.github.doronp.gitmemory          # check it
+tail -f ~/Library/Logs/gitmemory.log                             # its log
+launchctl kickstart -k gui/$(id -u)/io.github.doronp.gitmemory   # after upgrading gitmemory
+launchctl bootout gui/$(id -u)/io.github.doronp.gitmemory; rm ~/Library/LaunchAgents/io.github.doronp.gitmemory.plist
+```
+
+- **Linger** matters on a machine you reach only over SSH: without it, systemd
+  stops your user services when your last session ends. `loginctl
+  enable-linger` with no user name is for yourself, which stock systemd's
+  polkit policy allows without a password; a distribution can change that.
+- **It is restarted after a failure, 30 seconds later** (`Restart=on-failure`;
+  `KeepAlive` on an unsuccessful exit). A watcher that cannot start — a store
+  inside a git work tree, say — logs one line every 30 seconds until fixed.
+- **Editing `config.toml` needs no restart;** the watcher re-reads it every
+  pass. Upgrading gitmemory does, because the running process keeps the old
+  code.
+- **The macOS log is outside the store,** which commits everything in it.
+  Nothing rotates it. On Linux the log is the journal.
+- **Removing it stops it, then removes the file whether or not that worked.**
+  A file written and never started has nothing to stop: `launchctl bootout`
+  says `No such process` and exits 3, and the `rm` after the `;` runs anyway.
 
 ## Check it
 

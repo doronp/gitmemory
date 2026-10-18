@@ -19,6 +19,14 @@ tell you.
   the watcher would skip or another agent already watches, and a `config.toml`
   that is a symlink or a hard link. See
   [docs/watching.md](docs/watching.md#configure-what-to-watch).
+- **`gitmemory service install`** writes a systemd user unit (Linux) or a
+  LaunchAgent (macOS) that keeps `gitmemory watch` running, and prints the
+  commands that start it, check it, follow its log, restart it after an
+  upgrade and remove it. It starts nothing itself, and it refuses, exiting 1,
+  to overwrite a file that is already there. The file names the Python, the
+  store and git's directory outright, because a user service inherits none of
+  the shell's. See
+  [docs/watching.md](docs/watching.md#keep-it-running).
 - **`recall --policy`** decides which of two disagreeing hits comes first:
   `latest-user` (the user's own words newest first, then the rest), `latest`
   (newest first, whoever said it), `relevance` (best match first), or your own

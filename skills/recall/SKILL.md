@@ -114,7 +114,9 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
   2. `gitmemory init claude-code`, which adds the `[[watch]]` table for
      `~/.claude/projects` to `config.toml` in the store (`$GITMEMORY_HOME`, by
      default `~/.gitmemory`)
-  3. `gitmemory watch`, left running.
+  3. `gitmemory service install`, which writes a user service that keeps
+     `gitmemory watch` running and prints the line that starts it; or
+     `gitmemory watch` in a terminal left open.
 
   The [Quickstart](https://github.com/doronp/gitmemory#quickstart) has the
   rest.
@@ -146,9 +148,8 @@ If they crowd out the rest, search again with `-k 30`. Quote the original turn.
 ## Read-only
 
 Run `gitmemory --version`, `gitmemory recall` and `gitmemory index`, and read
-files under `<store>`.
-`index` writes only the derived index under `<store>/index/`. Do not run
-`gitmemory init`, `gitmemory capture`, `gitmemory watch`, `gitmemory derive`,
-`gitmemory push` or `gitmemory dashboard`, and never
-`gitmemory dashboard --expose`. Do not edit `config.toml` or anything else in
-the store.
+files under `<store>`. `index` writes only the derived index under
+`<store>/index/`. Do not run `gitmemory init`, `gitmemory capture`,
+`gitmemory watch`, `gitmemory service`, `gitmemory derive`, `gitmemory push`
+or `gitmemory dashboard`, and never `gitmemory dashboard --expose`. Do not
+edit `config.toml` or anything else in the store.

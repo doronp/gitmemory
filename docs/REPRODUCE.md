@@ -484,11 +484,11 @@ uv run pytest -q --collect-only -p no:cacheprovider | tail -1
 uv run pytest -q --collect-only -p no:cacheprovider | grep -c '\.jsonl\]$'
 ```
 
-**Expected:** `1043/1044 tests collected (1 deselected)`, then
-`1368/1369 tests collected (1 deselected)`, then `328`. The deselected test is
+**Expected:** `1084/1085 tests collected (1 deselected)`, then
+`1409/1410 tests collected (1 deselected)`, then `328`. The deselected test is
 the LongMemEval corpus test, which is opt-in:
 `uv run pytest -q -m corpus` after `bench/fetch_longmemeval.sh`. The README's
-paragraph on why 1,043 + 328 is 1,368 and not 1,371 is the arithmetic of these
+paragraph on why 1,084 + 328 is 1,409 and not 1,412 is the arithmetic of these
 three numbers. All three were run while writing this guide.
 
 `tests/test_docs.py` holds the README to the first and third numbers, so a
@@ -505,7 +505,7 @@ test fail. The count is the number of rows in `tests/mutate_index.py`.
 uv run python -c "import sys; sys.path.insert(0, 'tests'); from mutate_index import MUTANTS; print(len(MUTANTS))"
 ```
 
-**Expected:** `617`. Checked while writing this guide.
+**Expected:** `623`. Checked while writing this guide.
 
 To run the controls rather than count them:
 

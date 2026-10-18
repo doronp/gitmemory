@@ -41,9 +41,12 @@ repository, and lets you search it. So:
    gitmemory watch
    ```
 
-   How it stays running (a LaunchAgent, a systemd user unit, a terminal you
-   leave open) is your choice; [watching.md](watching.md#run-it) covers the
-   flags and how to tell a misconfigured watcher from an idle one.
+   How it stays running is your choice. `gitmemory service install` writes a
+   systemd user unit (Linux) or a LaunchAgent (macOS) that keeps it running
+   across logins, and prints the line that starts it; it starts nothing itself
+   ([watching.md](watching.md#keep-it-running)). A terminal you leave open
+   works too. [watching.md](watching.md#run-it) covers the flags and how to
+   tell a misconfigured watcher from an idle one.
 3. Optional: install the [hook shim](../hook/README.md) so a capture happens at
    the compaction boundary itself rather than at the next sweep. The watcher
    alone is enough for correctness.

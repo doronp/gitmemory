@@ -14,13 +14,14 @@ import argparse
 import builtins
 import ipaddress
 import os
+import shlex
 import socket
 import sqlite3
 import stat
 import sys
 import tomllib
 
-from . import __version__, daemon, dashboard, derive, gitrepo, index, redact, store
+from . import __version__, daemon, dashboard, derive, gitrepo, index, redact, service, store
 from .records import safe_text
 
 
@@ -218,6 +219,20 @@ def _watch(args) -> int:
         parse=not args.no_parse,
         log=lambda m: print(m, file=sys.stderr),
     )
+
+
+def _service(args) -> int:
+    home = store.resolve_home(args.home)
+    target, body, steps = service.render(sys.platform, home)
+    if not service.write(target, body):
+        # One line, with the way out last on it so it pastes whole: the
+        # removal step, which does not wait on stopping a job never started.
+        way_out = steps[-1][1]
+        return _refuse(f"{target} exists; to replace it, run this and install again: {way_out}")
+    print(f"wrote {target}\nit runs: {shlex.join(service.argv(home))}")
+    for what, command in steps:
+        print(f"{what}:\n  {command}")
+    return 0
 
 
 def _not_a_store(home: str | None) -> int | None:
@@ -461,6 +476,13 @@ def main(argv: list[str] | None = None) -> int:
     wat.add_argument("--once", action="store_true", help="one pass, then exit")
     wat.add_argument("--no-parse", action="store_true", help="skip adapter; record bytes only")
     wat.set_defaults(fn=_watch)
+
+    svc = sub.add_parser("service", help="keep `watch` running under your user service manager")
+    act = svc.add_subparsers(dest="action", required=True)
+    act.add_parser(
+        "install",
+        help="write a systemd user unit (Linux) or a LaunchAgent (macOS); starts nothing",
+    ).set_defaults(fn=_service)
 
     ver = sub.add_parser("verify", help="check every manifest's contiguity proof")
     ver.set_defaults(fn=_verify)

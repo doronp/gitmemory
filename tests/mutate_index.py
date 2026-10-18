@@ -4597,7 +4597,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "17 mutants",
+        "a full pass is 6" + "23 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5590,6 +5590,51 @@ MUTANTS = [
         "",
         "test_cli_init_leaves_no_temp_the_watcher_would_commit",
     ),
+    # --- `gitmemory service install`: the file a user service manager runs ---
+    (
+        "service install overwrites a unit file that is already there",
+        "service.py",
+        "os.O_WRONLY | os.O_CREAT | os.O_EXCL",
+        "os.O_WRONLY | os.O_CREAT | os.O_TRUNC",
+        "test_service_install_refuses_to_overwrite_an_existing_file",
+    ),
+    (
+        "the service runs python -m without -P, so a gitmemory.py in $HOME shadows it",
+        "service.py",
+        'sys.executable, "-P", "-m", "gitmemory"',
+        'sys.executable, "-m", "gitmemory"',
+        "test_the_installed_service_runs_the_watcher_from_its_own_working_directory",
+    ),
+    (
+        "the service resolves sys.executable to an interpreter outside the venv",
+        "service.py",
+        "return [sys.executable, ",
+        "return [os.path.realpath(sys.executable), ",
+        "test_the_installed_service_runs_the_watcher_from_its_own_working_directory",
+    ),
+    (
+        # The quoting test's decoder used to turn `%%` into `%`, which let an
+        # undoubled `%h` through as itself: this mutant survived. [review]
+        "the unit leaves % undoubled, so a store path spelling %h names the home directory",
+        "service.py",
+        '.replace("%", "%%")',
+        '.replace("%", "%")',
+        "test_a_unit_survives_a_home_with_quotes_percent_and_dollar_in_it",
+    ),
+    (
+        "ExecStart leaves $ undoubled, so a store path spelling $HOME is expanded",
+        "service.py",
+        "_word(w.replace('$', '$$'))",
+        "_word(w)",
+        "test_a_unit_survives_a_home_with_quotes_percent_and_dollar_in_it",
+    ),
+    (
+        "the printed removal waits on bootout, so a plist never bootstrapped is never removed",
+        "service.py",
+        'f"launchctl bootout {job}; rm {shlex.quote(target)}"',
+        'f"launchctl bootout {job} && rm {shlex.quote(target)}"',
+        "test_the_printed_removal_works_when_the_job_was_never_started",
+    ),
 ]
 
 
@@ -5742,7 +5787,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 617 mutants × two suite runs —
+    The filter exists because a full pass is 623 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for the other 567 or trusting the new one untested.
 
