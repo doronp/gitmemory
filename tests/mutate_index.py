@@ -2803,12 +2803,8 @@ MUTANTS = [
         # of two turns while `dash_contiguity` shows a different shape.
         "how a store was segmented leaves no trace in the digest",
         "index.py",
-        "            chunk.append(\n"
-        "                _generation_row(db, stored, turns=len(session.turns), "
-        "blocks=len(rows), reason=None)\n"
-        "            )",
-        "            _generation_row(db, stored, turns=len(session.turns), "
-        "blocks=len(rows), reason=None)",
+        "            chunk.append(\n                _generation_row(\n",
+        "            (\n                _generation_row(\n",
         "test_the_same_bytes_captured_in_two_passes_are_not_the_same_index",
     ),
     (
@@ -4796,7 +4792,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "62 mutants",
+        "a full pass is 6" + "75 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5760,7 +5756,7 @@ MUTANTS = [
     (
         "latest-user takes a subagent's dispatch prompt for the user's word",
         "index.py",
-        "            and not h.is_sidechain\n",
+        "        and not h.is_sidechain\n",
         "",
         "test_a_subagent_prompt_is_not_the_users_word",
     ),
@@ -5773,6 +5769,98 @@ MUTANTS = [
         "               ), 0) AS is_sidechain",
         "               0 AS is_sidechain",
         "test_a_sidechain_line_inside_a_main_file_is_marked",
+    ),
+    # --- schema 3: where each turn was written, and lines no person typed ---
+    (
+        "a turn's own cwd is never recorded, so a cd mid-session moves nothing",
+        "index.py",
+        '        "cwd": _bounded_cwd(turn.native.get("cwd")),',
+        '        "cwd": None,',
+        "test_each_turn_records_its_own_cwd_and_the_session_cwd_fills_the_gaps",
+    ),
+    (
+        "the session's cwd is never recorded",
+        "index.py",
+        "                    cwd=_session_cwd(session),\n",
+        "",
+        "test_a_pi_turn_takes_the_cwd_of_its_session_header",
+    ),
+    (
+        "a turn with no cwd of its own is in no directory",
+        "index.py",
+        "                   SELECT COALESCE(t.cwd, g.cwd)\n",
+        "                   SELECT t.cwd\n",
+        "test_a_pi_turn_takes_the_cwd_of_its_session_header",
+    ),
+    (
+        "an over-long cwd is recorded",
+        "index.py",
+        "not 0 < len(value) <= _MAX_CWD",
+        "not value",
+        "test_a_cwd_that_names_no_absolute_directory_indexes_as_null",
+    ),
+    (
+        "a cwd with a NUL in it is recorded",
+        "index.py",
+        ' or "\\0" in value:',
+        ":",
+        "test_a_cwd_that_names_no_absolute_directory_indexes_as_null",
+    ),
+    (
+        "a cwd is stored as written, trailing slash and all",
+        "index.py",
+        "    return os.path.normpath(value)",
+        "    return value",
+        "test_a_cwd_that_names_no_absolute_directory_indexes_as_null",
+    ),
+    (
+        "a cwd that is not a string costs its generation",
+        "index.py",
+        "if not isinstance(value, str) or not 0 <",
+        "if not 0 <",
+        "test_a_cwd_that_is_not_a_string_costs_nothing",
+    ),
+    (
+        "a relative cwd is recorded, so it lands in whatever project recall runs in",
+        "index.py",
+        "    if not os.path.isabs(value):\n        return None\n",
+        "",
+        "test_a_cwd_that_names_no_absolute_directory_indexes_as_null",
+    ),
+    (
+        "a session whose first cwd names nothing has no directory",
+        "index.py",
+        "    return _bounded_cwd(session.cwd) or next(\n",
+        "    return _bounded_cwd(session.cwd) or None and next(\n",
+        "test_a_session_whose_first_cwd_names_nothing_takes_its_next_one",
+    ),
+    (
+        "an isMeta line is never marked",
+        "index.py",
+        'turn.native.get("isMeta") is True or ',
+        "",
+        "test_a_meta_user_line_is_not_the_users_word",
+    ),
+    (
+        "a compaction summary is never marked",
+        "index.py",
+        ' or turn.native.get("isCompactSummary") is True',
+        "",
+        "test_a_meta_user_line_is_not_the_users_word",
+    ),
+    (
+        "search reads every turn as typed by a person",
+        "index.py",
+        "                   SELECT t.is_meta FROM turns t\n",
+        "                   SELECT 0 FROM turns t\n",
+        "test_a_meta_user_line_is_not_the_users_word",
+    ),
+    (
+        "latest-user takes an isMeta line for the user's word",
+        "index.py",
+        "        and not h.is_meta\n",
+        "",
+        "test_a_meta_user_line_is_not_the_users_word",
     ),
     (
         "recall prints a subagent's turn with the user's role",
@@ -6082,7 +6170,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 662 mutants × two suite runs —
+    The filter exists because a full pass is 675 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for every other row or trusting the new one untested.
 

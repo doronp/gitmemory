@@ -201,7 +201,7 @@ tends to act on.
 
 | Policy | Order | Use it when |
 |---|---|---|
-| `latest-user` (default) | The user's own words newest first, then the agent's turns and tool output newest first. A subagent's instructions are the agent's words | The user's later word should win, and nothing else should |
+| `latest-user` (default) | The user's own words newest first, then the agent's turns and tool output newest first. A subagent's instructions are the agent's words, and so is text Claude Code injected and marked (`isMeta`, a compaction summary) | The user's later word should win, and nothing else should |
 | `latest` | Newest first, whoever said it | Any later turn should win, the agent's included |
 | `relevance` | Best BM25 match first | You want the agent to decide: every line carries its date, so it can see which turn came later |
 | `module:function` | Whatever your function returns | Anything else: pinned decisions, a cut-off date, a different rule per project |
@@ -229,8 +229,9 @@ If two lines disagree, the later date is the current decision; say so.
 
 A policy is a function from a list of `Hit`s to a list of `Hit`s. It can
 reorder and it can drop; it gets nothing that is not already in the store. A
-`Hit` has the fields `recall` prints, plus `text`, `ts` and `is_sidechain`
-(true for a subagent's turn), and `gitmemory.index.when(hit)` reads `ts` as a
+`Hit` has the fields `recall` prints, plus `text`, `ts`, `is_sidechain`
+(true for a subagent's turn), `cwd` (the directory the turn was written in, or
+its session's, or None) and `is_meta` (Claude Code injected it as user text), and `gitmemory.index.when(hit)` reads `ts` as a
 UTC `datetime`.
 
 A validity window, where everything before a date you name is out of date, is

@@ -67,10 +67,11 @@ __all__ = [
     "relevance",
     "retriever",
     "search",
+    "user_words",
     "when",
 ]
 
-SCHEMA = 2
+SCHEMA = 3
 COLUMNS = ("prose", "tool_use", "tool_result", "paths")
 # Serialises `build` per target directory. See `build`'s docstring for why the
 # directory, and not `$GITMEMORY_HOME`, is the thing worth locking.
@@ -186,6 +187,8 @@ CREATE TABLE turns (
     byte_len     INTEGER NOT NULL,
     ts           TEXT,
     usage        TEXT NOT NULL,  -- JSON, exactly as the adapter scrubbed it
+    cwd          TEXT,  -- this line's own; NULL when it carries none
+    is_meta      INTEGER NOT NULL,  -- Claude Code injected it as user text
     PRIMARY KEY (session_key, seq)
 );
 
@@ -204,7 +207,8 @@ CREATE TABLE generations (
     turns       INTEGER NOT NULL,
     blocks      INTEGER NOT NULL,
     parsed      INTEGER NOT NULL,
-    skip_reason TEXT
+    skip_reason TEXT,
+    cwd         TEXT  -- the session's, for the turns that carry none
 );
 """
 
@@ -436,6 +440,10 @@ class Hit:
     # A subagent's turn (`Turn.is_sidechain`), whichever file it was written in.
     # Its user-role text is the parent agent's instructions, not the user's.
     is_sidechain: bool = False
+    # The directory the turn was written in: its own line's, else its session's.
+    cwd: str | None = None
+    # Claude Code's `isMeta` or `isCompactSummary`: user text no person typed.
+    is_meta: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -707,7 +715,14 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
                     row,
                 )
             chunk.append(
-                _generation_row(db, stored, turns=len(session.turns), blocks=len(rows), reason=None)
+                _generation_row(
+                    db,
+                    stored,
+                    turns=len(session.turns),
+                    blocks=len(rows),
+                    reason=None,
+                    cwd=_session_cwd(session),
+                )
             )
         except Exception as exc:  # noqa: BLE001 - a segment run is untrusted data
             # One bad generation must not cost the index every other one; it is
@@ -832,12 +847,51 @@ def _turn_row(stored: store.Stored, turn) -> dict:
         # and a surrogate from a mangled transcript cannot make the column
         # unparseable. Its output is ASCII by construction, so decoding is safe.
         "usage": canonical_json(turn.usage).decode(),
+        # From `native`, unprojected: the adapters keep only the session's cwd,
+        # and a `cd` mid-session moves every line after it.
+        "cwd": _bounded_cwd(turn.native.get("cwd")),
+        "is_meta": int(
+            turn.native.get("isMeta") is True or turn.native.get("isCompactSummary") is True
+        ),
     }
     return {k: _encodable(v) for k, v in fields.items()}
 
 
+# PATH_MAX on Linux. A longer value names no directory anyone ran in.
+_MAX_CWD = 4096
+
+
+def _bounded_cwd(value) -> str | None:
+    """A cwd as the agent wrote it, normalised so `/w/a/` and `/w/a` are one
+    directory, or None for anything no directory could be named. Never
+    resolved against this filesystem: the digest must not depend on the
+    machine that built it."""
+    if not isinstance(value, str) or not 0 < len(value) <= _MAX_CWD or "\0" in value:
+        return None
+    # Relative, or `~`: read where recall runs, `.` would be in every project.
+    if not os.path.isabs(value):
+        return None
+    return os.path.normpath(value)
+
+
+def _session_cwd(session) -> str | None:
+    """The session's directory, for its lines that carry none: the first cwd
+    it recorded, or, when that one names nothing, the first of its turns'
+    that does."""
+    return _bounded_cwd(session.cwd) or next(
+        (cwd for turn in session.turns if (cwd := _bounded_cwd(turn.native.get("cwd")))),
+        None,
+    )
+
+
 def _generation_row(
-    db: sqlite3.Connection, stored: store.Stored, *, turns: int, blocks: int, reason: str | None
+    db: sqlite3.Connection,
+    stored: store.Stored,
+    *,
+    turns: int,
+    blocks: int,
+    reason: str | None,
+    cwd: str | None = None,
 ) -> bytes:
     """Write the generation row. Returns its canonical bytes, for the digest."""
     return _insert(
@@ -855,6 +909,7 @@ def _generation_row(
             "blocks": blocks,
             "parsed": int(reason is None),
             "skip_reason": _encodable(reason),
+            "cwd": _encodable(cwd),
         },
     )
 
@@ -1048,7 +1103,17 @@ def search(
                COALESCE((
                    SELECT t.is_sidechain FROM turns t
                    WHERE t.session_key = ranked.session_key AND t.seq = ranked.turn_seq
-               ), 0) AS is_sidechain
+               ), 0) AS is_sidechain,
+               -- A line with no cwd of its own is where its session was.
+               (
+                   SELECT COALESCE(t.cwd, g.cwd)
+                   FROM turns t JOIN generations g ON g.session_key = t.session_key
+                   WHERE t.session_key = ranked.session_key AND t.seq = ranked.turn_seq
+               ) AS cwd,
+               (
+                   SELECT t.is_meta FROM turns t
+                   WHERE t.session_key = ranked.session_key AND t.seq = ranked.turn_seq
+               ) AS is_meta
         FROM ranked WHERE rn = 1
         -- Ties are broken by position, never by rowid: the answer must not
         -- depend on the order generations happened to be indexed in.
@@ -1072,6 +1137,8 @@ def search(
             text=r["text"],
             ts=r["ts"],
             is_sidechain=bool(r["is_sidechain"]),
+            cwd=r["cwd"],
+            is_meta=bool(r["is_meta"]),
         )
         for r in rows
     )
@@ -1152,22 +1219,28 @@ def latest_user(hits: list[Hit]) -> list[Hit]:
     `derive._prose` still admits a subagent's text; excluding it there too would
     move the secondary-set numbers, so that waits for a re-measurement.
 
-    ponytail: a skill's loaded instructions and a slash command's expansion are
-    user text with no marker, so they pass as the user's words — the same gap
-    `derive._injected` documents. The upgrade lands there, not here.
+    Claude Code marks some of what it injects (`Hit.is_meta`), and those lines
+    are ranked with the rest. ponytail: a skill's loaded instructions and a
+    slash command's expansion often carry no marker, so they pass as the
+    user's words — the same gap `derive._injected` documents. The upgrade
+    lands there, not here.
     """
+    ordered = latest(hits)
+    return [h for h in ordered if user_words(h)] + [h for h in ordered if not user_words(h)]
+
+
+def user_words(h: Hit) -> bool:
+    """Whether a hit reads as something the user typed: `latest_user`'s rule.
+    A heuristic over who wrote the record, not a trust grant."""
     from .derive import _injected  # lazy: derive imports this module
 
-    def typed(h: Hit) -> bool:
-        return (
-            h.role == "user"
-            and h.kind == "text"
-            and not h.is_sidechain
-            and not _injected(h.text.strip())
-        )
-
-    ordered = latest(hits)
-    return [h for h in ordered if typed(h)] + [h for h in ordered if not typed(h)]
+    return (
+        h.role == "user"
+        and h.kind == "text"
+        and not h.is_sidechain
+        and not h.is_meta
+        and not _injected(h.text.strip())
+    )
 
 
 def relevance(hits: list[Hit]) -> list[Hit]:

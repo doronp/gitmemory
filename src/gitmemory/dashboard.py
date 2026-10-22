@@ -36,7 +36,7 @@ this one anyway. The cookie dies with the process: Datasette signs it with a
 secret generated at start-up, so a restart revokes it. [SEC-2]
 
 **The metadata is generated, not shipped.** Datasette keys table descriptions by
-database *name*, and the name carries the schema version (`gitmemory-v2.db`), so
+database *name*, and the name carries the schema version (`gitmemory-v3.db` at schema 3), so
 a checked-in YAML would silently stop matching on the next schema bump and the
 descriptions would vanish with no error. Generating it from `SCHEMA` means the
 one place that can be wrong is the one place that is already right. It is JSON,

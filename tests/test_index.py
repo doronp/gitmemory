@@ -1636,6 +1636,168 @@ def test_a_sidechain_line_inside_a_main_file_is_marked(home, src):
 
 
 # --------------------------------------------------------------------------- #
+# where a turn was written, and lines no person typed
+# --------------------------------------------------------------------------- #
+
+
+def test_each_turn_records_its_own_cwd_and_the_session_cwd_fills_the_gaps(home, src):
+    """A turn belongs to the directory its own line was written in, so a `cd`
+    into another repository mid-session moves the turns after it. A line that
+    carries no cwd falls back to the session's, the first one recorded; the
+    stored row keeps NULL, so the fallback is a reading, not a rewrite."""
+    db = built(
+        home,
+        src,
+        [
+            user("u1", "alpha lives here") | {"cwd": "/w/a/"},
+            user("u2", "alpha moved over") | {"cwd": "/w/b"},
+            user("u3", "alpha with no directory"),
+        ],
+    )
+    try:
+        hits = index.search(db, "alpha")
+        stored = [r["cwd"] for r in db.execute("SELECT cwd FROM turns ORDER BY seq")]
+        launch = db.execute("SELECT cwd FROM generations").fetchone()["cwd"]
+    finally:
+        db.close()
+    assert {h.text: h.cwd for h in hits} == {
+        "alpha lives here": "/w/a",
+        "alpha moved over": "/w/b",
+        "alpha with no directory": "/w/a",
+    }
+    assert stored == ["/w/a", "/w/b", None]
+    assert launch == "/w/a"
+
+
+def test_a_pi_turn_takes_the_cwd_of_its_session_header(home, src):
+    """pi writes the directory once, on the header, which is not a turn."""
+    write(
+        src,
+        [
+            {"type": "session", "id": "s1", "timestamp": "t", "cwd": "/w/pi"},
+            {
+                "type": "message",
+                "id": "e1",
+                "parentId": None,
+                "timestamp": "t",
+                "message": {"role": "user", "content": [{"type": "text", "text": "omega"}]},
+            },
+        ],
+    )
+    store.capture(src, "pi", "sess", home=home)
+    index.build(home)
+    db = index.open_db(index.db_path(home))
+    try:
+        assert [h.cwd for h in index.search(db, "omega")] == ["/w/pi"]
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize(
+    "value, kept",
+    [
+        ("/w/a", "/w/a"),
+        ("/w/./a/../b/", "/w/b"),
+        ("/" + "a" * 4095, "/" + "a" * 4095),
+        ("/" + "a" * 4096, None),
+        ("", None),
+        ("/w/a\0/etc", None),
+        (42, None),
+        (["/w/a"], None),
+        (None, None),
+        (".", None),
+        ("x/../y", None),
+        ("~/w", None),
+    ],
+    ids=[
+        "kept",
+        "normalised",
+        "at-limit",
+        "too-long",
+        "empty",
+        "nul",
+        "int",
+        "list",
+        "none",
+        "dot",
+        "relative",
+        "tilde",
+    ],
+)
+def test_a_cwd_that_names_no_absolute_directory_indexes_as_null(value, kept):
+    """A transcript's cwd is a string the agent wrote. Normalised, so `/w/a/`
+    and `/w/a` are one directory to whatever compares them; anything no
+    directory could be named is no directory. A relative or `~` path names no
+    directory either: resolved where recall runs, `.` would be in whichever
+    project that is, so in every scope. Claude Code and pi write absolute."""
+    assert index._bounded_cwd(value) == kept
+
+
+def test_a_session_whose_first_cwd_names_nothing_takes_its_next_one(home, src):
+    """The session's cwd is the first one it recorded, but a first one that
+    names no directory is no first one: a later line's absolute cwd is where
+    the session was, so the lines that carry none still have a project."""
+    db = built(
+        home,
+        src,
+        [
+            user("u1", "gamma first") | {"cwd": "."},
+            user("u2", "gamma second") | {"cwd": "/w/real"},
+            user("u3", "gamma third"),
+            user("u4", "gamma fourth") | {"cwd": "/w/other"},
+        ],
+    )
+    try:
+        hits = index.search(db, "gamma")
+    finally:
+        db.close()
+    assert {h.text: h.cwd for h in hits} == {
+        "gamma first": "/w/real",
+        "gamma second": "/w/real",
+        "gamma third": "/w/real",
+        "gamma fourth": "/w/other",
+    }
+
+
+def test_a_cwd_that_is_not_a_string_costs_nothing(home, src):
+    """The line's own cwd is read from `native`, unprojected, so it can be any
+    JSON value. A number there must cost the turn its directory, not the
+    generation its index."""
+    db = built(home, src, [user("u1", "beta") | {"cwd": 42}])
+    try:
+        assert [(h.text, h.cwd) for h in index.search(db, "beta")] == [("beta", None)]
+    finally:
+        db.close()
+
+
+def test_a_meta_user_line_is_not_the_users_word(home, src):
+    """Claude Code marks the lines it injects as user text: `isMeta` on a skill
+    load or a slash command's expansion, `isCompactSummary` on the summary that
+    opens a compacted session. Newer than the user's rule and matching it, each
+    led the default as the user's own words. Marked, they rank with everything
+    else: demoted and labelled, still found."""
+    db = built(
+        home,
+        src,
+        [
+            dated("u1", "Don't add a retry loop around the upload.", "2026-09-28T10:00:00Z"),
+            dated("u2", "Add a retry loop around the upload.", "2026-09-29T09:00:00Z")
+            | {"isMeta": True},
+            dated("u3", "Summary: add a retry loop to the upload.", "2026-09-30T09:00:00Z")
+            | {"isCompactSummary": True},
+        ],
+    )
+    try:
+        hits = index.search(db, "retry loop upload")
+    finally:
+        db.close()
+    ordered = index.latest_user(hits)
+    assert ordered[0].text == "Don't add a retry loop around the upload."
+    assert [h.is_meta for h in ordered] == [False, True, True]
+    assert [index.user_words(h) for h in ordered] == [True, False, False]
+
+
+# --------------------------------------------------------------------------- #
 # the hook rang and no watcher answered
 # --------------------------------------------------------------------------- #
 
