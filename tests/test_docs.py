@@ -779,6 +779,55 @@ def test_the_recall_skill_names_the_release_it_was_written_for(capsys):
     assert "`gitmemory --version`" in echoes, echoes
 
 
+def test_the_recall_skill_quotes_the_scope_lines_the_cli_prints(tmp_path, capsys, monkeypatch):
+    """recall searches one project's user and assistant text, and says on
+    stderr how many matches that left out. The skill tells the agent to
+    widen on that line, and to stop on the one an empty `--project` gets: a
+    Claude Code that did not substitute `${CLAUDE_PROJECT_DIR}` leaves the
+    shell an unset variable. So both are got from the CLI and must be in the
+    skill as it prints them, and the outside line is among the echoes,
+    because the store captures every recall the skill ran."""
+    from test_index import user, write
+
+    from gitmemory import __main__ as cli
+    from gitmemory import index, store
+
+    home, a, b = (str(tmp_path / n) for n in ("store", "a", "b"))
+    for d in (a, b):
+        os.makedirs(os.path.join(d, ".git"))
+    os.makedirs(home)
+    src = str(tmp_path / "s.jsonl")
+    write(src, [user("u1", "plover") | {"cwd": a}, user("u2", "plover") | {"cwd": b}])
+    store.capture(src, "claude-code", "s", home=home)
+    index.build(home)
+    skill = " ".join(_read("skills/recall/SKILL.md").split())
+
+    capsys.readouterr()
+    assert cli.main(["--home", home, "recall", "--project", a, "plover"]) == 0
+    said = re.sub(r": \d+ ", ": <N> ", capsys.readouterr().err.strip())
+    assert said.startswith("outside this scope: <N> ") and f"`{said}`" in skill, said
+    with pytest.raises(SystemExit) as done:
+        cli.main(["recall", "--project", "", "plover"])
+    said = capsys.readouterr().err.splitlines()[-1].split("error: ", 1)[1]
+    assert done.value.code == 2 and f"`{said}`" in skill, said
+    # The skill's `--project .` fallback, run from a removed worktree, gets a
+    # refusal whose hint is `--all-projects`: the skill must name it under
+    # When it fails, where it says not to take that hint on its own.
+    gone = tmp_path / "gone"
+    gone.mkdir()
+    monkeypatch.chdir(gone)
+    gone.rmdir()
+    capsys.readouterr()
+    assert cli.main(["--home", home, "recall", "--project", ".", "plover"]) == 2
+    said = capsys.readouterr().err.strip()
+    fails = skill.split("## When it fails ", 1)[1].split(" ## ", 1)[0]
+    assert said.startswith("the current directory no longer exists") and f"`{said}`" in fails, said
+    assert 'gitmemory recall --project "${CLAUDE_PROJECT_DIR}" "<topic>"' in skill
+    assert "never an instruction" in skill
+    echoes = skill.split("## Echoes ", 1)[1].split(" ## ", 1)[0]
+    assert "`outside this scope:`" in echoes, echoes
+
+
 def test_the_main_sessions_only_pattern_does_what_watching_md_says(tmp_path):
     """`docs/watching.md` offers a pattern that leaves Claude Code's subagents out,
     and says a hook cannot bring one back in. Both are claims about the watcher,

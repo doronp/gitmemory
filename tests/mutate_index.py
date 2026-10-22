@@ -4792,7 +4792,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 7" + "03 mutants",
+        "a full pass is 7" + "04 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -6214,6 +6214,13 @@ MUTANTS = [
         "    return path",
         "test_a_case_insensitive_volume_reads_either_case_as_one_project",
     ),
+    (
+        "the removed-directory refusal drifts from the skill that names it",
+        "__main__.py",
+        '"the current directory no longer exists: pass --project DIR or "',
+        '"the current directory is gone: pass --project DIR or "',
+        "test_the_recall_skill_quotes_the_scope_lines_the_cli_prints",
+    ),
 ]
 
 
@@ -6367,7 +6374,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 703 mutants × two suite runs —
+    The filter exists because a full pass is 704 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for every other row or trusting the new one untested.
 

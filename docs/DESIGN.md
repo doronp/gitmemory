@@ -647,6 +647,9 @@ earlier decision or runs the skill, not an injection: there is no MCP server and
 `NOT BUILT` on the dashboard (§2.9). `recall` prints each hit's address, and `show` resolves one
 to the whole turn from the store, not the index, so a stale or tampered index cannot change what
 the address is shown to say.
+**[2026-10-22 — the skill now searches only when the user asks, and asks first when they only
+refer to an earlier decision; `recall` searches the current project's user and assistant text by
+default (USAGE.md, "What recall searches").]**
 
 ### 2.9 Dashboard
 
