@@ -23,7 +23,7 @@ import stat
 import sys
 import tomllib
 
-from . import __version__, daemon, dashboard, derive, gitrepo, index, redact, service, store
+from . import __version__, daemon, dashboard, derive, gitrepo, index, redact, scope, service, store
 from .records import safe_text
 
 
@@ -224,6 +224,15 @@ def _positive_int(text: str) -> int:
     if value <= 0:
         raise argparse.ArgumentTypeError(f"must be positive: {text}")
     return value
+
+
+def _project_dir(text: str) -> str:
+    """A directory. An unsubstituted `${CLAUDE_PROJECT_DIR}` arrives as '', and
+    falling back to the shell's directory would search some other project."""
+    path = os.path.expanduser(text)
+    if not os.path.isdir(path):
+        raise argparse.ArgumentTypeError(f"not a directory: {text!r}")
+    return path
 
 
 def _count(text: str) -> int:
@@ -438,6 +447,13 @@ def _ago(seconds: float) -> str:
     return f"{int(seconds // 86400)} days"
 
 
+# What `recall` admits by default: the conversation, not what a tool, a page or
+# a hook put into it. Not a policy: a policy reorders the top k, and these must
+# refill it.
+RECALL_ROLES = ("user", "assistant")
+RECALL_KINDS = ("text",)
+
+
 def _recall(args) -> int:
     # First, so a mistyped policy is the error you see, with or without an index.
     resolve = index.policy(args.policy)
@@ -458,9 +474,28 @@ def _recall(args) -> int:
                 "everything said since.",
                 file=sys.stderr,
             )
+    project = None
+    if not args.all_projects:
+        try:
+            project = scope.project_id(args.project or os.getcwd())
+        except FileNotFoundError:
+            # A shell left in a removed worktree: no directory to scope by,
+            # and guessing one would answer from some other project.
+            print("the current directory no longer exists: pass --project DIR or "
+                  "--all-projects", file=sys.stderr)
+            return 2
     db = index.open_db(path)
     try:
-        hits = index.search(db, args.query, k=args.k)
+        # Before the scope reads `turns.cwd`: an old `--db` is refused as one.
+        index._check_schema(db)
+        cwds = None
+        if project is not None:
+            cwds = scope.admitted(index.directories(db, args.query), project)
+        roles = None if args.all_kinds else RECALL_ROLES
+        kinds = None if args.all_kinds else RECALL_KINDS
+        hits = index.search(db, args.query, k=args.k, roles=roles, kinds=kinds, cwds=cwds)
+        widen = [f for f, v in (("--all-projects", cwds), ("--all-kinds", kinds)) if v is not None]
+        hidden = index.outside(db, args.query, roles=roles, kinds=kinds, cwds=cwds) if widen else 0
     finally:
         db.close()
     if hits.dropped:
@@ -503,6 +538,11 @@ def _recall(args) -> int:
         # Not a bare "no matches": the search found something and the policy
         # kept none of it, which is a different fact about the store.
         print(f"no matches kept: policy {args.policy!r} dropped all {len(hits)}", file=sys.stderr)
+    # A count, never content, and only when there is one: a narrower answer
+    # must not read as the whole store's.
+    if hidden:
+        flags = ", ".join(widen)
+        print(f"outside this scope: {hidden} matching turn(s) ({flags} to widen)", file=sys.stderr)
     return 0
 
 
@@ -709,6 +749,25 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("GITMEMORY_POLICY") or index.DEFAULT_POLICY,
         help="which hit goes first when they disagree: latest-user, latest, relevance, or "
         "module:function (default $GITMEMORY_POLICY or %(default)s)",
+    )
+    where = rec.add_mutually_exclusive_group()
+    where.add_argument(
+        "--project",
+        type=_project_dir,
+        metavar="DIR",
+        help="search the project holding DIR: its repository, else DIR itself "
+        "(default: the current directory's)",
+    )
+    where.add_argument(
+        "--all-projects",
+        action="store_true",
+        help="search every project, and lines written in no directory",
+    )
+    rec.add_argument(
+        "--all-kinds",
+        action="store_true",
+        help="also search tool calls, tool output, thinking and system lines "
+        "(default: user and assistant text only)",
     )
     _redact_flag(rec)
     rec.set_defaults(fn=_recall)

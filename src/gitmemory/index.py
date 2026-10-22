@@ -33,13 +33,14 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import importlib
+import json
 import os
 import re
 import shutil
 import sqlite3
 import tempfile
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import quote
@@ -59,10 +60,12 @@ __all__ = [
     "Weights",
     "build",
     "db_path",
+    "directories",
     "latest",
     "latest_user",
     "match_expr",
     "open_db",
+    "outside",
     "policy",
     "relevance",
     "retriever",
@@ -1031,12 +1034,82 @@ class Hits(list):
     dropped: int = 0
 
 
+# Where a block's turn was written: its own line's cwd, else its session's.
+_CWD_OF = """(
+    SELECT COALESCE(t.cwd, g.cwd)
+    FROM turns t JOIN generations g ON g.session_key = t.session_key
+    WHERE t.session_key = b.session_key AND t.seq = b.turn_seq
+)"""
+
+
+def _filters(roles, kinds, cwds) -> tuple[list[str], list[str]]:
+    """SQL over `blocks b` admitting only the given values; None is no filter.
+    One JSON array a parameter, so a value is data and never SQL."""
+    clauses, params = [], []
+    for column, values in (("b.role", roles), ("b.kind", kinds), (_CWD_OF, cwds)):
+        if values is not None:
+            clauses.append(f"{column} IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(sorted(values)))
+    return clauses, params
+
+
+def directories(db: sqlite3.Connection, query: str) -> list[str]:
+    """Every directory a turn matching `query` was written in, as `_CWD_OF`
+    reads it: the only ones a scope has to resolve. The caller checks the
+    schema: this reads a column schema 2 does not have."""
+    expr, _ = match_expr(query)
+    if not expr:
+        return []
+    rows = db.execute(
+        "SELECT DISTINCT COALESCE(t.cwd, g.cwd) AS cwd"
+        " FROM fts JOIN blocks b ON b.rowid = fts.rowid"
+        " JOIN turns t ON t.session_key = b.session_key AND t.seq = b.turn_seq"
+        " JOIN generations g ON g.session_key = t.session_key"
+        " WHERE fts MATCH ?",
+        (expr,),
+    )
+    return [r["cwd"] for r in rows if r["cwd"] is not None]
+
+
+def outside(
+    db: sqlite3.Connection,
+    query: str,
+    *,
+    roles: Collection[str] | None,
+    kinds: Collection[str] | None,
+    cwds: Collection[str] | None,
+) -> int:
+    """How many turns match `query` but have no block the filters admit: what
+    a filtered `search` hid, counted whole and beyond its `k`. Deduplicated as
+    `search` deduplicates, so a turn is one however many blocks matched."""
+    expr, _ = match_expr(query)
+    clauses, params = _filters(roles, kinds, cwds)
+    if not expr or not clauses:
+        return 0
+    row = db.execute(
+        f"""
+        SELECT count(*) AS n FROM (
+            -- A NULL cwd is in no list, and `NULL IN (...)` is NULL, not false.
+            SELECT max(coalesce({" AND ".join(clauses)}, 0)) AS ok
+            FROM fts JOIN blocks b ON b.rowid = fts.rowid
+            WHERE fts MATCH ?
+            GROUP BY b.turn_id, b.agent, b.session_id
+        ) WHERE NOT ok
+        """,
+        (*params, expr),
+    ).fetchone()
+    return row["n"]
+
+
 def search(
     db: sqlite3.Connection,
     query: str,
     *,
     k: int = 10,
     weights: Weights = DEFAULT_WEIGHTS,
+    roles: Collection[str] | None = None,
+    kinds: Collection[str] | None = None,
+    cwds: Collection[str] | None = None,
 ) -> Hits:
     """Top `k` turns for `query`, best first. A turn scores as its best block.
 
@@ -1048,11 +1121,19 @@ def search(
     that renders hits to a person is expected to say so. A truncated query
     returns a real ranking over fewer terms, which reads exactly like a
     complete one.
+
+    `roles`, `kinds` and `cwds` admit only blocks with those values, before a
+    turn picks its block and before the LIMIT, so `k` counts admitted turns
+    and a turn whose best block was filtered out answers with its next. All
+    default to off: that unfiltered search is what `bench/` measures, and
+    recall's narrower defaults live in `__main__`.
     """
     _check_schema(db)
     expr, dropped = match_expr(query)
     if not expr:
         return Hits()
+    clauses, params = _filters(roles, kinds, cwds)
+    where = "\n            WHERE " + " AND ".join(clauses) if clauses else ""
     rows = db.execute(
         f"""
         -- bm25() is an FTS5 auxiliary function: it exists only in a query whose
@@ -1092,7 +1173,7 @@ def search(
                        PARTITION BY b.turn_id, b.agent, b.session_id
                        ORDER BY s.score, b.generation DESC, b.block_seq
                    ) AS rn
-            FROM scored s JOIN blocks b ON b.rowid = s.rid
+            FROM scored s JOIN blocks b ON b.rowid = s.rid{where}
         )
         SELECT byte_offset, byte_len, turn_id, session_key, agent,
                session_id, generation, role, kind, text, score, ts,
@@ -1120,7 +1201,7 @@ def search(
         ORDER BY score, session_key, byte_offset, block_seq
         LIMIT ?
         """,
-        (*weights.as_tuple(), expr, max(k, 0)),
+        (*weights.as_tuple(), expr, *params, max(k, 0)),
     ).fetchall()
     hits = Hits(
         Hit(

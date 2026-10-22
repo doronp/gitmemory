@@ -243,7 +243,8 @@ def test_a_captured_show_result_is_an_echo_the_skill_lists(home, tmp_path, capsy
     store.capture(later, "claude-code", "b", home=home)
     assert code == 0 and main(["--home", home, "index"]) == 0
     capsys.readouterr()
-    assert main(["--home", home, "recall", "marmoset"]) == 0
+    # The echo is tool output, which recall finds only when asked to.
+    assert main(["--home", home, "recall", "marmoset", "--all-kinds"]) == 0
     heads = [ln.split(None, 4) for ln in capsys.readouterr().out.splitlines()]
     assert [h[2].split("@")[0] for h in heads] == ["claude-code/a/g00", "claude-code/b/g00"]
     assert heads[1][4].startswith("> claude-code/a/g00@0 "), heads

@@ -1844,7 +1844,8 @@ def test_a_terminal_escape_in_a_transcript_does_not_reach_the_terminal(home, src
     assert main(["--home", home, "index"]) == 0
     capsys.readouterr()
 
-    assert main(["--home", home, "recall", "needle"]) == 0
+    # The line names no directory, so it is in no project.
+    assert main(["--home", home, "recall", "needle", "--all-projects"]) == 0
     out = capsys.readouterr().out
     assert "needle" in out
     assert "\x1b" not in out and "\r" not in out

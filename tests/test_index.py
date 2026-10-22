@@ -34,13 +34,21 @@ def write(path: str, lines: list[dict], mode: str = "ab") -> int:
     return os.path.getsize(path)
 
 
+# Written where the suite runs, which is where `recall` reads its default
+# project from: a fixture line is this project's unless a test says otherwise.
 def user(uid: str, text: str) -> dict:
     return {
         "type": "user",
         "uuid": uid,
         "sessionId": "s1",
+        "cwd": os.getcwd(),
         "message": {"role": "user", "content": text},
     }
+
+
+def nowhere(line: dict) -> dict:
+    """A line that records no directory, as pi's and some Claude Code lines do."""
+    return {k: v for k, v in line.items() if k != "cwd"}
 
 
 def assistant(uid: str, blocks: list[dict]) -> dict:
@@ -48,6 +56,7 @@ def assistant(uid: str, blocks: list[dict]) -> dict:
         "type": "assistant",
         "uuid": uid,
         "sessionId": "s1",
+        "cwd": os.getcwd(),
         "message": {"role": "assistant", "model": "claude-sonnet-4-5", "content": blocks},
     }
 
@@ -1548,8 +1557,15 @@ def test_the_default_does_not_let_a_forgetful_agent_outrank_the_users_rule(home,
         assert main(["--home", home, "recall", "retry loop", *argv]) == 0
         return [line.split()[3] for line in capsys.readouterr().out.splitlines()]
 
-    assert roles() == ["user/text", "user/tool_result", "assistant/text"]
-    assert roles("--policy", "latest") == ["user/tool_result", "assistant/text", "user/text"]
+    # The echo is tool output, so the default never sees it; under every kind
+    # it is the newest line, and only the policy keeps it from leading.
+    assert roles() == ["user/text", "assistant/text"]
+    assert roles("--all-kinds") == ["user/text", "user/tool_result", "assistant/text"]
+    assert roles("--all-kinds", "--policy", "latest") == [
+        "user/tool_result",
+        "assistant/text",
+        "user/text",
+    ]
 
 
 def sidechain(uid: str, text: str, ts: str) -> dict:
@@ -1651,7 +1667,7 @@ def test_each_turn_records_its_own_cwd_and_the_session_cwd_fills_the_gaps(home, 
         [
             user("u1", "alpha lives here") | {"cwd": "/w/a/"},
             user("u2", "alpha moved over") | {"cwd": "/w/b"},
-            user("u3", "alpha with no directory"),
+            nowhere(user("u3", "alpha with no directory")),
         ],
     )
     try:
@@ -1743,7 +1759,7 @@ def test_a_session_whose_first_cwd_names_nothing_takes_its_next_one(home, src):
         [
             user("u1", "gamma first") | {"cwd": "."},
             user("u2", "gamma second") | {"cwd": "/w/real"},
-            user("u3", "gamma third"),
+            nowhere(user("u3", "gamma third")),
             user("u4", "gamma fourth") | {"cwd": "/w/other"},
         ],
     )
@@ -1996,7 +2012,8 @@ def test_recall_redact_masks_a_key_the_raw_bytes_only_spell_escaped(home, src, c
     store.capture(src, "claude-code", "sess", home=home)
     index.build(home)
     capsys.readouterr()
-    out = _recall_out(home, capsys, "unicorn", "--redact")
+    # A hand-written line with no cwd is in no project.
+    out = _recall_out(home, capsys, "unicorn", "--redact", "--all-projects")
     assert key[4:20] not in out and "sk-a…[103 bytes]" in out, out
 
 
@@ -2054,8 +2071,9 @@ def test_recall_redact_masks_a_key_behind_a_character_the_index_spells_out(home,
     store.capture(src, "claude-code", "sess", home=home)
     index.build(home)
     capsys.readouterr()
-    assert AKIA in _recall_out(home, capsys, "marmot"), "premise: the default prints them"
-    out = _recall_out(home, capsys, "marmot", "--redact")
+    shown = _recall_out(home, capsys, "marmot", "--all-projects")
+    assert AKIA in shown, "premise: the default prints them"
+    out = _recall_out(home, capsys, "marmot", "--redact", "--all-projects")
     assert AKIA[4:10] not in out and ghp[4:20] not in out and "defghijklmn" not in out, out
     assert "\\ufeffAKIA…[20 bytes] x\\u200bghp_…[40 bytes] y\\x7fAKIA…[20 bytes]" in out, out
 
