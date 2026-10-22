@@ -962,7 +962,7 @@ def test_a_digest_that_cannot_be_read_says_why(capsys, tmp_path):
     intact, so a test that checks only those passes against a line that has
     stopped saying why. Measured as a surviving mutant. [review: opus 5]
     """
-    not_a_db = tmp_path / "gitmemory-v2.db"
+    not_a_db = tmp_path / f"gitmemory-v{index.SCHEMA - 1}.db"
     not_a_db.write_bytes(b"this is not a database")
 
     assert dashboard._digest(str(not_a_db)) == "unknown"

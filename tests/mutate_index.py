@@ -133,8 +133,8 @@ MUTANTS = [
     (
         "a negative k means unlimited",
         "index.py",
-        "(*weights.as_tuple(), expr, max(k, 0)),",
-        "(*weights.as_tuple(), expr, k),",
+        "(*weights.as_tuple(), expr, *params, max(k, 0)),",
+        "(*weights.as_tuple(), expr, *params, k),",
         "test_a_negative_k_returns_nothing_rather_than_the_corpus",
     ),
     (
@@ -2803,12 +2803,8 @@ MUTANTS = [
         # of two turns while `dash_contiguity` shows a different shape.
         "how a store was segmented leaves no trace in the digest",
         "index.py",
-        "            chunk.append(\n"
-        "                _generation_row(db, stored, turns=len(session.turns), "
-        "blocks=len(rows), reason=None)\n"
-        "            )",
-        "            _generation_row(db, stored, turns=len(session.turns), "
-        "blocks=len(rows), reason=None)",
+        "            chunk.append(\n                _generation_row(\n",
+        "            (\n                _generation_row(\n",
         "test_the_same_bytes_captured_in_two_passes_are_not_the_same_index",
     ),
     (
@@ -4796,7 +4792,7 @@ MUTANTS = [
         # anchor appear twice and the harness would skip itself. [E7]
         "the docstring's row count drifts away from the index again",
         "tests/mutate_index.py",
-        "a full pass is 6" + "62 mutants",
+        "a full pass is 7" + "04 mutants",
         "a full pass is 14" + "6 mutants",
         "test_the_row_count_in_the_docstring_is_the_row_count",
     ),
@@ -5760,7 +5756,7 @@ MUTANTS = [
     (
         "latest-user takes a subagent's dispatch prompt for the user's word",
         "index.py",
-        "            and not h.is_sidechain\n",
+        "        and not h.is_sidechain\n",
         "",
         "test_a_subagent_prompt_is_not_the_users_word",
     ),
@@ -5773,6 +5769,98 @@ MUTANTS = [
         "               ), 0) AS is_sidechain",
         "               0 AS is_sidechain",
         "test_a_sidechain_line_inside_a_main_file_is_marked",
+    ),
+    # --- schema 3: where each turn was written, and lines no person typed ---
+    (
+        "a turn's own cwd is never recorded, so a cd mid-session moves nothing",
+        "index.py",
+        '        "cwd": _bounded_cwd(turn.native.get("cwd")),',
+        '        "cwd": None,',
+        "test_each_turn_records_its_own_cwd_and_the_session_cwd_fills_the_gaps",
+    ),
+    (
+        "the session's cwd is never recorded",
+        "index.py",
+        "                    cwd=_session_cwd(session),\n",
+        "",
+        "test_a_pi_turn_takes_the_cwd_of_its_session_header",
+    ),
+    (
+        "a turn with no cwd of its own is in no directory",
+        "index.py",
+        "                   SELECT COALESCE(t.cwd, g.cwd)\n",
+        "                   SELECT t.cwd\n",
+        "test_a_pi_turn_takes_the_cwd_of_its_session_header",
+    ),
+    (
+        "an over-long cwd is recorded",
+        "index.py",
+        "not 0 < len(value) <= _MAX_CWD",
+        "not value",
+        "test_a_cwd_that_names_no_absolute_directory_indexes_as_null",
+    ),
+    (
+        "a cwd with a NUL in it is recorded",
+        "index.py",
+        ' or "\\0" in value:',
+        ":",
+        "test_a_cwd_that_names_no_absolute_directory_indexes_as_null",
+    ),
+    (
+        "a cwd is stored as written, trailing slash and all",
+        "index.py",
+        "    return os.path.normpath(value)",
+        "    return value",
+        "test_a_cwd_that_names_no_absolute_directory_indexes_as_null",
+    ),
+    (
+        "a cwd that is not a string costs its generation",
+        "index.py",
+        "if not isinstance(value, str) or not 0 <",
+        "if not 0 <",
+        "test_a_cwd_that_is_not_a_string_costs_nothing",
+    ),
+    (
+        "a relative cwd is recorded, so it lands in whatever project recall runs in",
+        "index.py",
+        "    if not os.path.isabs(value):\n        return None\n",
+        "",
+        "test_a_cwd_that_names_no_absolute_directory_indexes_as_null",
+    ),
+    (
+        "a session whose first cwd names nothing has no directory",
+        "index.py",
+        "    return _bounded_cwd(session.cwd) or next(\n",
+        "    return _bounded_cwd(session.cwd) or None and next(\n",
+        "test_a_session_whose_first_cwd_names_nothing_takes_its_next_one",
+    ),
+    (
+        "an isMeta line is never marked",
+        "index.py",
+        'turn.native.get("isMeta") is True or ',
+        "",
+        "test_a_meta_user_line_is_not_the_users_word",
+    ),
+    (
+        "a compaction summary is never marked",
+        "index.py",
+        ' or turn.native.get("isCompactSummary") is True',
+        "",
+        "test_a_meta_user_line_is_not_the_users_word",
+    ),
+    (
+        "search reads every turn as typed by a person",
+        "index.py",
+        "                   SELECT t.is_meta FROM turns t\n",
+        "                   SELECT 0 FROM turns t\n",
+        "test_a_meta_user_line_is_not_the_users_word",
+    ),
+    (
+        "latest-user takes an isMeta line for the user's word",
+        "index.py",
+        "        and not h.is_meta\n",
+        "",
+        "test_a_meta_user_line_is_not_the_users_word",
     ),
     (
         "recall prints a subagent's turn with the user's role",
@@ -5929,6 +6017,210 @@ MUTANTS = [
         '        if x < 1000 or unit == "TB":',
         "test_a_byte_count_is_said_for_a_person_and_exactly",
     ),
+    # --- recall's default scope: this project's user and assistant text ---
+    (
+        "recall searches every project by default",
+        "__main__.py",
+        "            cwds = scope.admitted(index.directories(db, args.query), project)\n",
+        "            pass\n",
+        "test_recall_searches_the_project_of_each_lines_own_directory",
+    ),
+    (
+        "recall reads the shell's project and ignores --project",
+        "__main__.py",
+        "            project = scope.project_id(args.project or os.getcwd())",
+        "            project = scope.project_id(os.getcwd())",
+        "test_recall_defaults_to_the_working_directorys_project",
+    ),
+    (
+        "recall returns tool calls, tool output and thinking by default",
+        "__main__.py",
+        "        kinds = None if args.all_kinds else RECALL_KINDS",
+        "        kinds = None",
+        "test_recall_returns_user_and_assistant_text_by_default",
+    ),
+    (
+        "recall returns system lines by default",
+        "__main__.py",
+        "        roles = None if args.all_kinds else RECALL_ROLES",
+        "        roles = None",
+        "test_recall_returns_user_and_assistant_text_by_default",
+    ),
+    (
+        "recall's filters never reach the SQL",
+        "index.py",
+        "            FROM scored s JOIN blocks b ON b.rowid = s.rid{where}",
+        "            FROM scored s JOIN blocks b ON b.rowid = s.rid",
+        "test_k_counts_in_scope_turns",
+    ),
+    (
+        "a line with no cwd of its own is outside its session's project",
+        "index.py",
+        "    SELECT COALESCE(t.cwd, g.cwd)\n    FROM turns t",
+        "    SELECT t.cwd\n    FROM turns t",
+        "test_recall_searches_the_project_of_each_lines_own_directory",
+    ),
+    (
+        "the outside count counts blocks, not turns",
+        "index.py",
+        "            GROUP BY b.turn_id, b.agent, b.session_id",
+        "            GROUP BY b.rowid",
+        "test_outside_counts_every_hidden_turn_once_beyond_k",
+    ),
+    (
+        "a turn in no directory is not counted as outside",
+        "index.py",
+        '            SELECT max(coalesce({" AND ".join(clauses)}, 0)) AS ok',
+        '            SELECT max({" AND ".join(clauses)}) AS ok',
+        "test_recall_searches_the_project_of_each_lines_own_directory",
+    ),
+    (
+        "hidden matches go unreported",
+        "__main__.py",
+        "    if hidden:\n",
+        "    if False:\n",
+        "test_no_matches_in_scope_still_says_what_is_outside",
+    ),
+    (
+        "the outside line names a flag that was already passed",
+        "__main__.py",
+        '(("--all-projects", cwds), ("--all-kinds", kinds)) if v is not None]',
+        '(("--all-projects", cwds), ("--all-kinds", kinds))]',
+        "test_no_matches_in_scope_still_says_what_is_outside",
+    ),
+    (
+        "recall reads an old index's turns before refusing it",
+        "__main__.py",
+        "        index._check_schema(db)\n",
+        "",
+        "test_an_old_db_is_refused_under_every_scope_flag",
+    ),
+    (
+        "an empty --project falls back to the shell's project",
+        "__main__.py",
+        "    if not os.path.isdir(path):\n        raise argparse.ArgumentTypeError(",
+        "    if False:\n        raise argparse.ArgumentTypeError(",
+        "test_project_must_be_a_directory",
+    ),
+    (
+        "--project and --all-projects are both accepted",
+        "__main__.py",
+        "    where = rec.add_mutually_exclusive_group()",
+        "    where = rec",
+        "test_project_must_be_a_directory",
+    ),
+    (
+        "--project does not read a tilde",
+        "__main__.py",
+        "    path = os.path.expanduser(text)\n    if not os.path.isdir(path):",
+        "    path = text\n    if not os.path.isdir(path):",
+        "test_project_reads_a_tilde",
+    ),
+    (
+        "the walk climbs past home, so a .git above it gathers every project",
+        "scope.py",
+        "        if d == os.path.dirname(d) or _ident(d) == home:",
+        "        if d == os.path.dirname(d):",
+        "test_a_dotfiles_repository_in_home_is_a_project_and_the_walk_stops_there",
+    ),
+    (
+        "home's own .git is never looked at",
+        "scope.py",
+        "        found = _dotgit(d)\n",
+        "        found = None if _ident(d) == home else _dotgit(d)\n",
+        "test_a_dotfiles_repository_in_home_is_a_project_and_the_walk_stops_there",
+    ),
+    (
+        "a linked worktree is a project apart from its repository",
+        "scope.py",
+        '    if os.path.basename(os.path.dirname(g)) == "worktrees":',
+        "    if False:",
+        "test_a_linked_worktree_joins_its_repository",
+    ),
+    (
+        "a .git file does not stop the walk, so a submodule joins its parent",
+        "scope.py",
+        '    if os.path.lexists(dotgit):\n        return ("git", _ident(_gitdir(d)))\n',
+        "",
+        "test_a_submodule_and_a_nested_clone_are_their_own_projects",
+    ),
+    (
+        "a deleted directory takes its nearest ancestor's project",
+        "scope.py",
+        '    if p == orig:\n        return ("dir", _ident(orig))\n',
+        '    return ("dir", _ident(p))\n',
+        "test_a_deleted_directory_outside_any_repository_is_only_itself",
+    ),
+    (
+        "a deleted directory's case spelling splits it in two",
+        "scope.py",
+        "tail.casefold() if _case_blind(p) else tail",
+        "tail",
+        "test_a_case_insensitive_volume_reads_either_case_as_one_project",
+    ),
+    (
+        "a worktree's commondir is never read",
+        "scope.py",
+        '    common = _first_line(os.path.join(g, "commondir"))',
+        "    common = None",
+        "test_a_worktree_joins_the_repository_its_commondir_names",
+    ),
+    (
+        "a .git file is followed to a directory with no HEAD",
+        "scope.py",
+        '    if not os.path.isfile(os.path.join(g, "HEAD")):\n        return dotgit\n',
+        "",
+        "test_a_git_file_that_points_at_no_repository_is_its_own",
+    ),
+    (
+        "a NUL in a .git file is read as part of the path",
+        "scope.py",
+        '    if not line or "\\0" in line[0]:',
+        "    if not line:",
+        "test_a_git_file_that_points_at_no_repository_is_its_own",
+    ),
+    (
+        "a FIFO named .git is opened and waited on",
+        "scope.py",
+        "        if not stat.S_ISREG(os.stat(path).st_mode):\n            return None\n",
+        "",
+        "test_a_fifo_named_git_does_not_stop_recall",
+    ),
+    (
+        "a pi turn is in no project, its cwd being on the header only",
+        "index.py",
+        '        "SELECT DISTINCT COALESCE(t.cwd, g.cwd) AS cwd"',
+        '        "SELECT DISTINCT t.cwd AS cwd"',
+        "test_a_pi_session_is_where_its_header_says",
+    ),
+    (
+        "recall reads the working directory under --all-projects",
+        "__main__.py",
+        "    if not args.all_projects:\n        try:",
+        "    if True:\n        try:",
+        "test_recall_from_a_deleted_directory",
+    ),
+    (
+        "a deleted working directory is a bare errno",
+        "__main__.py",
+        "        except FileNotFoundError:\n            # A shell left",
+        "        except LookupError:\n            # A shell left",
+        "test_recall_from_a_deleted_directory",
+    ),
+    (
+        "a directory is its spelling, not the file it names",
+        "scope.py",
+        "    return (st.st_dev, st.st_ino)",
+        "    return path",
+        "test_a_case_insensitive_volume_reads_either_case_as_one_project",
+    ),
+    (
+        "the removed-directory refusal drifts from the skill that names it",
+        "__main__.py",
+        '"the current directory no longer exists: pass --project DIR or "',
+        '"the current directory is gone: pass --project DIR or "',
+        "test_the_recall_skill_quotes_the_scope_lines_the_cli_prints",
+    ),
 ]
 
 
@@ -6082,7 +6374,7 @@ def _select(test: str) -> list[str]:
 def main() -> int:
     """Run every mutant, or only those whose name contains an argument.
 
-    The filter exists because a full pass is 662 mutants × two suite runs —
+    The filter exists because a full pass is 704 mutants × two suite runs —
     long enough that adding one row and checking it used to mean either waiting
     for every other row or trusting the new one untested.
 

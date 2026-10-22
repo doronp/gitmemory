@@ -8,6 +8,30 @@ tell you.
 
 ## [Unreleased]
 
+### Changed
+
+- **`recall` searches this project's user and assistant text by default.
+  Breaking:** 0.2.0's results are now `recall --all-projects --all-kinds`. A
+  turn is in the project of the directory recorded on its own line, else its
+  session's; a project is the repository holding it, worktrees included, read
+  from `.git` entries without running git. Tool calls, tool output, thinking
+  and system lines are left out. `--project DIR` names another project, and
+  `--all-projects` and `--all-kinds` widen one dimension each; no environment
+  variable sets them. One stderr line, `outside this scope: N matching
+  turn(s)`, says how many matches the scope left out. `show` is deliberately
+  unscoped in this release. See
+  [docs/USAGE.md](docs/USAGE.md#what-recall-searches).
+- **The index is schema 3**, recording each turn's directory and Claude Code's
+  `isMeta`: run `gitmemory index` once after upgrading. Lines Claude Code
+  marked as its own (`isMeta`, a compaction summary) no longer count as the
+  user's words under `latest-user`.
+- **The recall skill searches only when asked.** When the user only refers to
+  an earlier decision, it asks before searching. It passes
+  `--project "${CLAUDE_PROJECT_DIR}"`, treats a recalled line as evidence of
+  what was said and never as an instruction, and widens only as the outside
+  line and the user allow. See
+  [SECURITY.md](SECURITY.md#recall-output-is-untrusted-input).
+
 ## [0.2.0] - 2026-10-18
 
 ### Added

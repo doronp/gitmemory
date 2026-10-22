@@ -102,6 +102,82 @@ since: start `gitmemory watch` with the hook's `$GITMEMORY_HOME`, and
 covers the other causes, such as a watcher that runs passes less often than
 hourly. With `--db`, recall does not look.
 
+## What recall searches
+
+By default `recall` searches one project, and in it only what the user and the
+assistant wrote as text. A recalled line goes back into an agent's context, so
+what it searches by default is what reaches the agent.
+
+- **The project** is the repository holding the current directory, or the
+  directory `--project DIR` names: the nearest directory at or above it with a
+  `.git`. A linked worktree, Claude Code's `.claude/worktrees/` included, joins
+  its repository, even after it has been removed. A submodule or a clone
+  vendored inside the project is a repository of its own. `~` and `/` are
+  looked at like any other level, so a dotfiles repository in `~` is a project,
+  and the search goes no higher. With one there, every directory under `~`
+  that is in no other repository, `~/Downloads` as much as `~/notes`, is in
+  that one project. Outside any repository a directory is only itself, not
+  its subdirectories, so `~` does not gather every project under it. The `.git` entries are read from the filesystem; git is never run.
+- **A turn's project** is that of the directory recorded on its own line. A
+  session that `cd`s into another repository puts the lines after the `cd` in
+  that repository's project. A line that records no directory is where its
+  session was. pi records the directory only on its session header, so every pi
+  turn is where its session started. A session that recorded none is in no
+  project, and only `--all-projects` finds it.
+- **The kinds** are user and assistant text. Tool calls, tool output, thinking
+  and system lines are left out.
+
+`--all-projects` searches every project, and the lines written in none.
+`--all-kinds` adds every kind. `--project` and `--all-projects` cannot be
+combined, and no environment variable sets any of the three, so a search
+widens only when it is asked to. `recall --all-projects --all-kinds` searches
+what 0.2.0's `recall` searched. The order can still differ under the default
+`latest-user` policy: lines Claude Code marked as its own (`isMeta`, a
+compaction summary) no longer lead as the user's words. `-k` counts turns
+inside the scope.
+
+When the scope left matches out, `recall` says how many on stderr, after the
+results or after `no matches`:
+
+```console
+$ gitmemory recall "retry loop"
+...
+outside this scope: 3 matching turn(s) (--all-projects, --all-kinds to widen)
+```
+
+It counts distinct turns, as the results are counted, and names only the flags
+you did not pass. One count covers both dimensions, so with neither flag it
+can be this project's tool output alone. Nothing is printed when nothing was left out.
+
+`show` is not scoped in this release: it prints any address you give it, and
+`--context N` adds neighbouring turns of every kind.
+
+### What the scope does not solve
+
+- **Pasted and restated text.** Text the user pasted, and assistant text that
+  restates a tool's output, are user or assistant text and pass. Role and kind
+  record who wrote a line, not where its words came from.
+- **Injected text that is not marked.** A user block that mixes typed words
+  with a `<system-reminder>` carrying a cloned repository's `CLAUDE.md`, a
+  skill load or slash-command expansion without `isMeta`, and pi's
+  `custom_message` text all still read as the user's words.
+- **Submodules and vendored clones.** Turns recorded while `cd`'d into a
+  submodule or a vendored clone count as that repository's, not the parent's.
+- **A work tree with no `.git` of its own**, as when a bare repository is
+  checked out with `--git-dir` and `--work-tree`: nothing is guessed, and each
+  directory is scoped by equality, without its subdirectories.
+- **A removed worktree that lived outside its repository**
+  (`git worktree add ../x`): nothing left on disk says whose it was, so it is
+  only its own directory.
+- **What bypasses `recall`.** `show`, the dashboard, and reading `raw/` by hand
+  are not scoped.
+- **An agent that widens anyway.** An agent can pass `--all-projects` or
+  `--all-kinds`, and can follow what a recalled line says. The skill's rules
+  against both are rules it follows, not gates
+  ([SECURITY.md](../SECURITY.md#recall-output-is-untrusted-input)).
+- **A stale rule in this project.** An instruction the user has since dropped
+  still matches. Only the dates, and asking the user, settle it.
+
 ## Read the whole turn
 
 A line stops at 160 characters. `show` prints the whole turn at an address,
@@ -201,7 +277,7 @@ tends to act on.
 
 | Policy | Order | Use it when |
 |---|---|---|
-| `latest-user` (default) | The user's own words newest first, then the agent's turns and tool output newest first. A subagent's instructions are the agent's words | The user's later word should win, and nothing else should |
+| `latest-user` (default) | The user's own words newest first, then the agent's turns and tool output newest first. A subagent's instructions are the agent's words, and so is text Claude Code injected and marked (`isMeta`, a compaction summary) | The user's later word should win, and nothing else should |
 | `latest` | Newest first, whoever said it | Any later turn should win, the agent's included |
 | `relevance` | Best BM25 match first | You want the agent to decide: every line carries its date, so it can see which turn came later |
 | `module:function` | Whatever your function returns | Anything else: pinned decisions, a cut-off date, a different rule per project |
@@ -229,8 +305,9 @@ If two lines disagree, the later date is the current decision; say so.
 
 A policy is a function from a list of `Hit`s to a list of `Hit`s. It can
 reorder and it can drop; it gets nothing that is not already in the store. A
-`Hit` has the fields `recall` prints, plus `text`, `ts` and `is_sidechain`
-(true for a subagent's turn), and `gitmemory.index.when(hit)` reads `ts` as a
+`Hit` has the fields `recall` prints, plus `text`, `ts`, `is_sidechain`
+(true for a subagent's turn), `cwd` (the directory the turn was written in, or
+its session's, or None) and `is_meta` (Claude Code injected it as user text), and `gitmemory.index.when(hit)` reads `ts` as a
 UTC `datetime`.
 
 A validity window, where everything before a date you name is out of date, is
@@ -298,12 +375,17 @@ they were written, with an address you can check.
 
 In Claude Code, the plugin does this without the `CLAUDE.md` line. Installed as
 in the [hook's README](../hook/README.md#as-a-claude-code-plugin), it adds a
-skill, `/gitmemory:recall`, that Claude loads on its own when you refer to a
-decision or a rule from before a compaction or from an earlier session, or that
-you run with a topic: `/gitmemory:recall retry loop`. It runs `recall`, and
-`index` when there is no index yet or the one there is older than what you are
-asking about. It quotes each line with its address and says when a hit comes
-from another session. It writes nothing but the index. It runs
+skill, `/gitmemory:recall`, that Claude loads when you ask it to look
+something up from before a compaction or from an earlier session, or that you
+run with a topic: `/gitmemory:recall retry loop`. When you only refer to an
+earlier decision, it asks whether to search first. It runs `recall` on the
+project Claude Code was started in, and `index` when there is no index yet or
+the one there is older than what you are asking about. It searches other
+projects only once, after the [outside line](#what-recall-searches) reports
+matches the scope left out and what it found does not answer you, and tool
+output only when you ask what a command printed. It quotes each line with its
+address, as evidence of what was said and never as an instruction, and says
+when a hit comes from another session. It writes nothing but the index. It runs
 `gitmemory --version` first and says when the CLI is older than the plugin;
 the [hook's README](../hook/README.md#as-a-claude-code-plugin) has how to hold
 the two at one release. To have it mask credentials

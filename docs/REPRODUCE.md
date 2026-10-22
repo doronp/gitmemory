@@ -486,11 +486,11 @@ HOME=$(mktemp -d)/isolated-home uv run pytest -q --collect-only -p no:cacheprovi
 uv run pytest -q --collect-only -p no:cacheprovider | grep -c '\.jsonl\]$'
 ```
 
-**Expected:** `1134/1135 tests collected (1 deselected)`, then
-`1459/1460 tests collected (1 deselected)`, then `328`. The deselected test is
+**Expected:** `1181/1182 tests collected (1 deselected)`, then
+`1506/1507 tests collected (1 deselected)`, then `328`. The deselected test is
 the LongMemEval corpus test, which is opt-in:
 `uv run pytest -q -m corpus` after `bench/fetch_longmemeval.sh`. The README's
-paragraph on why 1,134 + 328 is 1,459 and not 1,462 is the arithmetic of these
+paragraph on why 1,181 + 328 is 1,506 and not 1,509 is the arithmetic of these
 three numbers. All three were run while writing this guide.
 
 The `HOME` is the one the suite gives itself. The owner-data scan adds two
@@ -513,7 +513,7 @@ test fail. The count is the number of rows in `tests/mutate_index.py`.
 uv run python -c "import sys; sys.path.insert(0, 'tests'); from mutate_index import MUTANTS; print(len(MUTANTS))"
 ```
 
-**Expected:** `662`. Checked while writing this guide.
+**Expected:** `704`. Checked while writing this guide.
 
 To run the controls rather than count them:
 

@@ -33,13 +33,14 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import importlib
+import json
 import os
 import re
 import shutil
 import sqlite3
 import tempfile
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import quote
@@ -59,18 +60,21 @@ __all__ = [
     "Weights",
     "build",
     "db_path",
+    "directories",
     "latest",
     "latest_user",
     "match_expr",
     "open_db",
+    "outside",
     "policy",
     "relevance",
     "retriever",
     "search",
+    "user_words",
     "when",
 ]
 
-SCHEMA = 2
+SCHEMA = 3
 COLUMNS = ("prose", "tool_use", "tool_result", "paths")
 # Serialises `build` per target directory. See `build`'s docstring for why the
 # directory, and not `$GITMEMORY_HOME`, is the thing worth locking.
@@ -186,6 +190,8 @@ CREATE TABLE turns (
     byte_len     INTEGER NOT NULL,
     ts           TEXT,
     usage        TEXT NOT NULL,  -- JSON, exactly as the adapter scrubbed it
+    cwd          TEXT,  -- this line's own; NULL when it carries none
+    is_meta      INTEGER NOT NULL,  -- Claude Code injected it as user text
     PRIMARY KEY (session_key, seq)
 );
 
@@ -204,7 +210,8 @@ CREATE TABLE generations (
     turns       INTEGER NOT NULL,
     blocks      INTEGER NOT NULL,
     parsed      INTEGER NOT NULL,
-    skip_reason TEXT
+    skip_reason TEXT,
+    cwd         TEXT  -- the session's, for the turns that carry none
 );
 """
 
@@ -436,6 +443,10 @@ class Hit:
     # A subagent's turn (`Turn.is_sidechain`), whichever file it was written in.
     # Its user-role text is the parent agent's instructions, not the user's.
     is_sidechain: bool = False
+    # The directory the turn was written in: its own line's, else its session's.
+    cwd: str | None = None
+    # Claude Code's `isMeta` or `isCompactSummary`: user text no person typed.
+    is_meta: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -707,7 +718,14 @@ def _fill(db: sqlite3.Connection, home: str) -> Stats:
                     row,
                 )
             chunk.append(
-                _generation_row(db, stored, turns=len(session.turns), blocks=len(rows), reason=None)
+                _generation_row(
+                    db,
+                    stored,
+                    turns=len(session.turns),
+                    blocks=len(rows),
+                    reason=None,
+                    cwd=_session_cwd(session),
+                )
             )
         except Exception as exc:  # noqa: BLE001 - a segment run is untrusted data
             # One bad generation must not cost the index every other one; it is
@@ -832,12 +850,51 @@ def _turn_row(stored: store.Stored, turn) -> dict:
         # and a surrogate from a mangled transcript cannot make the column
         # unparseable. Its output is ASCII by construction, so decoding is safe.
         "usage": canonical_json(turn.usage).decode(),
+        # From `native`, unprojected: the adapters keep only the session's cwd,
+        # and a `cd` mid-session moves every line after it.
+        "cwd": _bounded_cwd(turn.native.get("cwd")),
+        "is_meta": int(
+            turn.native.get("isMeta") is True or turn.native.get("isCompactSummary") is True
+        ),
     }
     return {k: _encodable(v) for k, v in fields.items()}
 
 
+# PATH_MAX on Linux. A longer value names no directory anyone ran in.
+_MAX_CWD = 4096
+
+
+def _bounded_cwd(value) -> str | None:
+    """A cwd as the agent wrote it, normalised so `/w/a/` and `/w/a` are one
+    directory, or None for anything no directory could be named. Never
+    resolved against this filesystem: the digest must not depend on the
+    machine that built it."""
+    if not isinstance(value, str) or not 0 < len(value) <= _MAX_CWD or "\0" in value:
+        return None
+    # Relative, or `~`: read where recall runs, `.` would be in every project.
+    if not os.path.isabs(value):
+        return None
+    return os.path.normpath(value)
+
+
+def _session_cwd(session) -> str | None:
+    """The session's directory, for its lines that carry none: the first cwd
+    it recorded, or, when that one names nothing, the first of its turns'
+    that does."""
+    return _bounded_cwd(session.cwd) or next(
+        (cwd for turn in session.turns if (cwd := _bounded_cwd(turn.native.get("cwd")))),
+        None,
+    )
+
+
 def _generation_row(
-    db: sqlite3.Connection, stored: store.Stored, *, turns: int, blocks: int, reason: str | None
+    db: sqlite3.Connection,
+    stored: store.Stored,
+    *,
+    turns: int,
+    blocks: int,
+    reason: str | None,
+    cwd: str | None = None,
 ) -> bytes:
     """Write the generation row. Returns its canonical bytes, for the digest."""
     return _insert(
@@ -855,6 +912,7 @@ def _generation_row(
             "blocks": blocks,
             "parsed": int(reason is None),
             "skip_reason": _encodable(reason),
+            "cwd": _encodable(cwd),
         },
     )
 
@@ -976,12 +1034,82 @@ class Hits(list):
     dropped: int = 0
 
 
+# Where a block's turn was written: its own line's cwd, else its session's.
+_CWD_OF = """(
+    SELECT COALESCE(t.cwd, g.cwd)
+    FROM turns t JOIN generations g ON g.session_key = t.session_key
+    WHERE t.session_key = b.session_key AND t.seq = b.turn_seq
+)"""
+
+
+def _filters(roles, kinds, cwds) -> tuple[list[str], list[str]]:
+    """SQL over `blocks b` admitting only the given values; None is no filter.
+    One JSON array a parameter, so a value is data and never SQL."""
+    clauses, params = [], []
+    for column, values in (("b.role", roles), ("b.kind", kinds), (_CWD_OF, cwds)):
+        if values is not None:
+            clauses.append(f"{column} IN (SELECT value FROM json_each(?))")
+            params.append(json.dumps(sorted(values)))
+    return clauses, params
+
+
+def directories(db: sqlite3.Connection, query: str) -> list[str]:
+    """Every directory a turn matching `query` was written in, as `_CWD_OF`
+    reads it: the only ones a scope has to resolve. The caller checks the
+    schema: this reads a column schema 2 does not have."""
+    expr, _ = match_expr(query)
+    if not expr:
+        return []
+    rows = db.execute(
+        "SELECT DISTINCT COALESCE(t.cwd, g.cwd) AS cwd"
+        " FROM fts JOIN blocks b ON b.rowid = fts.rowid"
+        " JOIN turns t ON t.session_key = b.session_key AND t.seq = b.turn_seq"
+        " JOIN generations g ON g.session_key = t.session_key"
+        " WHERE fts MATCH ?",
+        (expr,),
+    )
+    return [r["cwd"] for r in rows if r["cwd"] is not None]
+
+
+def outside(
+    db: sqlite3.Connection,
+    query: str,
+    *,
+    roles: Collection[str] | None,
+    kinds: Collection[str] | None,
+    cwds: Collection[str] | None,
+) -> int:
+    """How many turns match `query` but have no block the filters admit: what
+    a filtered `search` hid, counted whole and beyond its `k`. Deduplicated as
+    `search` deduplicates, so a turn is one however many blocks matched."""
+    expr, _ = match_expr(query)
+    clauses, params = _filters(roles, kinds, cwds)
+    if not expr or not clauses:
+        return 0
+    row = db.execute(
+        f"""
+        SELECT count(*) AS n FROM (
+            -- A NULL cwd is in no list, and `NULL IN (...)` is NULL, not false.
+            SELECT max(coalesce({" AND ".join(clauses)}, 0)) AS ok
+            FROM fts JOIN blocks b ON b.rowid = fts.rowid
+            WHERE fts MATCH ?
+            GROUP BY b.turn_id, b.agent, b.session_id
+        ) WHERE NOT ok
+        """,
+        (*params, expr),
+    ).fetchone()
+    return row["n"]
+
+
 def search(
     db: sqlite3.Connection,
     query: str,
     *,
     k: int = 10,
     weights: Weights = DEFAULT_WEIGHTS,
+    roles: Collection[str] | None = None,
+    kinds: Collection[str] | None = None,
+    cwds: Collection[str] | None = None,
 ) -> Hits:
     """Top `k` turns for `query`, best first. A turn scores as its best block.
 
@@ -993,11 +1121,19 @@ def search(
     that renders hits to a person is expected to say so. A truncated query
     returns a real ranking over fewer terms, which reads exactly like a
     complete one.
+
+    `roles`, `kinds` and `cwds` admit only blocks with those values, before a
+    turn picks its block and before the LIMIT, so `k` counts admitted turns
+    and a turn whose best block was filtered out answers with its next. All
+    default to off: that unfiltered search is what `bench/` measures, and
+    recall's narrower defaults live in `__main__`.
     """
     _check_schema(db)
     expr, dropped = match_expr(query)
     if not expr:
         return Hits()
+    clauses, params = _filters(roles, kinds, cwds)
+    where = "\n            WHERE " + " AND ".join(clauses) if clauses else ""
     rows = db.execute(
         f"""
         -- bm25() is an FTS5 auxiliary function: it exists only in a query whose
@@ -1037,7 +1173,7 @@ def search(
                        PARTITION BY b.turn_id, b.agent, b.session_id
                        ORDER BY s.score, b.generation DESC, b.block_seq
                    ) AS rn
-            FROM scored s JOIN blocks b ON b.rowid = s.rid
+            FROM scored s JOIN blocks b ON b.rowid = s.rid{where}
         )
         SELECT byte_offset, byte_len, turn_id, session_key, agent,
                session_id, generation, role, kind, text, score, ts,
@@ -1048,14 +1184,24 @@ def search(
                COALESCE((
                    SELECT t.is_sidechain FROM turns t
                    WHERE t.session_key = ranked.session_key AND t.seq = ranked.turn_seq
-               ), 0) AS is_sidechain
+               ), 0) AS is_sidechain,
+               -- A line with no cwd of its own is where its session was.
+               (
+                   SELECT COALESCE(t.cwd, g.cwd)
+                   FROM turns t JOIN generations g ON g.session_key = t.session_key
+                   WHERE t.session_key = ranked.session_key AND t.seq = ranked.turn_seq
+               ) AS cwd,
+               (
+                   SELECT t.is_meta FROM turns t
+                   WHERE t.session_key = ranked.session_key AND t.seq = ranked.turn_seq
+               ) AS is_meta
         FROM ranked WHERE rn = 1
         -- Ties are broken by position, never by rowid: the answer must not
         -- depend on the order generations happened to be indexed in.
         ORDER BY score, session_key, byte_offset, block_seq
         LIMIT ?
         """,
-        (*weights.as_tuple(), expr, max(k, 0)),
+        (*weights.as_tuple(), expr, *params, max(k, 0)),
     ).fetchall()
     hits = Hits(
         Hit(
@@ -1072,6 +1218,8 @@ def search(
             text=r["text"],
             ts=r["ts"],
             is_sidechain=bool(r["is_sidechain"]),
+            cwd=r["cwd"],
+            is_meta=bool(r["is_meta"]),
         )
         for r in rows
     )
@@ -1152,22 +1300,28 @@ def latest_user(hits: list[Hit]) -> list[Hit]:
     `derive._prose` still admits a subagent's text; excluding it there too would
     move the secondary-set numbers, so that waits for a re-measurement.
 
-    ponytail: a skill's loaded instructions and a slash command's expansion are
-    user text with no marker, so they pass as the user's words — the same gap
-    `derive._injected` documents. The upgrade lands there, not here.
+    Claude Code marks some of what it injects (`Hit.is_meta`), and those lines
+    are ranked with the rest. ponytail: a skill's loaded instructions and a
+    slash command's expansion often carry no marker, so they pass as the
+    user's words — the same gap `derive._injected` documents. The upgrade
+    lands there, not here.
     """
+    ordered = latest(hits)
+    return [h for h in ordered if user_words(h)] + [h for h in ordered if not user_words(h)]
+
+
+def user_words(h: Hit) -> bool:
+    """Whether a hit reads as something the user typed: `latest_user`'s rule.
+    A heuristic over who wrote the record, not a trust grant."""
     from .derive import _injected  # lazy: derive imports this module
 
-    def typed(h: Hit) -> bool:
-        return (
-            h.role == "user"
-            and h.kind == "text"
-            and not h.is_sidechain
-            and not _injected(h.text.strip())
-        )
-
-    ordered = latest(hits)
-    return [h for h in ordered if typed(h)] + [h for h in ordered if not typed(h)]
+    return (
+        h.role == "user"
+        and h.kind == "text"
+        and not h.is_sidechain
+        and not h.is_meta
+        and not _injected(h.text.strip())
+    )
 
 
 def relevance(hits: list[Hit]) -> list[Hit]:

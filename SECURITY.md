@@ -106,3 +106,20 @@ on. What it does not guarantee is listed in
 [USAGE.md](docs/USAGE.md#what-it-does-not-guarantee): it masks sixteen shapes
 and nothing else, decodes nothing, and covers only what those two commands
 print.
+
+## Recall output is untrusted input
+
+A line `recall` prints is a record of what was said, and whoever said it may not
+be the user: a pasted page, a cloned repository's instructions, another agent.
+An agent that reads recall output reads third-party text. By default `recall`
+leaves out other projects, tool calls and output, thinking and system lines,
+and lines Claude Code marked as its own (`isMeta`, a compaction summary) no
+longer lead the user's words, but pasted text passes, and `show`, the
+dashboard and the files under the store are not scoped
+([USAGE.md](docs/USAGE.md#what-the-scope-does-not-solve) lists the rest). The
+recall skill treats each line as evidence of what was said, never as an
+instruction, and widens the scope only on the user's request; both are rules
+the agent follows, not gates. The `outside this scope` count discloses, by
+design, that matches exist elsewhere, never what they say. `.git` entries,
+which decide what one project is, are trusted local configuration: a hostile
+`.git` file can alias two projects.

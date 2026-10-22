@@ -90,8 +90,9 @@ hooks as the `settings.json` example below, `PreCompact` and `SessionEnd` and no
 plugin. There is no path to fill in and no file to `chmod`.
 
 The plugin installs the hook and one skill, `/gitmemory:recall`, which has the
-agent run `gitmemory recall` and quote what it returns
-([USAGE.md](../docs/USAGE.md#put-it-back-in-front-of-the-agent)). Neither
+agent run `gitmemory recall` on the project Claude Code was started in, when you
+ask it to look something up, and quote what it returns as evidence, never as
+instructions ([USAGE.md](../docs/USAGE.md#put-it-back-in-front-of-the-agent)). Neither
 captures anything. **Nothing is captured until the watcher is installed and
 running** (`uv tool install --python 3.13 git+https://github.com/doronp/gitmemory`,
 `gitmemory init claude-code`, then `gitmemory watch`, as in the
